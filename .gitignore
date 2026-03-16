@@ -1,0 +1,39 @@
+# Tauri
+/src-tauri/target/
+/src-tauri/WixTools/
+/src-tauri/Frameworks/
+
+# Node
+node_modules/
+dist/
+.output/
+
+# Python (transcription pipeline)
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Recordings (large files, stored locally not in git)
+recordings/
+
+# Build artifacts
+*.exe
+*.msi
+*.dmg
+*.AppImage
