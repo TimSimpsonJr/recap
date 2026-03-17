@@ -32,6 +32,10 @@ pub fn run() {
             // Deep link plugin
             app.handle().plugin(tauri_plugin_deep_link::init())?;
 
+            // Recorder managed state
+            let recorder_handle = recorder::recorder::RecorderHandle::new(app.handle().clone());
+            app.manage(recorder_handle);
+
             // System tray
             tray::create_tray(app.handle())?;
 
@@ -52,6 +56,10 @@ pub fn run() {
             oauth::exchange_oauth_code,
             sidecar::run_pipeline,
             sidecar::check_sidecar_status,
+            recorder::recorder::get_recorder_state,
+            recorder::recorder::start_recording,
+            recorder::recorder::stop_recording,
+            recorder::recorder::retry_processing,
         ])
         .on_window_event(|window, event| {
             // Closing the window hides it instead of quitting
