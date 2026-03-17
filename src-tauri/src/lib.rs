@@ -1,3 +1,4 @@
+mod credentials;
 mod deep_link;
 mod tray;
 
@@ -37,6 +38,10 @@ pub fn run() {
 
             Ok(())
         })
+        .invoke_handler(tauri::generate_handler![
+            credentials::store_credential,
+            credentials::get_provider_status,
+        ])
         .on_window_event(|window, event| {
             // Closing the window hides it instead of quitting
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
