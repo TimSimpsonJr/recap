@@ -2,65 +2,69 @@
 
 ## Stack
 
-- **Language:** Python 3.10+ (managed by uv)
-- **ML pipeline:** WhisperX (optional), Pyannote 3.1
+- **Desktop app:** Tauri v2 (Rust backend) + Svelte 5 (plain, no SvelteKit) + Tailwind CSS 4
+- **ML pipeline:** Python (Whisper large-v3, Pyannote 3.1)
 - **AI analysis:** Claude Code CLI (subprocess)
-- **Integrations:** Todoist API (optional), Obsidian vault output
+- **Integrations:** Zoom, Google, Microsoft, Zoho, Todoist (OAuth flows)
 
 ## Structure
 
 ```
 recap/
-├── .gitignore              # Git ignore rules for Tauri, Node, Python, recordings, secrets
-├── MANIFEST.md             # This file — structural map
-├── PLAN.md                 # Full implementation plan with architecture, phases, and decisions
-├── pyproject.toml          # Project metadata, dependencies, pytest config (uv-managed)
-├── config.example.yaml     # Example configuration (vault path, API tokens, WhisperX settings)
-├── prompts/
-│   └── meeting_analysis.md # Claude analysis prompt template with {{participants}} and {{transcript}} placeholders
-├── docs/
-│   └── plans/              # Design docs and implementation plans
-├── recap/
-│   ├── __init__.py         # Package root — docstring only
-│   ├── __main__.py         # Entry point for `python -m recap` (imports recap.cli.main)
-│   ├── cli.py              # CLI test harness: argparse subcommands (process, retry-todoist), file+stdout logging
-│   ├── config.py           # YAML config loading: RecapConfig, WhisperXConfig, TodoistConfig, ClaudeConfig
-│   ├── analyze.py          # Claude Code CLI analysis: prompt building, JSON parsing, retry logic
-│   ├── frames.py           # Frame extraction from video via ffmpeg scene detection (subprocess)
-│   ├── models.py           # Dataclasses: Participant, MeetingMetadata, Utterance, TranscriptResult, AnalysisResult, etc.
-│   ├── pipeline.py         # Pipeline orchestrator: ties transcribe, frames, analyze, vault, todoist together
-│   ├── todoist.py          # Todoist task creation with idempotency check; obsidian URI linking, retry file persistence
-│   ├── transcribe.py       # WhisperX transcription + diarization; graceful ImportError if whisperx not installed
-│   └── vault.py            # Obsidian vault writing: meeting notes, profile stubs (people/companies), previous meeting search
-└── tests/
-    ├── __init__.py         # Test package marker
-    ├── conftest.py         # Shared fixtures: tmp_vault, tmp_recordings, tmp_frames
-    ├── test_cli.py         # Tests for CLI arg parsing, process command, and retry-todoist execution (mocked)
-    ├── test_analyze.py     # Tests for Claude analysis module (mocked subprocess)
-    ├── test_config.py      # Tests for YAML config loading and derived vault paths
-    ├── test_frames.py      # Tests for frame extraction (mocked subprocess calls)
-    ├── test_models.py      # Tests for all data models and their from_dict/to_labelled_text methods
-    ├── test_pipeline.py    # Tests for pipeline orchestrator (mocked transcribe, analyze, frames, todoist)
-    ├── test_todoist.py     # Tests for Todoist integration (mocked API, retry file, filtering, URI building)
-    ├── test_transcribe.py  # Tests for WhisperX transcription (mocked whisperx module)
-    └── test_vault.py       # Tests for vault: meeting notes, profile stubs, previous meeting search
+├── index.html                          # Vite entry point — loads src/main.ts
+├── package.json                        # Node deps (Tauri plugins, Svelte, Tailwind)
+├── vite.config.ts                      # Vite config — Svelte + Tailwind plugins
+├── tsconfig.json                       # TypeScript config for plain Svelte
+├── run_pipeline.py                     # PyInstaller entry point — imports recap.cli for sidecar bundling
+├── scripts/
+│   └── build-sidecar.py                # Builds PyInstaller sidecar → src-tauri/binaries/
+├── src/
+│   ├── main.ts                         # Mounts App.svelte to #app
+│   ├── app.css                         # Global CSS — Tailwind import
+│   ├── App.svelte                      # Root: hash routing, store init, OAuth callback listener
+│   ├── routes/
+│   │   ├── Dashboard.svelte            # Placeholder (Phase 5)
+│   │   └── Settings.svelte             # Full settings page — connections, vault, whisperx, etc.
+│   └── lib/
+│       ├── tauri.ts                    # Typed invoke() wrappers (OAuth, sidecar)
+│       ├── stores/
+│       │   ├── credentials.ts          # Stronghold-backed credential store (5 providers)
+│       │   └── settings.ts             # tauri-plugin-store backed app settings
+│       └── components/
+│           ├── ProviderCard.svelte     # OAuth connection card (client ID/secret, connect/disconnect)
+│           ├── SettingsSection.svelte  # Reusable section wrapper
+│           ├── VaultSettings.svelte    # Vault path + folder config
+│           ├── RecordingSettings.svelte # Recordings folder
+│           ├── WhisperXSettings.svelte # Model, device, compute type, language
+│           ├── TodoistSettings.svelte  # Project + labels
+│           ├── GeneralSettings.svelte  # Autostart (disabled), notifications
+│           └── AboutSection.svelte     # Version + sidecar status
+└── src-tauri/
+    ├── Cargo.toml                      # Rust deps: tauri plugins, reqwest, tokio, serde, uuid, open
+    ├── tauri.conf.json                 # App config: deep-link, sidecar, window (hidden on start)
+    ├── build.rs                        # Tauri build script
+    ├── capabilities/
+    │   └── default.json                # Permissions: core, stronghold, store, deep-link, autostart, shell, dialog
+    ├── icons/                          # App icons
+    └── src/
+        ├── main.rs                     # Entry point → recap_lib::run()
+        ├── lib.rs                      # Tauri builder: plugins, tray, deep links, IPC commands
+        ├── tray.rs                     # System tray menu + left-click handler
+        ├── deep_link.rs                # recap:// URL handler, emits oauth-callback events
+        ├── credentials.rs              # Provider types + placeholder IPC commands
+        ├── oauth.rs                    # 5-provider OAuth: auth URLs, token exchange, localhost server
+        └── sidecar.rs                  # Pipeline sidecar invocation + status check
 ```
 
 ## Key Relationships
 
-- `recap/__main__.py` imports `recap.cli.main` — the CLI entry point
-- `recap/cli.py` imports `recap.config.load_config` and `recap.pipeline.run_pipeline`; retry-todoist lazily imports `recap.todoist`
-- `recap/models.py` is the foundation — every pipeline module imports its dataclasses
-- `recap/config.py` is used by every pipeline module; `load_config()` reads `config.yaml` and returns `RecapConfig`
-- `config.example.yaml` documents all config keys; `config.yaml` is gitignored (contains secrets)
-- `pyproject.toml` defines optional extras: `ml` (whisperx), `todoist`, `dev` (pytest)
-- Test fixtures in `conftest.py` mirror vault structure: `Work/Meetings/`, `Work/People/`, `Work/Companies/`
-- `recap/frames.py` is independent — uses only stdlib (subprocess, pathlib, dataclasses); no imports from other recap modules
-- `recap/transcribe.py` imports `recap.models` (Utterance, TranscriptResult); whisperx is optional (try/except ImportError)
-- `recap/analyze.py` imports `recap.models` (AnalysisResult, MeetingMetadata, TranscriptResult); spawns `claude --print` as subprocess
-- `recap/todoist.py` imports `recap.models` (ActionItem); wraps `todoist-api-python` with try/except ImportError (same pattern as transcribe.py)
-- `recap/vault.py` imports `recap.models` (AnalysisResult, MeetingMetadata, ProfileStub) and `recap.frames` (FrameResult); `slugify` is a public function reused by pipeline.py
-- `recap/pipeline.py` is the top-level orchestrator — imports from all other recap modules (transcribe, frames, analyze, vault, todoist, config, models)
-- `recap/pipeline.py` gracefully degrades: todoist failures save a retry file, frame extraction failures are logged and skipped
-- `prompts/meeting_analysis.md` is loaded by `recap/pipeline.py` via `pathlib.Path(__file__).parent.parent / "prompts"` — template is outside the package
-- PLAN.md references tech stack decisions tracked in `~/.claude/projects/.../memory/meeting-tool-tech-stack.md`
+- `App.svelte` initializes stores on mount, listens for two OAuth events: `oauth-callback` (deep link) and `oauth-tokens` (localhost)
+- `lib.rs` registers all plugins in `.setup()`, creates tray, sets up deep links, hides window on start
+- `deep_link.rs` emits `oauth-callback` → `App.svelte` exchanges code via IPC → saves tokens via Stronghold
+- `oauth.rs` `start_oauth` opens browser; for Google/Microsoft, spawns localhost server → exchanges code → emits `oauth-tokens`
+- Zoho region flows from `ProviderCard` → `settings` store → `startOAuth` IPC → `get_provider_config` → datacenter-specific URLs
+- `credentials.ts` store wraps Stronghold JS API; `settings.ts` wraps tauri-plugin-store
+- `ProviderCard.svelte` reads from credential store, calls `startOAuth` IPC to begin flow
+- `scripts/build-sidecar.py` → PyInstaller → `src-tauri/binaries/recap-pipeline-{triple}.exe`
+- `sidecar.rs` invokes the binary via `tauri-plugin-shell` sidecar API
+- Window close → hide (not quit); quit only via tray menu

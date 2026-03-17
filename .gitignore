@@ -1,11 +1,13 @@
 # Tauri
 /src-tauri/target/
+/src-tauri/binaries/
 /src-tauri/WixTools/
 /src-tauri/Frameworks/
 
 # Node
 node_modules/
 dist/
+build/
 .output/
 
 # Python (transcription pipeline)
@@ -31,6 +33,9 @@ Thumbs.db
 
 # Recordings (large files, stored locally not in git)
 recordings/
+
+# PyInstaller
+*.spec
 
 # Build artifacts
 *.exe
