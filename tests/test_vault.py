@@ -17,6 +17,8 @@ from recap.models import (
 )
 from recap.vault import (
     write_meeting_note,
+    write_profile_stubs,
+    find_previous_meeting,
     _generate_meeting_markdown,
     _format_duration,
     _slugify,
@@ -222,3 +224,106 @@ class TestWriteMeetingNote:
         )
         assert note_path is None
         assert existing.read_text() == "existing content"
+
+
+class TestWriteProfileStubs:
+    def test_creates_person_stub(self, tmp_vault, sample_analysis):
+        created = write_profile_stubs(
+            analysis=sample_analysis,
+            people_dir=tmp_vault / "Work" / "People",
+            companies_dir=tmp_vault / "Work" / "Companies",
+        )
+        person_file = tmp_vault / "Work" / "People" / "Jane Smith.md"
+        assert person_file.exists()
+        content = person_file.read_text()
+        assert "Acme Corp" in content
+        assert "VP Engineering" in content
+        assert "Jane Smith" in created
+
+    def test_creates_company_stub(self, tmp_vault, sample_analysis):
+        write_profile_stubs(
+            analysis=sample_analysis,
+            people_dir=tmp_vault / "Work" / "People",
+            companies_dir=tmp_vault / "Work" / "Companies",
+        )
+        company_file = tmp_vault / "Work" / "Companies" / "Acme Corp.md"
+        assert company_file.exists()
+        content = company_file.read_text()
+        assert "SaaS" in content
+
+    def test_skips_existing_person(self, tmp_vault, sample_analysis):
+        person_file = tmp_vault / "Work" / "People" / "Jane Smith.md"
+        person_file.write_text("existing content")
+        write_profile_stubs(
+            analysis=sample_analysis,
+            people_dir=tmp_vault / "Work" / "People",
+            companies_dir=tmp_vault / "Work" / "Companies",
+        )
+        assert person_file.read_text() == "existing content"
+
+    def test_skips_existing_company(self, tmp_vault, sample_analysis):
+        company_file = tmp_vault / "Work" / "Companies" / "Acme Corp.md"
+        company_file.write_text("existing content")
+        write_profile_stubs(
+            analysis=sample_analysis,
+            people_dir=tmp_vault / "Work" / "People",
+            companies_dir=tmp_vault / "Work" / "Companies",
+        )
+        assert company_file.read_text() == "existing content"
+
+
+class TestFindPreviousMeeting:
+    def test_finds_matching_meeting(self, tmp_vault):
+        meetings_dir = tmp_vault / "Work" / "Meetings"
+        old_note = meetings_dir / "2026-03-09 - Weekly Standup.md"
+        old_note.write_text(
+            "---\nparticipants:\n  - \"[[Tim]]\"\n  - \"[[Jane Smith]]\"\n---\nContent here"
+        )
+        result = find_previous_meeting(
+            participant_names=["Tim", "Jane Smith"],
+            meetings_dir=meetings_dir,
+            exclude_filename="2026-03-16 - Weekly Standup.md",
+        )
+        assert result == "2026-03-09 - Weekly Standup"
+
+    def test_returns_none_when_no_match(self, tmp_vault):
+        meetings_dir = tmp_vault / "Work" / "Meetings"
+        old_note = meetings_dir / "2026-03-09 - Other Meeting.md"
+        old_note.write_text(
+            "---\nparticipants:\n  - \"[[Bob]]\"\n  - \"[[Alice]]\"\n---\nContent"
+        )
+        result = find_previous_meeting(
+            participant_names=["Tim", "Jane Smith"],
+            meetings_dir=meetings_dir,
+            exclude_filename="2026-03-16 - Standup.md",
+        )
+        assert result is None
+
+    def test_returns_most_recent_match(self, tmp_vault):
+        meetings_dir = tmp_vault / "Work" / "Meetings"
+        (meetings_dir / "2026-03-02 - Sync.md").write_text(
+            "---\nparticipants:\n  - \"[[Tim]]\"\n  - \"[[Jane Smith]]\"\n---\n"
+        )
+        (meetings_dir / "2026-03-09 - Sync.md").write_text(
+            "---\nparticipants:\n  - \"[[Tim]]\"\n  - \"[[Jane Smith]]\"\n---\n"
+        )
+        result = find_previous_meeting(
+            participant_names=["Tim", "Jane Smith"],
+            meetings_dir=meetings_dir,
+            exclude_filename="2026-03-16 - Sync.md",
+        )
+        assert result == "2026-03-09 - Sync"
+
+    def test_partial_overlap_matches(self, tmp_vault):
+        meetings_dir = tmp_vault / "Work" / "Meetings"
+        (meetings_dir / "2026-03-09 - Team Sync.md").write_text(
+            "---\nparticipants:\n  - \"[[Tim]]\"\n  - \"[[Jane Smith]]\"\n  - \"[[Bob]]\"\n---\n"
+        )
+        result = find_previous_meeting(
+            participant_names=["Tim", "Jane Smith", "Alice"],
+            meetings_dir=meetings_dir,
+            exclude_filename="2026-03-16 - Team Sync.md",
+            min_overlap=0.5,
+        )
+        # 2 of 3 current participants overlap = 0.67 > 0.5 threshold
+        assert result == "2026-03-09 - Team Sync"

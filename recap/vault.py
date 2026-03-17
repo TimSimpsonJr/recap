@@ -170,3 +170,119 @@ def write_meeting_note(
     note_path.write_text(md, encoding="utf-8")
     logger.info("Wrote meeting note: %s", note_path)
     return note_path
+
+
+def _generate_person_stub(stub: ProfileStub) -> str:
+    fm = {}
+    if stub.company:
+        fm["company"] = f"[[{stub.company}]]"
+    if stub.role:
+        fm["role"] = stub.role
+
+    lines = ["---"]
+    if fm:
+        lines.append(yaml.dump(fm, default_flow_style=False, sort_keys=False).strip())
+    lines.append("---")
+    lines.append("")
+    lines.append("## Key Topics")
+    lines.append("")
+    lines.append("## Meeting History")
+    lines.append("")
+    lines.append("[Automatic via Obsidian backlinks]")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _generate_company_stub(stub: ProfileStub) -> str:
+    fm = {}
+    if stub.industry:
+        fm["industry"] = stub.industry
+
+    lines = ["---"]
+    if fm:
+        lines.append(yaml.dump(fm, default_flow_style=False, sort_keys=False).strip())
+    lines.append("---")
+    lines.append("")
+    lines.append("## Ongoing Themes")
+    lines.append("")
+    lines.append("## Key Contacts")
+    lines.append("")
+    lines.append("[Automatic via Obsidian backlinks]")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def write_profile_stubs(
+    analysis: AnalysisResult,
+    people_dir: pathlib.Path,
+    companies_dir: pathlib.Path,
+) -> list[str]:
+    created = []
+
+    for person in analysis.people:
+        path = people_dir / f"{person.name}.md"
+        if path.exists():
+            logger.debug("Person profile exists, skipping: %s", person.name)
+            continue
+        path.write_text(_generate_person_stub(person), encoding="utf-8")
+        logger.info("Created person profile: %s", person.name)
+        created.append(person.name)
+
+    for company in analysis.companies:
+        path = companies_dir / f"{company.name}.md"
+        if path.exists():
+            logger.debug("Company profile exists, skipping: %s", company.name)
+            continue
+        path.write_text(_generate_company_stub(company), encoding="utf-8")
+        logger.info("Created company profile: %s", company.name)
+        created.append(company.name)
+
+    return created
+
+
+def _parse_participants_from_frontmatter(content: str) -> list[str]:
+    parts = content.split("---\n")
+    if len(parts) < 3:
+        return []
+    try:
+        fm = yaml.safe_load(parts[1])
+    except yaml.YAMLError:
+        return []
+    if not fm or "participants" not in fm:
+        return []
+    names = []
+    for p in fm["participants"]:
+        # Extract name from "[[Name]]" format
+        match = re.search(r"\[\[(.+?)]]", str(p))
+        if match:
+            names.append(match.group(1))
+    return names
+
+
+def find_previous_meeting(
+    participant_names: list[str],
+    meetings_dir: pathlib.Path,
+    exclude_filename: str,
+    min_overlap: float = 0.5,
+) -> str | None:
+    current_set = set(n.lower() for n in participant_names)
+    if not current_set:
+        return None
+
+    candidates = []
+    for note_path in sorted(meetings_dir.glob("*.md"), reverse=True):
+        if note_path.name == exclude_filename:
+            continue
+        content = note_path.read_text(encoding="utf-8")
+        note_participants = _parse_participants_from_frontmatter(content)
+        note_set = set(n.lower() for n in note_participants)
+
+        if not note_set:
+            continue
+
+        overlap = len(current_set & note_set) / len(current_set)
+        if overlap >= min_overlap:
+            candidates.append(note_path.stem)
+            break  # sorted reverse = most recent first
+
+    return candidates[0] if candidates else None
