@@ -23,7 +23,8 @@ recap/
 │   ├── analyze.py          # Claude Code CLI analysis: prompt building, JSON parsing, retry logic
 │   ├── frames.py           # Frame extraction from video via ffmpeg scene detection (subprocess)
 │   ├── models.py           # Dataclasses: Participant, MeetingMetadata, Utterance, TranscriptResult, AnalysisResult, etc.
-│   └── transcribe.py       # WhisperX transcription + diarization; graceful ImportError if whisperx not installed
+│   ├── transcribe.py       # WhisperX transcription + diarization; graceful ImportError if whisperx not installed
+│   └── vault.py            # Obsidian vault writing: meeting note markdown generation, frontmatter, _slugify helper
 └── tests/
     ├── __init__.py         # Test package marker
     ├── conftest.py         # Shared fixtures: tmp_vault, tmp_recordings, tmp_frames
@@ -31,7 +32,8 @@ recap/
     ├── test_config.py      # Tests for YAML config loading and derived vault paths
     ├── test_frames.py      # Tests for frame extraction (mocked subprocess calls)
     ├── test_models.py      # Tests for all data models and their from_dict/to_labelled_text methods
-    └── test_transcribe.py  # Tests for WhisperX transcription (mocked whisperx module)
+    ├── test_transcribe.py  # Tests for WhisperX transcription (mocked whisperx module)
+    └── test_vault.py       # Tests for vault meeting note generation (frontmatter, sections, todoist tags)
 ```
 
 ## Key Relationships
@@ -45,4 +47,5 @@ recap/
 - `recap/frames.py` is independent — uses only stdlib (subprocess, pathlib, dataclasses); no imports from other recap modules
 - `recap/transcribe.py` imports `recap.models` (Utterance, TranscriptResult); whisperx is optional (try/except ImportError)
 - `recap/analyze.py` imports `recap.models` (AnalysisResult, MeetingMetadata, TranscriptResult); spawns `claude --print` as subprocess
+- `recap/vault.py` imports `recap.models` (AnalysisResult, MeetingMetadata, ProfileStub) and `recap.frames` (FrameResult); `_slugify` is reused by pipeline.py
 - PLAN.md references tech stack decisions tracked in `~/.claude/projects/.../memory/meeting-tool-tech-stack.md`
