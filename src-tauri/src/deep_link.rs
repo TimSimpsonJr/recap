@@ -1,5 +1,14 @@
+use serde::Serialize;
+use tauri::Emitter;
 use tauri::Manager;
 use tauri_plugin_deep_link::DeepLinkExt;
+
+/// Payload emitted to the frontend when an OAuth callback deep link arrives.
+#[derive(Debug, Clone, Serialize)]
+pub struct OAuthCallbackPayload {
+    pub provider: String,
+    pub code: String,
+}
 
 /// Register deep link handler and process any URLs the app was opened with.
 pub fn setup_deep_links(app: &tauri::AppHandle) -> tauri::Result<()> {
@@ -8,23 +17,24 @@ pub fn setup_deep_links(app: &tauri::AppHandle) -> tauri::Result<()> {
     app.deep_link().register("recap")?;
 
     // Handle deep links received while app is running
-    app.deep_link().on_open_url(|event| {
+    let handle = app.clone();
+    app.deep_link().on_open_url(move |event| {
         for url in event.urls() {
-            handle_deep_link_url(url.as_str());
+            handle_deep_link_url(&handle, url.as_str());
         }
     });
 
     // Check if app was launched via deep link
     if let Ok(Some(urls)) = app.deep_link().get_current() {
         for url in urls {
-            handle_deep_link_url(url.as_str());
+            handle_deep_link_url(app, url.as_str());
         }
     }
 
     Ok(())
 }
 
-fn handle_deep_link_url(url: &str) {
+fn handle_deep_link_url(app: &tauri::AppHandle, url: &str) {
     // Parse recap://oauth/{provider}/callback?code=...
     if let Ok(parsed) = url::Url::parse(url) {
         match parsed.host_str() {
@@ -34,15 +44,20 @@ fn handle_deep_link_url(url: &str) {
                     .map(|s| s.collect())
                     .unwrap_or_default();
                 if path_segments.len() >= 2 && path_segments[1] == "callback" {
-                    let provider = path_segments[0];
+                    let provider = path_segments[0].to_string();
                     let code = parsed
                         .query_pairs()
                         .find(|(key, _)| key == "code")
                         .map(|(_, value)| value.to_string());
                     if let Some(code) = code {
                         log::info!("OAuth callback for {}: code received", provider);
-                        // TODO: pass to oauth module for token exchange
-                        let _ = code;
+                        let payload = OAuthCallbackPayload {
+                            provider,
+                            code,
+                        };
+                        if let Err(e) = app.emit("oauth-callback", &payload) {
+                            log::error!("Failed to emit oauth-callback event: {}", e);
+                        }
                     }
                 }
             }

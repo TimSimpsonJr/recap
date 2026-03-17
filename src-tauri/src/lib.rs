@@ -1,5 +1,6 @@
 mod credentials;
 mod deep_link;
+mod oauth;
 mod tray;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -41,6 +42,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             credentials::store_credential,
             credentials::get_provider_status,
+            oauth::start_oauth,
+            oauth::exchange_oauth_code,
         ])
         .on_window_event(|window, event| {
             // Closing the window hides it instead of quitting
