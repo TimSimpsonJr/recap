@@ -21,13 +21,15 @@ recap/
 │   ├── __main__.py         # Entry point for `python -m recap` (imports recap.cli.main)
 │   ├── config.py           # YAML config loading: RecapConfig, WhisperXConfig, TodoistConfig, ClaudeConfig
 │   ├── frames.py           # Frame extraction from video via ffmpeg scene detection (subprocess)
-│   └── models.py           # Dataclasses: Participant, MeetingMetadata, Utterance, TranscriptResult, AnalysisResult, etc.
+│   ├── models.py           # Dataclasses: Participant, MeetingMetadata, Utterance, TranscriptResult, AnalysisResult, etc.
+│   └── transcribe.py       # WhisperX transcription + diarization; graceful ImportError if whisperx not installed
 └── tests/
     ├── __init__.py         # Test package marker
     ├── conftest.py         # Shared fixtures: tmp_vault, tmp_recordings, tmp_frames
     ├── test_config.py      # Tests for YAML config loading and derived vault paths
     ├── test_frames.py      # Tests for frame extraction (mocked subprocess calls)
-    └── test_models.py      # Tests for all data models and their from_dict/to_labelled_text methods
+    ├── test_models.py      # Tests for all data models and their from_dict/to_labelled_text methods
+    └── test_transcribe.py  # Tests for WhisperX transcription (mocked whisperx module)
 ```
 
 ## Key Relationships
@@ -39,4 +41,5 @@ recap/
 - `pyproject.toml` defines optional extras: `ml` (whisperx), `todoist`, `dev` (pytest)
 - Test fixtures in `conftest.py` mirror vault structure: `Work/Meetings/`, `Work/People/`, `Work/Companies/`
 - `recap/frames.py` is independent — uses only stdlib (subprocess, pathlib, dataclasses); no imports from other recap modules
+- `recap/transcribe.py` imports `recap.models` (Utterance, TranscriptResult); whisperx is optional (try/except ImportError)
 - PLAN.md references tech stack decisions tracked in `~/.claude/projects/.../memory/meeting-tool-tech-stack.md`
