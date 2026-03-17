@@ -12,7 +12,7 @@ from recap.models import AnalysisResult, MeetingMetadata, TranscriptResult
 
 logger = logging.getLogger(__name__)
 
-RETRY_DELAYS = [2, 8, 30]
+RETRY_DELAYS = [2, 8]
 MAX_RETRIES = 3
 
 

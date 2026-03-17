@@ -13,7 +13,7 @@ from recap.frames import extract_frames
 from recap.models import MeetingMetadata
 from recap.todoist import create_tasks, save_retry_file
 from recap.transcribe import transcribe
-from recap.vault import find_previous_meeting, write_meeting_note, write_profile_stubs, _slugify
+from recap.vault import find_previous_meeting, write_meeting_note, write_profile_stubs, slugify
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ def run_pipeline(
     duration = _get_audio_duration(audio_path)
 
     # Move recording to recordings directory
-    slug = _slugify(metadata.title)
+    slug = slugify(metadata.title)
     ext = audio_path.suffix
     recording_name = f"{metadata.date.isoformat()}-{slug}{ext}"
     recording_dest = config.recordings_path / recording_name

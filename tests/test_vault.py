@@ -21,7 +21,7 @@ from recap.vault import (
     find_previous_meeting,
     _generate_meeting_markdown,
     _format_duration,
-    _slugify,
+    slugify,
 )
 from recap.frames import FrameResult
 
@@ -63,10 +63,10 @@ def sample_analysis() -> AnalysisResult:
 
 class TestSlugify:
     def test_basic(self):
-        assert _slugify("Project Kickoff with Acme Corp") == "project-kickoff-with-acme-corp"
+        assert slugify("Project Kickoff with Acme Corp") == "project-kickoff-with-acme-corp"
 
     def test_special_chars(self):
-        assert _slugify("Q3 Review: Budget & Timeline") == "q3-review-budget-timeline"
+        assert slugify("Q3 Review: Budget & Timeline") == "q3-review-budget-timeline"
 
 
 class TestFormatDuration:
@@ -328,3 +328,18 @@ class TestFindPreviousMeeting:
         )
         # 2 of 3 current participants overlap = 0.67 > 0.5 threshold
         assert result == "2026-03-09 - Team Sync"
+
+    def test_handles_crlf_line_endings(self, tmp_vault):
+        """Ensure frontmatter parsing works with Windows-style CRLF endings."""
+        meetings_dir = tmp_vault / "Work" / "Meetings"
+        old_note = meetings_dir / "2026-03-09 - CRLF Meeting.md"
+        # Write with CRLF line endings
+        old_note.write_bytes(
+            b"---\r\nparticipants:\r\n  - \"[[Tim]]\"\r\n  - \"[[Jane Smith]]\"\r\n---\r\nContent\r\n"
+        )
+        result = find_previous_meeting(
+            participant_names=["Tim", "Jane Smith"],
+            meetings_dir=meetings_dir,
+            exclude_filename="2026-03-16 - Meeting.md",
+        )
+        assert result == "2026-03-09 - CRLF Meeting"

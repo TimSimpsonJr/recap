@@ -23,19 +23,19 @@ recap/
 ├── recap/
 │   ├── __init__.py         # Package root — docstring only
 │   ├── __main__.py         # Entry point for `python -m recap` (imports recap.cli.main)
-│   ├── cli.py              # CLI test harness: argparse subcommands (process, retry-todoist), logging setup
+│   ├── cli.py              # CLI test harness: argparse subcommands (process, retry-todoist), file+stdout logging
 │   ├── config.py           # YAML config loading: RecapConfig, WhisperXConfig, TodoistConfig, ClaudeConfig
 │   ├── analyze.py          # Claude Code CLI analysis: prompt building, JSON parsing, retry logic
 │   ├── frames.py           # Frame extraction from video via ffmpeg scene detection (subprocess)
 │   ├── models.py           # Dataclasses: Participant, MeetingMetadata, Utterance, TranscriptResult, AnalysisResult, etc.
 │   ├── pipeline.py         # Pipeline orchestrator: ties transcribe, frames, analyze, vault, todoist together
-│   ├── todoist.py          # Todoist task creation from action items; obsidian URI linking, retry file persistence
+│   ├── todoist.py          # Todoist task creation with idempotency check; obsidian URI linking, retry file persistence
 │   ├── transcribe.py       # WhisperX transcription + diarization; graceful ImportError if whisperx not installed
 │   └── vault.py            # Obsidian vault writing: meeting notes, profile stubs (people/companies), previous meeting search
 └── tests/
     ├── __init__.py         # Test package marker
     ├── conftest.py         # Shared fixtures: tmp_vault, tmp_recordings, tmp_frames
-    ├── test_cli.py         # Tests for CLI arg parsing and process command (mocked pipeline)
+    ├── test_cli.py         # Tests for CLI arg parsing, process command, and retry-todoist execution (mocked)
     ├── test_analyze.py     # Tests for Claude analysis module (mocked subprocess)
     ├── test_config.py      # Tests for YAML config loading and derived vault paths
     ├── test_frames.py      # Tests for frame extraction (mocked subprocess calls)
@@ -59,7 +59,7 @@ recap/
 - `recap/transcribe.py` imports `recap.models` (Utterance, TranscriptResult); whisperx is optional (try/except ImportError)
 - `recap/analyze.py` imports `recap.models` (AnalysisResult, MeetingMetadata, TranscriptResult); spawns `claude --print` as subprocess
 - `recap/todoist.py` imports `recap.models` (ActionItem); wraps `todoist-api-python` with try/except ImportError (same pattern as transcribe.py)
-- `recap/vault.py` imports `recap.models` (AnalysisResult, MeetingMetadata, ProfileStub) and `recap.frames` (FrameResult); `_slugify` is reused by pipeline.py
+- `recap/vault.py` imports `recap.models` (AnalysisResult, MeetingMetadata, ProfileStub) and `recap.frames` (FrameResult); `slugify` is a public function reused by pipeline.py
 - `recap/pipeline.py` is the top-level orchestrator — imports from all other recap modules (transcribe, frames, analyze, vault, todoist, config, models)
 - `recap/pipeline.py` gracefully degrades: todoist failures save a retry file, frame extraction failures are logged and skipped
 - `prompts/meeting_analysis.md` is loaded by `recap/pipeline.py` via `pathlib.Path(__file__).parent.parent / "prompts"` — template is outside the package

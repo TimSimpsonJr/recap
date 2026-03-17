@@ -18,7 +18,7 @@ from recap.models import (
 logger = logging.getLogger(__name__)
 
 
-def _slugify(text: str) -> str:
+def slugify(text: str) -> str:
     slug = text.lower()
     slug = re.sub(r"[^a-z0-9\s-]", "", slug)
     slug = re.sub(r"[\s]+", "-", slug)
@@ -237,6 +237,8 @@ def write_profile_stubs(
 
 
 def _parse_participants_from_frontmatter(content: str) -> list[str]:
+    # Normalize CRLF to LF for consistent frontmatter splitting
+    content = content.replace("\r\n", "\n")
     parts = content.split("---\n")
     if len(parts) < 3:
         return []

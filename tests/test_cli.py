@@ -45,3 +45,62 @@ class TestMain:
             main()
 
         mock_run.assert_called_once()
+
+    @patch("recap.todoist.TodoistAPI")
+    @patch("recap.cli.load_config")
+    def test_retry_todoist_calls_create_tasks(self, mock_load_config, mock_api_cls, tmp_path):
+        """Test that retry-todoist actually calls create_tasks with retry items."""
+        config = MagicMock()
+        config.user_name = "Tim"
+        config.todoist.api_token = "test_token"
+        config.todoist.default_project = "Recap"
+        config.vault_path.name = "TestVault"
+        retry_path = tmp_path / "todoist-retry.json"
+        config.retry_path = retry_path
+
+        # Write retry items
+        retry_items = [
+            {
+                "description": "Send proposal",
+                "due_date": "2026-03-20",
+                "priority": "high",
+                "project": "Client Work",
+                "note_path": "Work/Meetings/2026-03-16 - Kickoff.md",
+            }
+        ]
+        retry_path.write_text(json.dumps(retry_items))
+
+        mock_load_config.return_value = config
+
+        # Mock the Todoist API
+        mock_api = MagicMock()
+        mock_api_cls.return_value = mock_api
+        mock_task = MagicMock()
+        mock_task.id = "456"
+        mock_api.add_task.return_value = mock_task
+        mock_api.get_projects.return_value = []
+        mock_api.get_tasks.return_value = []
+
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("vault_path: test")
+
+        main(["retry-todoist", "--config", str(config_file)])
+
+        # Verify create_tasks was called (via the API)
+        mock_api.add_task.assert_called_once()
+        # Verify retry file was cleared
+        assert not retry_path.exists()
+
+    @patch("recap.cli.load_config")
+    def test_retry_todoist_no_pending(self, mock_load_config, tmp_path):
+        """Test retry-todoist with no pending items exits cleanly."""
+        config = MagicMock()
+        retry_path = tmp_path / "todoist-retry.json"
+        config.retry_path = retry_path
+        mock_load_config.return_value = config
+
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text("vault_path: test")
+
+        # Should not raise
+        main(["retry-todoist", "--config", str(config_file)])

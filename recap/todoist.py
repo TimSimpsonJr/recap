@@ -58,8 +58,22 @@ def create_tasks(
     except Exception as e:
         logger.warning("Failed to fetch projects, using default: %s", e)
 
+    # Fetch existing tasks for idempotency check
+    existing_contents: set[str] = set()
+    try:
+        existing_tasks = api.get_tasks(label="recap")
+        existing_contents = {t.content for t in existing_tasks}
+    except Exception as e:
+        logger.warning("Failed to fetch existing tasks for idempotency check: %s", e)
+
     task_ids = []
+    errors = []
     for item in user_items:
+        # Idempotency: skip if a task with the same content already exists
+        if item.description in existing_contents:
+            logger.info("Skipping duplicate task: %s", item.description)
+            continue
+
         try:
             kwargs = {
                 "content": item.description,
@@ -82,6 +96,13 @@ def create_tasks(
             logger.info("Created Todoist task: %s (id=%s)", item.description, task.id)
         except Exception as e:
             logger.error("Failed to create task '%s': %s", item.description, e)
+            errors.append((item.description, str(e)))
+
+    if errors:
+        failed_descriptions = [desc for desc, _ in errors]
+        logger.warning(
+            "Failed to create %d task(s): %s", len(errors), ", ".join(failed_descriptions)
+        )
 
     return task_ids
 

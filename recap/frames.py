@@ -15,6 +15,16 @@ class FrameResult:
     timestamp: float
 
 
+def _escape_lavfi_path(path: pathlib.Path) -> str:
+    """Escape special characters in a path for use in lavfi movie= filter."""
+    s = str(path)
+    # Escape single quotes (lavfi uses single-quoted strings)
+    s = s.replace("'", "'\\''")
+    # Escape colons and backslashes which have special meaning in lavfi
+    s = s.replace("\\", "/")
+    return s
+
+
 def _parse_scene_timestamps(ffprobe_output: str) -> list[float]:
     timestamps = []
     for line in ffprobe_output.strip().split("\n"):
@@ -41,7 +51,7 @@ def extract_frames(
             "ffprobe",
             "-v", "quiet",
             "-f", "lavfi",
-            "-i", f"movie={str(video_path)},select=gt(scene\\,{scene_threshold})",
+            "-i", f"movie='{_escape_lavfi_path(video_path)}',select=gt(scene\\,{scene_threshold})",
             "-show_entries", "frame=pts_time",
             "-of", "csv=p=0",
         ],

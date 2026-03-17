@@ -1,3 +1,7 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.backends"
+
 [project]
 name = "recap"
 version = "0.1.0"
