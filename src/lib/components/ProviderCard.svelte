@@ -12,15 +12,26 @@
 
   let { provider, label, providerState, showRegion = false }: Props = $props();
 
-  let clientId = $state(providerState.clientId);
-  let clientSecret = $state(providerState.clientSecret);
+  let editingClientId = $state("");
+  let editingClientSecret = $state("");
+  let hasPendingEdits = $state(false);
   let saving = $state(false);
   let connecting = $state(false);
 
-  $effect(() => {
-    clientId = providerState.clientId;
-    clientSecret = providerState.clientSecret;
-  });
+  let clientId = $derived(hasPendingEdits ? editingClientId : providerState.clientId);
+  let clientSecret = $derived(hasPendingEdits ? editingClientSecret : providerState.clientSecret);
+
+  function onClientIdInput(e: Event) {
+    editingClientId = (e.target as HTMLInputElement).value;
+    editingClientSecret = clientSecret;
+    hasPendingEdits = true;
+  }
+
+  function onClientSecretInput(e: Event) {
+    editingClientSecret = (e.target as HTMLInputElement).value;
+    editingClientId = clientId;
+    hasPendingEdits = true;
+  }
 
   let hasCredentials = $derived(clientId.trim() !== "" && clientSecret.trim() !== "");
 
@@ -28,6 +39,7 @@
     saving = true;
     try {
       await saveClientCredentials(provider, clientId, clientSecret);
+      hasPendingEdits = false;
     } finally {
       saving = false;
     }
@@ -61,7 +73,8 @@
       <span class="block text-sm text-gray-600 mb-1">Client ID</span>
       <input
         type="text"
-        bind:value={clientId}
+        value={clientId}
+        oninput={onClientIdInput}
         onblur={saveCredentials}
         class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm"
         placeholder="Enter client ID"
@@ -72,7 +85,8 @@
       <span class="block text-sm text-gray-600 mb-1">Client Secret</span>
       <input
         type="password"
-        bind:value={clientSecret}
+        value={clientSecret}
+        oninput={onClientSecretInput}
         onblur={saveCredentials}
         class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm"
         placeholder="Enter client secret"
