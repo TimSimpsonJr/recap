@@ -21,9 +21,10 @@ export async function exchangeOAuthCode(
   provider: string,
   code: string,
   clientId: string,
-  clientSecret: string
+  clientSecret: string,
+  zohoRegion?: string
 ): Promise<TokenResponse> {
-  return invoke("exchange_oauth_code", { provider, code, clientId, clientSecret });
+  return invoke("exchange_oauth_code", { provider, code, clientId, clientSecret, zohoRegion });
 }
 
 // Sidecar

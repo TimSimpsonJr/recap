@@ -32,7 +32,8 @@ pub struct TokenResponse {
 }
 
 /// Get OAuth config for a given provider name.
-pub fn get_provider_config(provider: &str) -> Option<OAuthConfig> {
+/// For Zoho, pass the region (e.g. "com", "eu", "in", "com.au") to select the correct datacenter.
+pub fn get_provider_config(provider: &str, zoho_region: Option<&str>) -> Option<OAuthConfig> {
     match provider {
         "zoom" => Some(OAuthConfig {
             provider: "zoom".into(),
@@ -55,13 +56,16 @@ pub fn get_provider_config(provider: &str) -> Option<OAuthConfig> {
             scopes: "OnlineMeetings.Read User.Read".into(),
             redirect_method: RedirectMethod::Localhost,
         }),
-        "zoho" => Some(OAuthConfig {
-            provider: "zoho".into(),
-            auth_url: "https://accounts.zoho.com/oauth/v2/auth".into(),
-            token_url: "https://accounts.zoho.com/oauth/v2/token".into(),
-            scopes: "ZohoMeeting.manageOrg.READ ZohoCalendar.calendar.READ".into(),
-            redirect_method: RedirectMethod::DeepLink,
-        }),
+        "zoho" => {
+            let region = zoho_region.unwrap_or("com");
+            Some(OAuthConfig {
+                provider: "zoho".into(),
+                auth_url: format!("https://accounts.zoho.{}/oauth/v2/auth", region),
+                token_url: format!("https://accounts.zoho.{}/oauth/v2/token", region),
+                scopes: "ZohoMeeting.manageOrg.READ ZohoCalendar.calendar.READ".into(),
+                redirect_method: RedirectMethod::DeepLink,
+            })
+        }
         "todoist" => Some(OAuthConfig {
             provider: "todoist".into(),
             auth_url: "https://todoist.com/oauth/authorize".into(),
@@ -231,9 +235,11 @@ pub async fn start_oauth(
     provider: String,
     client_id: String,
     client_secret: String,
+    zoho_region: Option<String>,
 ) -> Result<(), String> {
     let config =
-        get_provider_config(&provider).ok_or_else(|| format!("Unknown provider: {}", provider))?;
+        get_provider_config(&provider, zoho_region.as_deref())
+            .ok_or_else(|| format!("Unknown provider: {}", provider))?;
 
     let state = uuid::Uuid::new_v4().to_string();
 
@@ -272,7 +278,13 @@ pub async fn start_oauth(
                         {
                             Ok(tokens) => {
                                 use tauri::Emitter;
-                                let _ = app_clone.emit("oauth-tokens", &tokens);
+                                let payload = serde_json::json!({
+                                    "provider": config_clone.provider,
+                                    "access_token": tokens.access_token,
+                                    "refresh_token": tokens.refresh_token,
+                                    "expires_in": tokens.expires_in,
+                                });
+                                let _ = app_clone.emit("oauth-tokens", payload);
                                 log::info!(
                                     "OAuth tokens received for {}",
                                     config_clone.provider
@@ -309,9 +321,11 @@ pub async fn exchange_oauth_code(
     code: String,
     client_id: String,
     client_secret: String,
+    zoho_region: Option<String>,
 ) -> Result<TokenResponse, String> {
     let config =
-        get_provider_config(&provider).ok_or_else(|| format!("Unknown provider: {}", provider))?;
+        get_provider_config(&provider, zoho_region.as_deref())
+            .ok_or_else(|| format!("Unknown provider: {}", provider))?;
 
     let redirect_uri = format!("recap://oauth/{}/callback", provider);
 

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { type ProviderName, type ProviderState, saveClientCredentials, disconnect } from "../stores/credentials";
   import { startOAuth } from "../tauri";
-  import { settings } from "../stores/settings";
+  import { settings, saveSetting } from "../stores/settings";
 
   interface Props {
     provider: ProviderName;
@@ -96,7 +96,11 @@
     {#if showRegion}
       <label class="block">
         <span class="block text-sm text-gray-600 mb-1">Region</span>
-        <select class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm">
+        <select
+          class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm"
+          value={$settings.zohoRegion}
+          onchange={(e) => saveSetting("zohoRegion", (e.target as HTMLSelectElement).value)}
+        >
           <option value="com">.com (US)</option>
           <option value="eu">.eu (Europe)</option>
           <option value="in">.in (India)</option>

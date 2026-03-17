@@ -6,7 +6,7 @@
   import Dashboard from "./routes/Dashboard.svelte";
   import { loadCredentials, credentials, saveTokens } from "./lib/stores/credentials";
   import type { ProviderName } from "./lib/stores/credentials";
-  import { loadSettings } from "./lib/stores/settings";
+  import { loadSettings, settings } from "./lib/stores/settings";
   import { exchangeOAuthCode } from "./lib/tauri";
 
   let currentRoute = $state("dashboard");
@@ -32,6 +32,7 @@
     window.addEventListener("hashchange", updateRoute);
     updateRoute();
 
+    // Deep link flow (Zoom, Zoho, Todoist): receives auth code, exchanges for tokens
     await listen("oauth-callback", async (event: any) => {
       const { provider, code } = event.payload;
       const creds = get(credentials);
@@ -39,11 +40,13 @@
 
       if (providerState?.clientId && providerState?.clientSecret) {
         try {
+          const zohoRegion = provider === "zoho" ? get(settings).zohoRegion : undefined;
           const tokens = await exchangeOAuthCode(
             provider,
             code,
             providerState.clientId,
-            providerState.clientSecret
+            providerState.clientSecret,
+            zohoRegion
           );
           await saveTokens(
             provider as ProviderName,
@@ -55,6 +58,17 @@
           console.error(`OAuth token exchange failed for ${provider}:`, err);
         }
       }
+    });
+
+    // Localhost flow (Google, Microsoft): Rust already exchanged the code, receives tokens directly
+    await listen("oauth-tokens", async (event: any) => {
+      const { provider, access_token, refresh_token } = event.payload;
+      await saveTokens(
+        provider as ProviderName,
+        access_token,
+        refresh_token ?? null,
+        null
+      );
     });
   });
 </script>
