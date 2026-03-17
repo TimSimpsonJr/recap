@@ -1,14 +1,20 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { checkSidecarStatus } from "../tauri";
+  import { checkSidecarStatus, checkFfmpeg, checkNvenc } from "../tauri";
   import { getVersion } from "@tauri-apps/api/app";
 
   let version = $state("...");
   let sidecarFound = $state<boolean | null>(null);
+  let ffmpegFound = $state<boolean | null>(null);
+  let nvencStatus = $state<string | null>(null);
 
   onMount(async () => {
     version = await getVersion();
     sidecarFound = await checkSidecarStatus();
+    ffmpegFound = await checkFfmpeg();
+    if (ffmpegFound) {
+      nvencStatus = await checkNvenc();
+    }
   });
 </script>
 
@@ -21,6 +27,18 @@
     <span class="text-gray-600">Pipeline Sidecar</span>
     <span class={sidecarFound ? "text-green-600" : "text-red-600"}>
       {sidecarFound === null ? "Checking..." : sidecarFound ? "Found" : "Not found"}
+    </span>
+  </div>
+  <div class="flex justify-between">
+    <span class="text-gray-600">ffmpeg</span>
+    <span class={ffmpegFound ? "text-green-600" : "text-red-600"}>
+      {ffmpegFound === null ? "Checking..." : ffmpegFound ? "Found" : "Not found"}
+    </span>
+  </div>
+  <div class="flex justify-between">
+    <span class="text-gray-600">NVENC (H.265)</span>
+    <span class={nvencStatus === "Available" ? "text-green-600" : "text-yellow-600"}>
+      {ffmpegFound === false ? "Requires ffmpeg" : nvencStatus ?? "Checking..."}
     </span>
   </div>
 </div>

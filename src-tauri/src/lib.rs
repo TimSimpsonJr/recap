@@ -2,6 +2,7 @@ use tauri::Manager;
 
 mod credentials;
 mod deep_link;
+mod diagnostics;
 mod oauth;
 mod recorder;
 mod sidecar;
@@ -60,6 +61,8 @@ pub fn run() {
             recorder::recorder::start_recording,
             recorder::recorder::stop_recording,
             recorder::recorder::retry_processing,
+            diagnostics::check_nvenc,
+            diagnostics::check_ffmpeg,
         ])
         .on_window_event(|window, event| {
             // Closing the window hides it instead of quitting

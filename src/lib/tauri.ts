@@ -44,3 +44,12 @@ export async function runPipeline(
 export async function checkSidecarStatus(): Promise<boolean> {
   return invoke("check_sidecar_status");
 }
+
+// Diagnostics
+export async function checkNvenc(): Promise<string> {
+  return invoke("check_nvenc");
+}
+
+export async function checkFfmpeg(): Promise<boolean> {
+  return invoke("check_ffmpeg");
+}
