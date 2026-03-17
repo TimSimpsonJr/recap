@@ -1,3 +1,4 @@
+mod deep_link;
 mod tray;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -25,6 +26,9 @@ pub fn run() {
 
             // System tray
             tray::create_tray(app.handle())?;
+
+            // Deep link handler
+            deep_link::setup_deep_links(app.handle())?;
 
             // Start minimized to tray — hide the main window
             if let Some(window) = app.get_webview_window("main") {
