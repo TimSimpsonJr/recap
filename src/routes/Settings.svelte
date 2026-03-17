@@ -3,6 +3,7 @@
   import SettingsSection from "../lib/components/SettingsSection.svelte";
   import VaultSettings from "../lib/components/VaultSettings.svelte";
   import RecordingSettings from "../lib/components/RecordingSettings.svelte";
+  import RecordingBehaviorSettings from "../lib/components/RecordingBehaviorSettings.svelte";
   import WhisperXSettings from "../lib/components/WhisperXSettings.svelte";
   import TodoistSettings from "../lib/components/TodoistSettings.svelte";
   import GeneralSettings from "../lib/components/GeneralSettings.svelte";
@@ -34,6 +35,9 @@
 
     <SettingsSection title="Recording">
       <RecordingSettings />
+      <div class="mt-4 pt-4 border-t border-gray-200">
+        <RecordingBehaviorSettings />
+      </div>
     </SettingsSection>
 
     <SettingsSection title="WhisperX">

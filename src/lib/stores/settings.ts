@@ -15,6 +15,10 @@ export interface AppSettings {
   todoistLabels: string;
   zohoRegion: string;
   showNotificationOnComplete: boolean;
+  autoDetectMeetings: boolean;
+  detectionAction: "ask" | "always_record" | "never_record";
+  timeoutAction: "record" | "skip";
+  notificationTimeoutSeconds: number;
 }
 
 const defaults: AppSettings = {
@@ -31,6 +35,10 @@ const defaults: AppSettings = {
   todoistLabels: "",
   zohoRegion: "com",
   showNotificationOnComplete: true,
+  autoDetectMeetings: true,
+  detectionAction: "ask",
+  timeoutAction: "record",
+  notificationTimeoutSeconds: 60,
 };
 
 export const settings = writable<AppSettings>({ ...defaults });
