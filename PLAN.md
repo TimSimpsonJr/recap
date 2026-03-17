@@ -232,16 +232,16 @@ Scheduled task (periodic):
 **Goal:** Validate that the core technical bets work before writing app code.
 
 Research items:
-- [ ] Zoom API: meeting event webhooks, cloud recording download, participant list endpoint
-- [ ] Teams Graph API: what's available on personal accounts vs Business
-- [ ] Google Meet API: recording capabilities, Workspace admin requirements
-- [ ] Zoho Meet API: does a recording API exist? What admin permissions are needed?
-- [ ] Zoho Calendar API: event polling, meeting link extraction
-- [ ] Whisper + Pyannote pipeline: run a test transcription with diarization on RTX 4070
-- [ ] WhisperX as potential simpler alternative to raw Whisper + Pyannote
-- [ ] Tauri v2: system tray API, global hotkey API, deep link / URL protocol handler on Windows
-- [ ] Todoist API: task creation, label support, completion polling
-- [ ] Claude Code CLI: confirm subprocess invocation pattern works for batch analysis
+- [x] Zoom API: meeting event webhooks, cloud recording download, participant list endpoint
+- [x] Teams Graph API: what's available on personal accounts vs Business
+- [x] Google Meet API: recording capabilities, Workspace admin requirements
+- [x] Zoho Meet API: does a recording API exist? What admin permissions are needed?
+- [x] Zoho Calendar API: event polling, meeting link extraction
+- [x] Whisper + Pyannote pipeline: run a test transcription with diarization on RTX 4070
+- [x] WhisperX as potential simpler alternative to raw Whisper + Pyannote
+- [x] Tauri v2: system tray API, global hotkey API, deep link / URL protocol handler on Windows
+- [x] Todoist API: task creation, label support, completion polling
+- [x] Claude Code CLI: confirm subprocess invocation pattern works for batch analysis
 
 ### Phase 2: Core Pipeline (CLI-only, no UI)
 **Goal:** End-to-end pipeline from audio file → vault notes + Todoist tasks.

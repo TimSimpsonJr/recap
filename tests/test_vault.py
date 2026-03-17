@@ -147,7 +147,8 @@ class TestGenerateMeetingMarkdown:
             recording_path=pathlib.Path("C:/rec/test.mp4"),
         )
         assert "## Action Items" in md
-        assert "- [ ] Tim: Send proposal by Friday" in md
+        # Without user_name, all assignees get wikilinked, no #todoist tags
+        assert "- [ ] [[Tim]]: Send proposal by Friday" in md
         assert "- [ ] [[Jane Smith]]: Review budget numbers" in md
 
     def test_omits_relationship_notes_when_null(self, sample_metadata, sample_analysis):

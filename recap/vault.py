@@ -60,10 +60,6 @@ def _generate_meeting_markdown(
         "type": analysis.meeting_type,
         "tags": [f"meeting/{analysis.meeting_type}"],
     }
-    # Default user_name to first participant if not provided
-    if user_name is None and metadata.participants:
-        user_name = metadata.participants[0].name
-
     lines = ["---"]
     lines.append(yaml.dump(fm, default_flow_style=False, sort_keys=False).strip())
     lines.append("---")

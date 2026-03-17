@@ -16,6 +16,10 @@ recap/
 ├── PLAN.md                 # Full implementation plan with architecture, phases, and decisions
 ├── pyproject.toml          # Project metadata, dependencies, pytest config (uv-managed)
 ├── config.example.yaml     # Example configuration (vault path, API tokens, WhisperX settings)
+├── prompts/
+│   └── meeting_analysis.md # Claude analysis prompt template with {{participants}} and {{transcript}} placeholders
+├── docs/
+│   └── plans/              # Design docs and implementation plans
 ├── recap/
 │   ├── __init__.py         # Package root — docstring only
 │   ├── __main__.py         # Entry point for `python -m recap` (imports recap.cli.main)
@@ -27,7 +31,7 @@ recap/
 │   ├── pipeline.py         # Pipeline orchestrator: ties transcribe, frames, analyze, vault, todoist together
 │   ├── todoist.py          # Todoist task creation from action items; obsidian URI linking, retry file persistence
 │   ├── transcribe.py       # WhisperX transcription + diarization; graceful ImportError if whisperx not installed
-│   └── vault.py            # Obsidian vault writing: meeting note markdown generation, frontmatter, _slugify helper
+│   └── vault.py            # Obsidian vault writing: meeting notes, profile stubs (people/companies), previous meeting search
 └── tests/
     ├── __init__.py         # Test package marker
     ├── conftest.py         # Shared fixtures: tmp_vault, tmp_recordings, tmp_frames
@@ -39,7 +43,7 @@ recap/
     ├── test_pipeline.py    # Tests for pipeline orchestrator (mocked transcribe, analyze, frames, todoist)
     ├── test_todoist.py     # Tests for Todoist integration (mocked API, retry file, filtering, URI building)
     ├── test_transcribe.py  # Tests for WhisperX transcription (mocked whisperx module)
-    └── test_vault.py       # Tests for vault meeting note generation (frontmatter, sections, todoist tags)
+    └── test_vault.py       # Tests for vault: meeting notes, profile stubs, previous meeting search
 ```
 
 ## Key Relationships
@@ -58,4 +62,5 @@ recap/
 - `recap/vault.py` imports `recap.models` (AnalysisResult, MeetingMetadata, ProfileStub) and `recap.frames` (FrameResult); `_slugify` is reused by pipeline.py
 - `recap/pipeline.py` is the top-level orchestrator — imports from all other recap modules (transcribe, frames, analyze, vault, todoist, config, models)
 - `recap/pipeline.py` gracefully degrades: todoist failures save a retry file, frame extraction failures are logged and skipped
+- `prompts/meeting_analysis.md` is loaded by `recap/pipeline.py` via `pathlib.Path(__file__).parent.parent / "prompts"` — template is outside the package
 - PLAN.md references tech stack decisions tracked in `~/.claude/projects/.../memory/meeting-tool-tech-stack.md`
