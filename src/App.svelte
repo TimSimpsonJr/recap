@@ -10,10 +10,20 @@
   import { exchangeOAuthCode } from "./lib/tauri";
 
   let currentRoute = $state("dashboard");
+  let initialized = $state(false);
 
   onMount(async () => {
-    await loadCredentials();
-    await loadSettings();
+    try {
+      await loadCredentials();
+    } catch (err) {
+      console.error("Failed to load credentials:", err);
+    }
+    try {
+      await loadSettings();
+    } catch (err) {
+      console.error("Failed to load settings:", err);
+    }
+    initialized = true;
 
     const updateRoute = () => {
       const hash = window.location.hash.slice(1) || "dashboard";
@@ -50,7 +60,11 @@
 </script>
 
 <main class="min-h-screen bg-gray-50">
-  {#if currentRoute === "settings"}
+  {#if !initialized}
+    <div class="flex items-center justify-center h-screen">
+      <p class="text-gray-400">Loading...</p>
+    </div>
+  {:else if currentRoute === "settings"}
     <Settings />
   {:else}
     <Dashboard />

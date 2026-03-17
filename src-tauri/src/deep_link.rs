@@ -1,6 +1,5 @@
 use serde::Serialize;
 use tauri::Emitter;
-use tauri::Manager;
 use tauri_plugin_deep_link::DeepLinkExt;
 
 /// Payload emitted to the frontend when an OAuth callback deep link arrives.
@@ -14,7 +13,9 @@ pub struct OAuthCallbackPayload {
 pub fn setup_deep_links(app: &tauri::AppHandle) -> tauri::Result<()> {
     // Register the recap:// protocol at runtime (needed for dev on Windows)
     #[cfg(desktop)]
-    app.deep_link().register("recap")?;
+    app.deep_link()
+        .register("recap")
+        .map_err(|e| tauri::Error::Anyhow(e.into()))?;
 
     // Handle deep links received while app is running
     let handle = app.clone();

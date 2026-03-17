@@ -29,9 +29,15 @@ pub fn create_tray<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
         ],
     )?;
 
+    let icon = app
+        .default_window_icon()
+        .cloned()
+        .expect("app should have a default icon");
+
     TrayIconBuilder::new()
+        .icon(icon)
         .menu(&menu)
-        .menu_on_left_click(false)
+        .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "open_dashboard" => {
                 show_main_window(app);
