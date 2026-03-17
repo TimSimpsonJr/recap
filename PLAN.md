@@ -278,8 +278,6 @@ Research items:
 - PyInstaller sidecar build script + Tauri sidecar declaration + Rust invocation wrapper
 - Existing `config.yaml` as read-only fallback for first-run defaults
 
-**Known TODO (pre-release):** OAuth `state` parameter is generated but never verified on callback. Add state storage + verification before release to prevent CSRF on the `recap://` deep link and localhost redirect flows.
-
 ### Phase 4: Zoom Integration
 **Goal:** First fully-functional platform module.
 
