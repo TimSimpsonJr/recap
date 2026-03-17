@@ -34,6 +34,9 @@ Thumbs.db
 # Recordings (large files, stored locally not in git)
 recordings/
 
+# PyInstaller
+*.spec
+
 # Build artifacts
 *.exe
 *.msi
