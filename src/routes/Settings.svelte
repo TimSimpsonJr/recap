@@ -6,6 +6,7 @@
   import WhisperXSettings from "../lib/components/WhisperXSettings.svelte";
   import TodoistSettings from "../lib/components/TodoistSettings.svelte";
   import GeneralSettings from "../lib/components/GeneralSettings.svelte";
+  import AboutSection from "../lib/components/AboutSection.svelte";
   import { credentials } from "../lib/stores/credentials";
 </script>
 
@@ -45,6 +46,10 @@
 
     <SettingsSection title="General">
       <GeneralSettings />
+    </SettingsSection>
+
+    <SettingsSection title="About">
+      <AboutSection />
     </SettingsSection>
   </div>
 </div>
