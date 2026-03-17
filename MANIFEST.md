@@ -19,6 +19,7 @@ recap/
 ├── recap/
 │   ├── __init__.py         # Package root — docstring only
 │   ├── __main__.py         # Entry point for `python -m recap` (imports recap.cli.main)
+│   ├── cli.py              # CLI test harness: argparse subcommands (process, retry-todoist), logging setup
 │   ├── config.py           # YAML config loading: RecapConfig, WhisperXConfig, TodoistConfig, ClaudeConfig
 │   ├── analyze.py          # Claude Code CLI analysis: prompt building, JSON parsing, retry logic
 │   ├── frames.py           # Frame extraction from video via ffmpeg scene detection (subprocess)
@@ -30,6 +31,7 @@ recap/
 └── tests/
     ├── __init__.py         # Test package marker
     ├── conftest.py         # Shared fixtures: tmp_vault, tmp_recordings, tmp_frames
+    ├── test_cli.py         # Tests for CLI arg parsing and process command (mocked pipeline)
     ├── test_analyze.py     # Tests for Claude analysis module (mocked subprocess)
     ├── test_config.py      # Tests for YAML config loading and derived vault paths
     ├── test_frames.py      # Tests for frame extraction (mocked subprocess calls)
@@ -42,7 +44,8 @@ recap/
 
 ## Key Relationships
 
-- `recap/__main__.py` imports `recap.cli.main` (not yet created — Task 4+)
+- `recap/__main__.py` imports `recap.cli.main` — the CLI entry point
+- `recap/cli.py` imports `recap.config.load_config` and `recap.pipeline.run_pipeline`; retry-todoist lazily imports `recap.todoist`
 - `recap/models.py` is the foundation — every pipeline module imports its dataclasses
 - `recap/config.py` is used by every pipeline module; `load_config()` reads `config.yaml` and returns `RecapConfig`
 - `config.example.yaml` documents all config keys; `config.yaml` is gitignored (contains secrets)
