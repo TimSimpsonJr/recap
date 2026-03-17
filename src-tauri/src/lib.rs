@@ -3,6 +3,7 @@ use tauri::Manager;
 mod credentials;
 mod deep_link;
 mod oauth;
+mod recorder;
 mod sidecar;
 mod tray;
 
