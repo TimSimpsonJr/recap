@@ -1,0 +1,23 @@
+vault_path: "C:/Users/you/path/to/vault"
+recordings_path: "C:/Users/you/recap-data/recordings"
+frames_path: "C:/Users/you/recap-data/frames"
+user_name: "Your Name"
+
+whisperx:
+  model: "large-v3"
+  device: "cuda"
+  language: "en"
+
+huggingface_token: "hf_your_token_here"
+
+todoist:
+  api_token: "your_todoist_api_token"
+  default_project: "Recap"
+  project_map:
+    standup: "Sprint Tasks"
+    client-call: "Client Work"
+    planning: "Sprint Tasks"
+    1:1: "Recap"
+
+claude:
+  command: "claude"

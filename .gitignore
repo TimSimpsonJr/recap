@@ -37,3 +37,10 @@ recordings/
 *.msi
 *.dmg
 *.AppImage
+
+# Config with secrets
+config.yaml
+!config.example.yaml
+
+# Recap data
+recap-data/
