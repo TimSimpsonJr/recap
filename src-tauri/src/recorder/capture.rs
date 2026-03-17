@@ -1,6 +1,7 @@
 use std::fs::File;
-use std::io::{Seek, SeekFrom, Write};
+use std::io::{Seek, SeekFrom, Write as IoWrite};
 use std::path::PathBuf;
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
@@ -306,4 +307,404 @@ unsafe fn capture_from_device(
     let _ = windows::Win32::Foundation::CloseHandle(event);
 
     Ok(())
+}
+
+// ──────────────────────────────────────────────────────────────────────────────
+// Video capture via ffmpeg subprocess + Windows Graphics Capture API
+// ──────────────────────────────────────────────────────────────────────────────
+
+use windows::Win32::UI::WindowsAndMessaging::{
+    EnumWindows, GetWindowThreadProcessId, IsWindowVisible, GetWindowRect,
+};
+use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT, TRUE};
+use windows::Graphics::Capture::GraphicsCaptureItem;
+use windows::Graphics::DirectX::DirectXPixelFormat;
+use windows::Graphics::DirectX::Direct3D11::IDirect3DDevice;
+
+/// Wrapper around HWND raw pointer so it can be sent across threads.
+/// SAFETY: HWND is just a handle value — safe to send between threads.
+struct SendableHwnd(isize);
+unsafe impl Send for SendableHwnd {}
+
+/// Handle for an active video capture session.
+pub struct VideoCapture {
+    stop: Arc<AtomicBool>,
+    handle: Option<JoinHandle<Result<(), CaptureError>>>,
+}
+
+impl VideoCapture {
+    /// Start capturing the window belonging to the given PID at 30fps.
+    ///
+    /// Finds the largest visible window for the PID, captures frames using the
+    /// Windows Graphics Capture API, and pipes raw BGRA frames to an ffmpeg
+    /// subprocess for H.265 encoding.
+    pub fn start(pid: u32, output_path: PathBuf) -> Result<Self, CaptureError> {
+        let hwnd = find_window_for_pid(pid)
+            .ok_or_else(|| CaptureError::VideoError(format!("No window found for PID {}", pid)))?;
+
+        // Extract raw handle so we can send it across threads.
+        let sendable = SendableHwnd(hwnd.0 as isize);
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_clone = stop.clone();
+
+        let handle = thread::spawn(move || -> Result<(), CaptureError> {
+            let hwnd = HWND(sendable.0 as *mut _);
+            capture_window_video(hwnd, output_path, &stop_clone)
+        });
+
+        Ok(VideoCapture {
+            stop,
+            handle: Some(handle),
+        })
+    }
+
+    /// Stop capture, close ffmpeg stdin, wait for encoding to finish.
+    pub fn stop(&mut self) -> Result<(), CaptureError> {
+        self.stop.store(true, Ordering::Relaxed);
+
+        if let Some(handle) = self.handle.take() {
+            match handle.join() {
+                Ok(result) => result,
+                Err(_) => Err(CaptureError::VideoError(
+                    "Video capture thread panicked".to_string(),
+                )),
+            }
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Check if NVENC (NVIDIA hardware encoder) is available.
+    pub fn nvenc_available() -> bool {
+        Command::new("ffmpeg")
+            .args(["-hide_banner", "-encoders"])
+            .output()
+            .map(|output| {
+                String::from_utf8_lossy(&output.stdout).contains("hevc_nvenc")
+            })
+            .unwrap_or(false)
+    }
+}
+
+/// Find the largest visible window belonging to the given PID.
+fn find_window_for_pid(target_pid: u32) -> Option<HWND> {
+    struct EnumState {
+        target_pid: u32,
+        best_hwnd: Option<HWND>,
+        best_area: i64,
+    }
+
+    let mut state = EnumState {
+        target_pid,
+        best_hwnd: None,
+        best_area: 0,
+    };
+
+    unsafe extern "system" fn enum_callback(hwnd: HWND, lparam: LPARAM) -> BOOL {
+        let state = &mut *(lparam.0 as *mut EnumState);
+
+        let mut pid = 0u32;
+        GetWindowThreadProcessId(hwnd, Some(&mut pid));
+
+        if pid != state.target_pid {
+            return TRUE;
+        }
+
+        if !IsWindowVisible(hwnd).as_bool() {
+            return TRUE;
+        }
+
+        let mut rect = RECT::default();
+        if GetWindowRect(hwnd, &mut rect).is_ok() {
+            let area = (rect.right - rect.left) as i64 * (rect.bottom - rect.top) as i64;
+            if area > state.best_area {
+                state.best_area = area;
+                state.best_hwnd = Some(hwnd);
+            }
+        }
+
+        TRUE
+    }
+
+    unsafe {
+        let _ = EnumWindows(
+            Some(enum_callback),
+            LPARAM(&mut state as *mut EnumState as isize),
+        );
+    }
+
+    state.best_hwnd
+}
+
+/// Build the ffmpeg encoder command for the given dimensions and output path.
+fn build_ffmpeg_command(width: u32, height: u32, output_path: &PathBuf) -> Result<Child, CaptureError> {
+    let encoder = if VideoCapture::nvenc_available() {
+        vec!["-c:v", "hevc_nvenc", "-preset", "p4", "-cq", "28"]
+    } else {
+        vec!["-c:v", "libx265", "-crf", "28", "-preset", "fast"]
+    };
+
+    let size = format!("{}x{}", width, height);
+
+    let mut cmd = Command::new("ffmpeg");
+    cmd.args([
+        "-f", "rawvideo",
+        "-pix_fmt", "bgra",
+        "-s", &size,
+        "-r", "30",
+        "-i", "pipe:0",
+    ]);
+    for arg in &encoder {
+        cmd.arg(arg);
+    }
+    cmd.arg("-y")
+        .arg(output_path.to_str().unwrap_or("output.mp4"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+
+    cmd.spawn().map_err(|e| CaptureError::VideoError(format!("Failed to spawn ffmpeg: {}", e)))
+}
+
+/// Capture video from a window using Graphics Capture API, piping frames to ffmpeg.
+fn capture_window_video(
+    hwnd: HWND,
+    output_path: PathBuf,
+    stop: &AtomicBool,
+) -> Result<(), CaptureError> {
+    unsafe {
+        let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+    }
+
+    let result = capture_window_video_inner(hwnd, output_path, stop);
+
+    unsafe {
+        CoUninitialize();
+    }
+
+    result
+}
+
+fn capture_window_video_inner(
+    hwnd: HWND,
+    output_path: PathBuf,
+    stop: &AtomicBool,
+) -> Result<(), CaptureError> {
+    // Get window dimensions for frame size.
+    let (width, height) = unsafe {
+        let mut rect = RECT::default();
+        GetWindowRect(hwnd, &mut rect)
+            .map_err(|e| CaptureError::VideoError(format!("GetWindowRect: {}", e)))?;
+        (
+            (rect.right - rect.left).max(1) as u32,
+            (rect.bottom - rect.top).max(1) as u32,
+        )
+    };
+
+    // Start ffmpeg encoder subprocess.
+    let mut ffmpeg = build_ffmpeg_command(width, height, &output_path)?;
+    let mut stdin = ffmpeg.stdin.take()
+        .ok_or_else(|| CaptureError::VideoError("Failed to open ffmpeg stdin".to_string()))?;
+
+    // Create the Graphics Capture item from the window handle.
+    let item = create_capture_item_for_window(hwnd)?;
+
+    // Create D3D11 device for frame pool.
+    let d3d_device = create_d3d_device()?;
+
+    // Create frame pool and session.
+    let frame_pool = windows::Graphics::Capture::Direct3D11CaptureFramePool::CreateFreeThreaded(
+        &d3d_device,
+        DirectXPixelFormat::B8G8R8A8UIntNormalized,
+        1,
+        item.Size().map_err(|e| CaptureError::VideoError(format!("Item size: {}", e)))?,
+    )
+    .map_err(|e| CaptureError::VideoError(format!("CreateFramePool: {}", e)))?;
+
+    let session = frame_pool
+        .CreateCaptureSession(&item)
+        .map_err(|e| CaptureError::VideoError(format!("CreateCaptureSession: {}", e)))?;
+
+    let _ = session.SetIsCursorCaptureEnabled(false);
+
+    session
+        .StartCapture()
+        .map_err(|e| CaptureError::VideoError(format!("StartCapture: {}", e)))?;
+
+    let frame_interval = std::time::Duration::from_millis(33); // ~30fps
+
+    while !stop.load(Ordering::Relaxed) {
+        if let Ok(frame) = frame_pool.TryGetNextFrame() {
+            if let Ok(surface) = frame.Surface() {
+                if let Ok(data) = read_surface_pixels(&surface, width, height) {
+                    if stdin.write_all(&data).is_err() {
+                        log::warn!("ffmpeg stdin write failed — encoder may have exited");
+                        break;
+                    }
+                }
+            }
+        }
+
+        thread::sleep(frame_interval);
+    }
+
+    drop(stdin);
+    let _ = ffmpeg.wait();
+
+    let _ = session.Close();
+    let _ = frame_pool.Close();
+
+    Ok(())
+}
+
+/// Create a GraphicsCaptureItem from an HWND using the interop interface.
+fn create_capture_item_for_window(hwnd: HWND) -> Result<GraphicsCaptureItem, CaptureError> {
+    use windows::Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemInterop;
+
+    unsafe {
+        let interop: IGraphicsCaptureItemInterop =
+            windows::core::factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()
+                .map_err(|e| CaptureError::VideoError(format!("CaptureItem interop: {}", e)))?;
+
+        interop
+            .CreateForWindow(hwnd)
+            .map_err(|e| CaptureError::VideoError(format!("CreateForWindow: {}", e)))
+    }
+}
+
+/// Create a Direct3D 11 device for the frame pool.
+fn create_d3d_device() -> Result<IDirect3DDevice, CaptureError> {
+    use windows::Win32::Graphics::Direct3D::D3D_DRIVER_TYPE_HARDWARE;
+    use windows::Win32::Graphics::Direct3D11::{
+        D3D11CreateDevice, D3D11_CREATE_DEVICE_BGRA_SUPPORT, D3D11_SDK_VERSION,
+    };
+    use windows::Win32::Graphics::Dxgi::IDXGIDevice;
+    use windows::Win32::System::WinRT::Direct3D11::CreateDirect3D11DeviceFromDXGIDevice;
+    use windows::core::Interface;
+
+    unsafe {
+        let mut d3d_device = None;
+
+        D3D11CreateDevice(
+            None,
+            D3D_DRIVER_TYPE_HARDWARE,
+            None,
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+            None,
+            D3D11_SDK_VERSION,
+            Some(&mut d3d_device),
+            None,
+            None,
+        )
+        .map_err(|e| CaptureError::VideoError(format!("D3D11CreateDevice: {}", e)))?;
+
+        let d3d_device = d3d_device
+            .ok_or_else(|| CaptureError::VideoError("D3D11 device was null".to_string()))?;
+
+        let dxgi_device: IDXGIDevice = d3d_device
+            .cast()
+            .map_err(|e| CaptureError::VideoError(format!("Cast to IDXGIDevice: {}", e)))?;
+
+        let inspectable = CreateDirect3D11DeviceFromDXGIDevice(&dxgi_device)
+            .map_err(|e| CaptureError::VideoError(format!("CreateDirect3D11Device: {}", e)))?;
+
+        inspectable
+            .cast()
+            .map_err(|e| CaptureError::VideoError(format!("Cast to IDirect3DDevice: {}", e)))
+    }
+}
+
+/// Read raw BGRA pixel data from a Direct3D surface.
+fn read_surface_pixels(
+    surface: &windows::Graphics::DirectX::Direct3D11::IDirect3DSurface,
+    width: u32,
+    height: u32,
+) -> Result<Vec<u8>, CaptureError> {
+    use windows::Win32::Graphics::Direct3D11::{
+        ID3D11Device, ID3D11DeviceContext, ID3D11Resource, ID3D11Texture2D,
+        D3D11_CPU_ACCESS_READ, D3D11_MAPPED_SUBRESOURCE, D3D11_MAP_READ,
+        D3D11_TEXTURE2D_DESC, D3D11_USAGE_STAGING,
+    };
+    use windows::Win32::Graphics::Dxgi::Common::{
+        DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC,
+    };
+    use windows::Win32::System::WinRT::Direct3D11::IDirect3DDxgiInterfaceAccess;
+    use windows::core::Interface;
+
+    unsafe {
+        let access: IDirect3DDxgiInterfaceAccess = surface
+            .cast()
+            .map_err(|e| CaptureError::VideoError(format!("Cast to DxgiAccess: {}", e)))?;
+
+        let texture: ID3D11Texture2D = access
+            .GetInterface()
+            .map_err(|e| CaptureError::VideoError(format!("GetInterface texture: {}", e)))?;
+
+        // Get the device and context from the texture.
+        let device: ID3D11Device = texture
+            .GetDevice()
+            .map_err(|e| CaptureError::VideoError(format!("GetDevice: {}", e)))?;
+
+        let context: ID3D11DeviceContext = device
+            .GetImmediateContext()
+            .map_err(|e| CaptureError::VideoError(format!("GetImmediateContext: {}", e)))?;
+
+        // Create a staging texture for CPU read.
+        let desc = D3D11_TEXTURE2D_DESC {
+            Width: width,
+            Height: height,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+            SampleDesc: DXGI_SAMPLE_DESC {
+                Count: 1,
+                Quality: 0,
+            },
+            Usage: D3D11_USAGE_STAGING,
+            BindFlags: 0,
+            CPUAccessFlags: D3D11_CPU_ACCESS_READ.0 as u32,
+            MiscFlags: 0,
+        };
+
+        let mut staging_opt: Option<ID3D11Texture2D> = None;
+        device
+            .CreateTexture2D(&desc, None, Some(&mut staging_opt))
+            .map_err(|e| CaptureError::VideoError(format!("CreateTexture2D staging: {}", e)))?;
+        let staging = staging_opt
+            .ok_or_else(|| CaptureError::VideoError("Staging texture was null".to_string()))?;
+
+        // Copy captured frame to staging texture via ID3D11Resource.
+        let staging_resource: ID3D11Resource = staging
+            .cast()
+            .map_err(|e| CaptureError::VideoError(format!("Cast staging to Resource: {}", e)))?;
+        let texture_resource: ID3D11Resource = texture
+            .cast()
+            .map_err(|e| CaptureError::VideoError(format!("Cast texture to Resource: {}", e)))?;
+
+        context.CopyResource(&staging_resource, &texture_resource);
+
+        // Map the staging texture to read pixels.
+        let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
+        context
+            .Map(&staging_resource, 0, D3D11_MAP_READ, 0, Some(&mut mapped))
+            .map_err(|e| CaptureError::VideoError(format!("Map staging: {}", e)))?;
+
+        let row_pitch = mapped.RowPitch as usize;
+        let bytes_per_pixel = 4usize; // BGRA
+        let expected_row = width as usize * bytes_per_pixel;
+        let mut pixels = Vec::with_capacity(height as usize * expected_row);
+
+        for y in 0..height as usize {
+            let src = std::slice::from_raw_parts(
+                (mapped.pData as *const u8).add(y * row_pitch),
+                expected_row,
+            );
+            pixels.extend_from_slice(src);
+        }
+
+        context.Unmap(&staging_resource, 0);
+
+        Ok(pixels)
+    }
 }
