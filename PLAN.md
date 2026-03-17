@@ -64,7 +64,7 @@ A Tauri desktop app that sits in your system tray, auto-detects and records meet
 | Component | Technology | Notes |
 |-----------|-----------|-------|
 | Desktop app | Tauri v2 | System tray, global hotkeys, URL intercept, ~30MB RAM |
-| Frontend | TBD (React/Svelte/Vue) | Dashboard UI — design phase later |
+| Frontend | Svelte + Vite + Tailwind | Lightweight, strong Tauri community, good for forms/lists/status UI |
 | Backend | Rust (Tauri) + Python (pipeline) | Rust for app shell, Python for ML pipeline |
 | Transcription | Whisper large-v3 | Local, runs on RTX 4070 GPU |
 | Speaker diarization | Pyannote 3.1 | Local, paired with Whisper |
@@ -254,23 +254,38 @@ Research items:
 - Creates/updates People and Company profiles
 
 ### Phase 3: Tauri App Shell
-**Goal:** Background app with system tray, hotkeys, and settings.
+**Goal:** Background desktop app with system tray, URL protocol handling, OAuth for all platforms, encrypted credential storage, and settings UI.
 
-- Tauri v2 project setup
-- System tray icon with menu (start/stop recording, open dashboard, settings)
-- Global hotkey for quick-start recording
-- URL protocol handler registration for meeting links
-- Settings page with OAuth flows for each platform + Todoist
-- Local config storage (encrypted credentials)
+**Design doc:** `docs/plans/2026-03-17-tauri-app-shell-design.md`
+
+**Tech decisions:**
+- Frontend: Svelte (lightweight, strong Tauri community adoption)
+- Credentials: Tauri Stronghold (encrypted vault)
+- Non-secret settings: tauri-plugin-store (plain JSON in AppData)
+- Python integration: PyInstaller sidecar binary
+- OAuth credentials: user-provided (no hardcoded client IDs/secrets)
+- OAuth redirects: deep links for Zoom/Zoho/Todoist, localhost HTTP server for Google/Microsoft
+
+**Scope:**
+- Tauri v2 + Svelte + Vite + Tailwind project scaffolding (monorepo expansion)
+- System tray icon with menu (Start/Stop Recording disabled, Open Dashboard, Settings, Quit)
+- App starts minimized to tray, closing window hides to tray
+- `recap://` URL protocol handler registration (OAuth callbacks, future meeting links)
+- OAuth flows for all five platforms (Zoom, Google, Microsoft, Zoho, Todoist)
+- Background token refresh with provider-specific lifetime handling
+- Settings page: platform connections (with client credential fields), vault paths, recording folder, WhisperX settings, Todoist settings, about/diagnostics
+- `tauri-plugin-autostart` included but disabled (enabled in final phase)
+- PyInstaller sidecar build script + Tauri sidecar declaration + Rust invocation wrapper
+- Existing `config.yaml` as read-only fallback for first-run defaults
 
 ### Phase 4: Zoom Integration
 **Goal:** First fully-functional platform module.
 
-- Zoom OAuth flow in settings
+- ~~Zoom OAuth flow in settings~~ (done in Phase 3)
 - Meeting event webhook subscription
 - Cloud recording download after meeting ends
 - Participant list extraction for roster-based diarization
-- Trigger processing pipeline automatically
+- Trigger processing pipeline via sidecar automatically
 
 ### Phase 5: Dashboard UI
 **Goal:** Design and build the main app window.
@@ -278,13 +293,14 @@ Research items:
 - Frontend design phase (dedicated session)
 - Call history list with search/filter
 - Meeting detail view: notes, transcript, screenshots
-- Recording playback (audio/video player)
+- Recording playback (audio/video player — vidstack or native `<video>`)
 - Upcoming meetings with recording status
 - Manual recording controls
 
 ### Phase 6: Todoist Integration
 **Goal:** Bidirectional task sync.
 
+- ~~Todoist OAuth flow~~ (done in Phase 3)
 - Action items → Todoist (already in Phase 2 pipeline)
 - Scheduled task: poll Todoist for completions → update vault checkboxes
 - Labels/projects for organizing meeting tasks
@@ -304,9 +320,17 @@ Research items:
 - Google Meet: URL intercept + manual start (pending admin access)
 - Zoho Meet: URL intercept + manual start (pending admin access)
 - Each platform follows the same pluggable module pattern as Zoom
+- **Prerequisite:** local audio capture (WASAPI or virtual audio cable) must be implemented before non-Zoom platforms are functional — see open question below
+
+**Open question — recording capture for non-Zoom platforms:** PLAN.md originally deferred local audio capture to Phase 9, but Teams/Google Meet/Zoho Meet all need it for recording since they lack API-based recording on personal/non-admin accounts. Options: (1) pull WASAPI/local capture into Phase 8, (2) implement screen/window recording, (3) require manual file drop. Decide when planning Phase 8.
 
 ### Phase 9 (Future)
-- Signal/Discord local audio capture (WASAPI or VB-Cable)
+- Signal/Discord local audio capture (WASAPI or VB-Cable) — may be partially addressed in Phase 8
 - Voice fingerprinting / passive learning
 - Real-time transcription during meetings
 - Cloud storage for recordings
+
+### Final Assembly
+- Enable autostart (`tauri-plugin-autostart`)
+- End-to-end integration testing across all phases
+- Distribution packaging and testing with friends
