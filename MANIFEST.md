@@ -18,15 +18,18 @@ recap/
 ├── config.example.yaml     # Example configuration (vault path, API tokens, WhisperX settings)
 ├── recap/
 │   ├── __init__.py         # Package root — docstring only
-│   └── __main__.py         # Entry point for `python -m recap` (imports recap.cli.main)
+│   ├── __main__.py         # Entry point for `python -m recap` (imports recap.cli.main)
+│   └── models.py           # Dataclasses: Participant, MeetingMetadata, Utterance, TranscriptResult, AnalysisResult, etc.
 └── tests/
     ├── __init__.py         # Test package marker
-    └── conftest.py         # Shared fixtures: tmp_vault, tmp_recordings, tmp_frames
+    ├── conftest.py         # Shared fixtures: tmp_vault, tmp_recordings, tmp_frames
+    └── test_models.py      # Tests for all data models and their from_dict/to_labelled_text methods
 ```
 
 ## Key Relationships
 
-- `recap/__main__.py` imports `recap.cli.main` (not yet created — Task 2+)
+- `recap/__main__.py` imports `recap.cli.main` (not yet created — Task 3+)
+- `recap/models.py` is the foundation — every pipeline module imports its dataclasses
 - `config.example.yaml` documents all config keys; `config.yaml` is gitignored (contains secrets)
 - `pyproject.toml` defines optional extras: `ml` (whisperx), `todoist`, `dev` (pytest)
 - Test fixtures in `conftest.py` mirror vault structure: `Work/Meetings/`, `Work/People/`, `Work/Companies/`
