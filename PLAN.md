@@ -334,5 +334,6 @@ Research items:
 
 ### Final Assembly
 - Enable autostart (`tauri-plugin-autostart`)
+- OAuth `state` parameter verification — currently generated but never checked on callback (CSRF hardening)
 - End-to-end integration testing across all phases
 - Distribution packaging and testing with friends
