@@ -1,5 +1,11 @@
 <script lang="ts">
   import ProviderCard from "../lib/components/ProviderCard.svelte";
+  import SettingsSection from "../lib/components/SettingsSection.svelte";
+  import VaultSettings from "../lib/components/VaultSettings.svelte";
+  import RecordingSettings from "../lib/components/RecordingSettings.svelte";
+  import WhisperXSettings from "../lib/components/WhisperXSettings.svelte";
+  import TodoistSettings from "../lib/components/TodoistSettings.svelte";
+  import GeneralSettings from "../lib/components/GeneralSettings.svelte";
   import { credentials } from "../lib/stores/credentials";
 </script>
 
@@ -21,14 +27,24 @@
       </div>
     </section>
 
-    <section>
-      <h2 class="text-lg font-semibold text-gray-800 mb-4">Vault Settings</h2>
-      <p class="text-gray-500">Coming in next task.</p>
-    </section>
+    <SettingsSection title="Vault">
+      <VaultSettings />
+    </SettingsSection>
 
-    <section>
-      <h2 class="text-lg font-semibold text-gray-800 mb-4">About</h2>
-      <p class="text-gray-500">Coming in next task.</p>
-    </section>
+    <SettingsSection title="Recording">
+      <RecordingSettings />
+    </SettingsSection>
+
+    <SettingsSection title="WhisperX">
+      <WhisperXSettings />
+    </SettingsSection>
+
+    <SettingsSection title="Todoist">
+      <TodoistSettings />
+    </SettingsSection>
+
+    <SettingsSection title="General">
+      <GeneralSettings />
+    </SettingsSection>
   </div>
 </div>

@@ -10,6 +10,7 @@
     "store:default",
     "deep-link:default",
     "autostart:default",
-    "shell:default"
+    "shell:default",
+    "dialog:default"
   ]
 }
