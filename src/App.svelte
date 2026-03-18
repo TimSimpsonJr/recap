@@ -43,6 +43,18 @@
   let filterParticipant = $state<string | null>(null);
   let initialized = $state(false);
 
+  // D5: Auto-sync calendar on window focus, debounced to once per 15 min
+  let lastCalendarSync = $state(0);
+
+  function handleWindowFocus() {
+    const now = Date.now();
+    const fifteenMinutes = 15 * 60 * 1000;
+    if (now - lastCalendarSync > fifteenMinutes) {
+      lastCalendarSync = now;
+      syncCalendar().catch(() => {}); // silent background sync
+    }
+  }
+
   onMount(async () => {
     try {
       await loadCredentials();
@@ -124,7 +136,7 @@
   });
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
+<svelte:window onkeydown={handleKeydown} onfocus={handleWindowFocus} />
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="flex flex-col h-screen" style="background: var(--bg);" onwheel={handleWheel}>
