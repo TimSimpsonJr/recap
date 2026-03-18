@@ -18,7 +18,7 @@
     <input
       type="text"
       value={$settings.recordingsFolder}
-      onblur={async (e) => { await saveSetting("recordingsFolder", e.currentTarget.value); await resetMeetings(); }}
+      onblur={async (e) => { const newValue = e.currentTarget.value; if (newValue !== $settings.recordingsFolder) { await saveSetting("recordingsFolder", newValue); await resetMeetings(); } }}
       style="flex:1;background:#282826;border:1px solid #262624;border-radius:6px;padding:6px 12px;font-size:15px;color:#D8D5CE;font-family:'DM Sans',sans-serif;outline:none;"
       placeholder="Path to store recordings"
     />

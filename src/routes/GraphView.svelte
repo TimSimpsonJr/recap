@@ -10,6 +10,7 @@
     type SimulationLinkDatum,
   } from "d3-force";
   import { settings } from "../lib/stores/settings";
+  import { graphDataVersion } from "../lib/stores/meetings";
   import { get } from "svelte/store";
   import { getGraphData, type GraphNode, type GraphEdge } from "../lib/tauri";
   import { USE_DUMMY_DATA, DUMMY_GRAPH_DATA } from "../lib/dummy-data";
@@ -417,9 +418,12 @@
     });
   });
 
-  onMount(async () => {
-    updateSize();
-    window.addEventListener("resize", updateSize);
+  // Track the initial version so the $effect only refetches on subsequent changes
+  let initialGraphVersion = get(graphDataVersion);
+
+  async function loadGraphData() {
+    loading = true;
+    error = null;
 
     let data;
     if (USE_DUMMY_DATA) {
@@ -445,6 +449,11 @@
 
     try {
       if (data.nodes.length === 0) {
+        allNodes = [];
+        allLinks = [];
+        nodes = [];
+        links = [];
+        if (simulation) { simulation.stop(); simulation = null; }
         loading = false;
         return;
       }
@@ -471,6 +480,8 @@
       nodes = [...allNodes];
       links = [...allLinks];
 
+      if (simulation) simulation.stop();
+
       simulation = forceSimulation<SimNode>(nodes)
         .force(
           "link",
@@ -485,7 +496,6 @@
         .alphaDecay(0.03)
         .velocityDecay(0.4)
         .on("tick", () => {
-          // Only trigger Svelte reactivity update, don't create new arrays
           nodes = nodes;
           links = links;
         });
@@ -495,6 +505,21 @@
       error = e instanceof Error ? e.message : String(e);
       loading = false;
     }
+  }
+
+  // Watch graphDataVersion — refetch graph data when settings change (skip initial)
+  $effect(() => {
+    const version = $graphDataVersion;
+    if (version !== initialGraphVersion) {
+      initialGraphVersion = version;
+      loadGraphData();
+    }
+  });
+
+  onMount(async () => {
+    updateSize();
+    window.addEventListener("resize", updateSize);
+    await loadGraphData();
   });
 
   onDestroy(() => {

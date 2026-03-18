@@ -22,7 +22,7 @@
       <input
         type="text"
         value={$settings.vaultPath}
-        onblur={async (e) => { await saveSetting("vaultPath", e.currentTarget.value); await resetMeetings(); }}
+        onblur={async (e) => { const newValue = e.currentTarget.value; if (newValue !== $settings.vaultPath) { await saveSetting("vaultPath", newValue); await resetMeetings(); } }}
         style="flex:1;background:#282826;border:1px solid #262624;border-radius:6px;padding:6px 12px;font-size:15px;color:#D8D5CE;font-family:'DM Sans',sans-serif;outline:none;"
         placeholder="Path to Obsidian vault"
       />
@@ -40,15 +40,15 @@
   <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
     <label style="display:block;">
       <span style={labelStyle}>Meetings Folder</span>
-      <input type="text" value={$settings.meetingsFolder} onblur={(e) => saveSetting("meetingsFolder", e.currentTarget.value)} style={inputStyle} />
+      <input type="text" value={$settings.meetingsFolder} onblur={async (e) => { const newValue = e.currentTarget.value; if (newValue !== $settings.meetingsFolder) { await saveSetting("meetingsFolder", newValue); await resetMeetings(); } }} style={inputStyle} />
     </label>
     <label style="display:block;">
       <span style={labelStyle}>People Folder</span>
-      <input type="text" value={$settings.peopleFolder} onblur={(e) => saveSetting("peopleFolder", e.currentTarget.value)} style={inputStyle} />
+      <input type="text" value={$settings.peopleFolder} onblur={async (e) => { const newValue = e.currentTarget.value; if (newValue !== $settings.peopleFolder) { await saveSetting("peopleFolder", newValue); await resetMeetings(); } }} style={inputStyle} />
     </label>
     <label style="display:block;">
       <span style={labelStyle}>Companies Folder</span>
-      <input type="text" value={$settings.companiesFolder} onblur={(e) => saveSetting("companiesFolder", e.currentTarget.value)} style={inputStyle} />
+      <input type="text" value={$settings.companiesFolder} onblur={async (e) => { const newValue = e.currentTarget.value; if (newValue !== $settings.companiesFolder) { await saveSetting("companiesFolder", newValue); await resetMeetings(); } }} style={inputStyle} />
     </label>
   </div>
 </div>
