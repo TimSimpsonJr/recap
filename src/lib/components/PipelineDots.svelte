@@ -15,6 +15,11 @@
   let expanded = $state(false);
   let retrying = $state<string | null>(null);
 
+  function getRecordingDir(filePath: string): string {
+    const lastSep = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'));
+    return lastSep > 0 ? filePath.substring(0, lastSep) : filePath;
+  }
+
   let ariaLabel = $derived.by(() => {
     const parts = stages.map((s) => {
       const st = status[s];
@@ -80,7 +85,9 @@
     if (!recordingPath || retrying) return;
     retrying = stage;
     try {
-      await retryProcessing(recordingPath, stage);
+      await retryProcessing(getRecordingDir(recordingPath), stage);
+    } catch (e) {
+      console.error("Retry failed:", e);
     } finally {
       retrying = null;
     }
@@ -88,7 +95,6 @@
 </script>
 
 <div style="display: flex; flex-direction: column; align-items: flex-end;">
-  <!-- svelte-ignore a11y_role_has_required_aria_properties -->
   <button
     type="button"
     onclick={toggleExpanded}
