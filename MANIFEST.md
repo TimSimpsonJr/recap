@@ -17,7 +17,7 @@ recap/
 │   ├── app.css                            # Tailwind base + Warm Ink dark theme
 │   ├── App.svelte                         # Hash routing, top nav bar, OAuth listeners
 │   ├── routes/
-│   │   ├── Dashboard.svelte               # Split-panel: FilterSidebar | MeetingList
+│   │   ├── Dashboard.svelte               # Split-panel: FilterSidebar | MeetingList + DetailPanel
 │   │   ├── MeetingDetail.svelte           # Full meeting view: player, notes, transcript, screenshots
 │   │   ├── GraphView.svelte               # d3-force graph + controls panel + sidebar
 │   │   └── Settings.svelte                # Provider connections, vault, recording, WhisperX config
@@ -29,9 +29,9 @@ recap/
 │       ├── stores/
 │       │   ├── credentials.ts             # Per-provider OAuth token state
 │       │   ├── settings.ts                # App settings with Tauri persistence
-│       │   ├── meetings.ts                # Meeting list, pagination, filters, derived filteredMeetings
+│       │   ├── meetings.ts                # Meeting list, pagination, filters, resetMeetings, graphDataVersion
 │       │   └── recorder.ts                # Recording state machine (idle → recording → processing)
-│       └── components/                    # 26 Svelte components (see Key Relationships)
+│       └── components/                    # 27 Svelte components (see Key Relationships)
 ├── recap/                                 # Python ML pipeline
 │   ├── pipeline.py                        # Stage-tracked orchestrator with status.json
 │   ├── transcribe.py / frames.py          # WhisperX transcription + video frame extraction
@@ -52,6 +52,7 @@ recap/
 │       ├── capture.rs / monitor.rs        # WASAPI audio + Graphics Capture screen recording
 │       ├── types.rs                       # RecorderState enum + shared types
 │       └── zoom.rs                        # Zoom meeting metadata extraction
+├── docs/plans/                            # Design specs + implementation plans per phase
 ├── prompts/meeting_analysis.md            # Claude prompt template for meeting analysis
 ├── scripts/build-sidecar.py               # Packages Python pipeline as Tauri sidecar
 ├── tests/                                 # Python tests (pytest): pipeline, transcribe, vault, etc.
@@ -63,15 +64,18 @@ recap/
 ## Key Relationships
 
 - `App.svelte` routes `#meeting/{id}` → MeetingDetail, `#graph` → GraphView, `#settings` → Settings
-- `Dashboard` renders FilterSidebar + MeetingList; clicking a row navigates to MeetingDetail route
-- `MeetingDetail` composes Header, Player, Notes, Transcript, ScreenshotGallery, PipelineStatusBadge
+- `Dashboard` renders FilterSidebar + MeetingList; clicking a row opens inline DetailPanel
+- `MeetingDetail` composes Header, Player, Notes, Transcript, ScreenshotGallery, PipelineDots
+- `PipelineDots` shows 6-stage dot indicators with expandable detail + retry; replaces PipelineStatusBadge
 - `MeetingTranscript` timestamp clicks seek `MeetingPlayer` (Vidstack) via shared time binding
 - `markdown.ts` renders `[[wikilinks]]` as `<a href="#filter/participant/{name}">` for filtering
-- `meetings.ts` store bridges IPC (list/search/filter) → derived `filteredMeetings` re-filters on change
-- `FilterSidebar` drives filter state in meetings store; filters include date, participants, pipeline status
+- `meetings.ts` store bridges IPC (list/search/filter) → derived `filteredMeetings`; `graphDataVersion` signals graph refresh
+- `FilterSidebar` drives filter state in meetings store; filters include company, participants, platform
+- `RecordingSettings` / `VaultSettings` call `resetMeetings()` on path changes (with value-change guards)
 - `dummy-data.ts` provides mock data when `VITE_DUMMY_DATA=true`; tree-shaken out of prod builds
 - `lib.rs` hides window on close (not quit), saves geometry; quit only via tray context menu
 - `oauth.rs` spawns localhost server for Google/Microsoft; `deep_link.rs` handles `recap://` callbacks
 - `recorder.rs` orchestrates monitor → capture → merge → zoom metadata → sidecar pipeline launch
 - `pipeline.py` writes `status.json` per stage; `--from`/`--only` flags enable retry from any stage
 - `GraphView` integrates GraphControls (d3 force sliders) + GraphSidebar (person/company drill-down)
+- `GraphView` watches `graphDataVersion` to refetch when settings paths change
