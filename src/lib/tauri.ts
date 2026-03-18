@@ -55,3 +55,142 @@ export async function checkNvenc(): Promise<string> {
 export async function checkFfmpeg(): Promise<boolean> {
   return invoke("check_ffmpeg");
 }
+
+// Pipeline stage status (matches Rust StageStatus)
+export interface PipelineStageStatus {
+  completed: boolean;
+  timestamp: string | null;
+  error: string | null;
+}
+
+// Full pipeline status (matches Rust PipelineStatus)
+export interface PipelineStatus {
+  merge: PipelineStageStatus;
+  frames: PipelineStageStatus;
+  transcribe: PipelineStageStatus;
+  diarize: PipelineStageStatus;
+  analyze: PipelineStageStatus;
+  export: PipelineStageStatus;
+}
+
+// Meeting summary for list view (matches Rust MeetingSummary)
+export interface MeetingSummary {
+  id: string;
+  title: string;
+  date: string;
+  platform: string;
+  participants: string[];
+  duration_seconds: number | null;
+  pipeline_status: PipelineStatus;
+  has_note: boolean;
+  has_transcript: boolean;
+  has_video: boolean;
+  recording_path: string | null;
+  note_path: string | null;
+}
+
+// A single transcript utterance (matches Rust Utterance)
+export interface Utterance {
+  speaker: string;
+  start: number;
+  end: number;
+  text: string;
+}
+
+// A screenshot with optional caption (matches Rust Screenshot)
+export interface Screenshot {
+  path: string;
+  caption: string | null;
+}
+
+// Full meeting detail (matches Rust MeetingDetail)
+export interface MeetingDetail {
+  summary: MeetingSummary;
+  note_content: string | null;
+  transcript: Utterance[] | null;
+  screenshots: Screenshot[];
+}
+
+// Paginated list response (matches Rust MeetingListResponse)
+export interface MeetingListResponse {
+  items: MeetingSummary[];
+  next_cursor: string | null;
+}
+
+// Recorder state — discriminated union matching Rust RecorderState
+export type RecorderState =
+  | "idle"
+  | { detected: { process_name: string; pid: number } }
+  | "recording"
+  | "processing"
+  | "declined";
+
+// Meetings IPC
+export async function listMeetings(
+  recordingsDir: string,
+  vaultMeetingsDir?: string,
+  cursor?: string,
+  limit?: number
+): Promise<MeetingListResponse> {
+  return invoke("list_meetings", {
+    recordingsDir,
+    vaultMeetingsDir: vaultMeetingsDir ?? null,
+    cursor: cursor ?? null,
+    limit: limit ?? null,
+  });
+}
+
+export async function getMeetingDetail(
+  meetingId: string,
+  recordingsDir: string,
+  vaultMeetingsDir?: string,
+  framesDir?: string
+): Promise<MeetingDetail> {
+  return invoke("get_meeting_detail", {
+    meetingId,
+    recordingsDir,
+    vaultMeetingsDir: vaultMeetingsDir ?? null,
+    framesDir: framesDir ?? null,
+  });
+}
+
+export async function searchMeetings(
+  query: string,
+  recordingsDir: string,
+  vaultMeetingsDir?: string,
+  limit?: number
+): Promise<MeetingSummary[]> {
+  return invoke("search_meetings", {
+    query,
+    recordingsDir,
+    vaultMeetingsDir: vaultMeetingsDir ?? null,
+    limit: limit ?? null,
+  });
+}
+
+// Recorder IPC
+export async function getRecorderState(): Promise<RecorderState> {
+  return invoke("get_recorder_state");
+}
+
+export async function startRecording(): Promise<void> {
+  return invoke("start_recording");
+}
+
+export async function stopRecording(): Promise<void> {
+  return invoke("stop_recording");
+}
+
+export async function cancelRecording(): Promise<void> {
+  return invoke("cancel_recording");
+}
+
+export async function retryProcessing(
+  recordingDir: string,
+  fromStage?: string
+): Promise<void> {
+  return invoke("retry_processing", {
+    recordingDir,
+    fromStage: fromStage ?? null,
+  });
+}
