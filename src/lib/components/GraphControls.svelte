@@ -1,0 +1,434 @@
+<script lang="ts">
+  interface GroupDef {
+    label: string;
+    color: string;
+  }
+
+  interface Props {
+    // Filter
+    filterQuery: string;
+    onFilterChange: (query: string) => void;
+
+    // Groups
+    groups: GroupDef[];
+
+    // Display
+    showLabels: boolean;
+    onShowLabelsChange: (v: boolean) => void;
+    showArrows: boolean;
+    onShowArrowsChange: (v: boolean) => void;
+    showOrphans: boolean;
+    onShowOrphansChange: (v: boolean) => void;
+
+    // Forces
+    centerForce: number;
+    onCenterForceChange: (v: number) => void;
+    repelForce: number;
+    onRepelForceChange: (v: number) => void;
+    linkDistance: number;
+    onLinkDistanceChange: (v: number) => void;
+    linkStrength: number;
+    onLinkStrengthChange: (v: number) => void;
+  }
+
+  let {
+    filterQuery,
+    onFilterChange,
+    groups,
+    showLabels,
+    onShowLabelsChange,
+    showArrows,
+    onShowArrowsChange,
+    showOrphans,
+    onShowOrphansChange,
+    centerForce,
+    onCenterForceChange,
+    repelForce,
+    onRepelForceChange,
+    linkDistance,
+    onLinkDistanceChange,
+    linkStrength,
+    onLinkStrengthChange,
+  }: Props = $props();
+
+  let panelOpen = $state(true);
+  let filtersOpen = $state(true);
+  let groupsOpen = $state(true);
+  let displayOpen = $state(true);
+  let forcesOpen = $state(true);
+</script>
+
+<div class="graph-controls-wrapper">
+  <!-- Toggle button -->
+  <button
+    class="toggle-btn"
+    onclick={() => panelOpen = !panelOpen}
+    title={panelOpen ? "Hide graph settings" : "Show graph settings"}
+  >
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="8" cy="8" r="2.5" />
+      <path d="M8 1.5v1.5M8 13v1.5M1.5 8H3M13 8h1.5M3.1 3.1l1.1 1.1M11.8 11.8l1.1 1.1M3.1 12.9l1.1-1.1M11.8 4.2l1.1-1.1" />
+    </svg>
+  </button>
+
+  {#if panelOpen}
+    <div class="graph-controls-panel">
+      <!-- Filters section -->
+      <div class="section">
+        <button class="section-header" onclick={() => filtersOpen = !filtersOpen}>
+          <span class="section-arrow">{filtersOpen ? "\u25BC" : "\u25B6"}</span>
+          Filters
+        </button>
+        {#if filtersOpen}
+          <div class="section-body">
+            <input
+              type="text"
+              class="filter-input"
+              placeholder="Filter nodes..."
+              value={filterQuery}
+              oninput={(e) => onFilterChange((e.target as HTMLInputElement).value)}
+            />
+          </div>
+        {/if}
+      </div>
+
+      <!-- Groups section -->
+      <div class="section">
+        <button class="section-header" onclick={() => groupsOpen = !groupsOpen}>
+          <span class="section-arrow">{groupsOpen ? "\u25BC" : "\u25B6"}</span>
+          Groups
+        </button>
+        {#if groupsOpen}
+          <div class="section-body">
+            {#each groups as group}
+              <div class="group-row">
+                <span
+                  class="group-swatch"
+                  style="background: {group.color};"
+                ></span>
+                <span class="group-label">{group.label}</span>
+              </div>
+            {/each}
+          </div>
+        {/if}
+      </div>
+
+      <!-- Display section -->
+      <div class="section">
+        <button class="section-header" onclick={() => displayOpen = !displayOpen}>
+          <span class="section-arrow">{displayOpen ? "\u25BC" : "\u25B6"}</span>
+          Display
+        </button>
+        {#if displayOpen}
+          <div class="section-body">
+            <label class="toggle-row">
+              <input
+                type="checkbox"
+                class="ctrl-checkbox"
+                checked={showLabels}
+                onchange={() => onShowLabelsChange(!showLabels)}
+              />
+              Show labels
+            </label>
+            <label class="toggle-row">
+              <input
+                type="checkbox"
+                class="ctrl-checkbox"
+                checked={showArrows}
+                onchange={() => onShowArrowsChange(!showArrows)}
+              />
+              Show arrows on edges
+            </label>
+            <label class="toggle-row">
+              <input
+                type="checkbox"
+                class="ctrl-checkbox"
+                checked={showOrphans}
+                onchange={() => onShowOrphansChange(!showOrphans)}
+              />
+              Show orphan nodes
+            </label>
+          </div>
+        {/if}
+      </div>
+
+      <!-- Forces section -->
+      <div class="section">
+        <button class="section-header" onclick={() => forcesOpen = !forcesOpen}>
+          <span class="section-arrow">{forcesOpen ? "\u25BC" : "\u25B6"}</span>
+          Forces
+        </button>
+        {#if forcesOpen}
+          <div class="section-body">
+            <label class="slider-row">
+              <span class="slider-label">Center force</span>
+              <input
+                type="range"
+                class="slider"
+                min="0"
+                max="100"
+                value={centerForce}
+                oninput={(e) => onCenterForceChange(Number((e.target as HTMLInputElement).value))}
+              />
+              <span class="slider-value">{centerForce}</span>
+            </label>
+            <label class="slider-row">
+              <span class="slider-label">Repel force</span>
+              <input
+                type="range"
+                class="slider"
+                min="0"
+                max="500"
+                value={repelForce}
+                oninput={(e) => onRepelForceChange(Number((e.target as HTMLInputElement).value))}
+              />
+              <span class="slider-value">{repelForce}</span>
+            </label>
+            <label class="slider-row">
+              <span class="slider-label">Link distance</span>
+              <input
+                type="range"
+                class="slider"
+                min="20"
+                max="200"
+                value={linkDistance}
+                oninput={(e) => onLinkDistanceChange(Number((e.target as HTMLInputElement).value))}
+              />
+              <span class="slider-value">{linkDistance}</span>
+            </label>
+            <label class="slider-row">
+              <span class="slider-label">Link strength</span>
+              <input
+                type="range"
+                class="slider"
+                min="0"
+                max="100"
+                value={linkStrength}
+                oninput={(e) => onLinkStrengthChange(Number((e.target as HTMLInputElement).value))}
+              />
+              <span class="slider-value">{linkStrength}</span>
+            </label>
+          </div>
+        {/if}
+      </div>
+    </div>
+  {/if}
+</div>
+
+<style>
+  .graph-controls-wrapper {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 8px;
+  }
+
+  .toggle-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
+    border: none;
+    background: #242422;
+    color: #78756E;
+    cursor: pointer;
+    transition: background 120ms ease, color 120ms ease;
+  }
+
+  .toggle-btn:hover {
+    background: #2B2B28;
+    color: #D8D5CE;
+  }
+
+  .graph-controls-panel {
+    width: 260px;
+    background: #242422;
+    border-radius: 10px;
+    padding: 8px 0;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.4);
+    font-family: 'DM Sans', sans-serif;
+    max-height: calc(100vh - 120px);
+    overflow-y: auto;
+  }
+
+  .section {
+    border-bottom: 1px solid #2B2B28;
+  }
+
+  .section:last-child {
+    border-bottom: none;
+  }
+
+  .section-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 8px 14px;
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+    color: #78756E;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+  }
+
+  .section-header:hover {
+    color: #B0ADA5;
+  }
+
+  .section-arrow {
+    font-size: 8px;
+    color: inherit;
+  }
+
+  .section-body {
+    padding: 4px 14px 10px;
+  }
+
+  .filter-input {
+    width: 100%;
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: none;
+    background: #1D1D1B;
+    color: #D8D5CE;
+    font-family: 'DM Sans', sans-serif;
+    font-size: 13px;
+    outline: none;
+  }
+
+  .filter-input::placeholder {
+    color: #585650;
+  }
+
+  .filter-input:focus {
+    box-shadow: 0 0 0 1px rgba(168,160,120,0.3);
+  }
+
+  .group-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 0;
+  }
+
+  .group-swatch {
+    display: inline-block;
+    width: 12px;
+    height: 12px;
+    border-radius: 3px;
+    flex-shrink: 0;
+  }
+
+  .group-label {
+    font-size: 13px;
+    color: #B0ADA5;
+  }
+
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 0;
+    cursor: pointer;
+    font-size: 13px;
+    color: #B0ADA5;
+  }
+
+  .ctrl-checkbox {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border: 1.5px solid #464440;
+    border-radius: 3px;
+    background: transparent;
+    cursor: pointer;
+    position: relative;
+    flex-shrink: 0;
+  }
+
+  .ctrl-checkbox:checked {
+    background: #A8A078;
+    border-color: #A8A078;
+  }
+
+  .ctrl-checkbox:checked::after {
+    content: "";
+    position: absolute;
+    left: 3px;
+    top: 0px;
+    width: 5px;
+    height: 8px;
+    border: solid #1A1A18;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+  }
+
+  .slider-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 0;
+  }
+
+  .slider-label {
+    font-size: 12.5px;
+    color: #78756E;
+    white-space: nowrap;
+    min-width: 80px;
+  }
+
+  .slider {
+    flex: 1;
+    -webkit-appearance: none;
+    appearance: none;
+    height: 4px;
+    border-radius: 2px;
+    background: #1D1D1B;
+    outline: none;
+    cursor: pointer;
+  }
+
+  .slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: #A8A078;
+    cursor: pointer;
+  }
+
+  .slider-value {
+    font-size: 11px;
+    color: #585650;
+    min-width: 28px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Scrollbar styling */
+  .graph-controls-panel::-webkit-scrollbar {
+    width: 4px;
+  }
+
+  .graph-controls-panel::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .graph-controls-panel::-webkit-scrollbar-thumb {
+    background: #464440;
+    border-radius: 2px;
+  }
+</style>

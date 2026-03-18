@@ -12,6 +12,7 @@
   import { settings } from "../lib/stores/settings";
   import { get } from "svelte/store";
   import { getGraphData, type GraphNode, type GraphEdge } from "../lib/tauri";
+  import GraphControls from "../lib/components/GraphControls.svelte";
 
   interface SimNode extends SimulationNodeDatum {
     id: string;
@@ -36,6 +37,8 @@
   let svgEl: SVGSVGElement | undefined = $state(undefined);
   let width = $state(900);
   let height = $state(600);
+  let allNodes: SimNode[] = $state([]);
+  let allLinks: SimLink[] = $state([]);
   let nodes: SimNode[] = $state([]);
   let links: SimLink[] = $state([]);
   let hoveredNode: string | null = $state(null);
@@ -46,7 +49,10 @@
 
   // Drag state
   let dragNode: SimNode | null = $state(null);
-  let isDragging = $state(false);
+  let dragStartX = 0;
+  let dragStartY = 0;
+  let wasDragged = false;
+  const DRAG_THRESHOLD = 3;
 
   // Pan/zoom state
   let panX = $state(0);
@@ -57,6 +63,16 @@
 
   // Company color map — assigned dynamically
   let companyColorMap: Map<string, string> = new Map();
+
+  // ── Controls state ──
+  let filterQuery = $state("");
+  let showLabels = $state(true);
+  let showArrows = $state(false);
+  let showOrphans = $state(true);
+  let centerForce = $state(50);
+  let repelForce = $state(120);
+  let linkDistance = $state(60);
+  let linkStrength = $state(50);
 
   const NODE_RADIUS: Record<string, number> = {
     meeting: 8,
@@ -86,6 +102,19 @@
       }
     }
   }
+
+  // Build groups list for controls panel
+  let controlGroups = $derived.by(() => {
+    const groups = [
+      { label: "Meeting", color: "#A8A078" },
+      { label: "Person", color: "#78756E" },
+    ];
+    for (const [id, color] of companyColorMap.entries()) {
+      const node = allNodes.find((n) => n.id === id);
+      groups.push({ label: node?.label ?? id, color });
+    }
+    return groups;
+  });
 
   function updateSize() {
     if (svgEl) {
@@ -117,34 +146,33 @@
   }
 
   function handleMouseEnter(node: SimNode) {
-    if (isDragging) return;
+    if (dragNode) return;
     hoveredNode = node.id;
     connectedIds = buildConnectedSet(node.id);
   }
 
   function handleMouseLeave() {
-    if (isDragging) return;
+    if (dragNode) return;
     hoveredNode = null;
     connectedIds = new Set();
   }
 
-  function handleClick(node: SimNode) {
-    // Don't navigate if we were dragging
-    if (isDragging) return;
+  function handleNodeClick(node: SimNode) {
     if (node.node_type === "meeting") {
       const meetingId = node.id.replace("meeting:", "");
       window.location.hash = `meeting/${meetingId}`;
-    } else {
-      window.location.hash = "dashboard";
     }
+    // Person/company clicks handled in Change 3 (graph sidebar)
   }
 
-  // ── Node drag handlers ──
+  // ── Node drag handlers (with click-vs-drag distance threshold) ──
   function handleNodePointerDown(e: PointerEvent, node: SimNode) {
     e.stopPropagation();
     e.preventDefault();
     dragNode = node;
-    isDragging = false;
+    wasDragged = false;
+    dragStartX = e.clientX;
+    dragStartY = e.clientY;
 
     const world = clientToWorld(e.clientX, e.clientY);
 
@@ -154,7 +182,6 @@
     node.fx = node.x;
     node.fy = node.y;
 
-    // Store offset between cursor world position and node position
     (dragNode as any)._offsetX = world.x - (node.x ?? 0);
     (dragNode as any)._offsetY = world.y - (node.y ?? 0);
 
@@ -163,13 +190,21 @@
 
   function handleNodePointerMove(e: PointerEvent) {
     if (!dragNode || !svgEl) return;
-    isDragging = true;
     e.preventDefault();
     e.stopPropagation();
 
-    const world = clientToWorld(e.clientX, e.clientY);
-    dragNode.fx = world.x - ((dragNode as any)._offsetX ?? 0);
-    dragNode.fy = world.y - ((dragNode as any)._offsetY ?? 0);
+    // Check distance threshold
+    const dx = e.clientX - dragStartX;
+    const dy = e.clientY - dragStartY;
+    if (!wasDragged && Math.sqrt(dx * dx + dy * dy) > DRAG_THRESHOLD) {
+      wasDragged = true;
+    }
+
+    if (wasDragged) {
+      const world = clientToWorld(e.clientX, e.clientY);
+      dragNode.fx = world.x - ((dragNode as any)._offsetX ?? 0);
+      dragNode.fy = world.y - ((dragNode as any)._offsetY ?? 0);
+    }
   }
 
   function handleNodePointerUp(e: PointerEvent) {
@@ -177,6 +212,7 @@
     e.preventDefault();
     e.stopPropagation();
 
+    const clickedNode = dragNode;
     dragNode.fx = null;
     dragNode.fy = null;
 
@@ -184,21 +220,18 @@
       simulation.alphaTarget(0);
     }
 
-    // Brief timeout so the click handler can check isDragging
-    const wasDragging = isDragging;
+    const didDrag = wasDragged;
     dragNode = null;
-    if (wasDragging) {
-      setTimeout(() => {
-        isDragging = false;
-      }, 0);
-    } else {
-      isDragging = false;
+    wasDragged = false;
+
+    // If it was a click (not drag), handle the click
+    if (!didDrag) {
+      handleNodeClick(clickedNode);
     }
   }
 
   // ── Background pan handlers ──
   function handleBgPointerDown(e: PointerEvent) {
-    // Only pan on primary button on the background itself
     if (e.button !== 0) return;
     isPanning = true;
     panStart = { x: e.clientX, y: e.clientY, panX, panY };
@@ -229,7 +262,6 @@
     const zoomFactor = e.deltaY < 0 ? 1.08 : 1 / 1.08;
     const newScale = Math.min(Math.max(scale * zoomFactor, 0.1), 8);
 
-    // Adjust pan so zoom centers on cursor
     panX = cursorX - (cursorX - panX) * (newScale / scale);
     panY = cursorY - (cursorY - panY) * (newScale / scale);
     scale = newScale;
@@ -254,6 +286,78 @@
     const tgt = typeof link.target === "object" ? (link.target as SimNode).id : link.target;
     return src === hoveredNode || tgt === hoveredNode;
   }
+
+  // ── Filter and orphan logic ──
+  function applyFilterAndOrphans() {
+    const query = filterQuery.toLowerCase().trim();
+    let filteredNodes = allNodes;
+
+    if (query) {
+      filteredNodes = filteredNodes.filter((n) =>
+        n.label.toLowerCase().includes(query)
+      );
+    }
+
+    const nodeIds = new Set(filteredNodes.map((n) => n.id));
+    let filteredLinks = allLinks.filter((l) => {
+      const src = typeof l.source === "object" ? (l.source as SimNode).id : (l.source as string);
+      const tgt = typeof l.target === "object" ? (l.target as SimNode).id : (l.target as string);
+      return nodeIds.has(src) && nodeIds.has(tgt);
+    });
+
+    if (!showOrphans) {
+      const connectedNodeIds = new Set<string>();
+      for (const l of filteredLinks) {
+        const src = typeof l.source === "object" ? (l.source as SimNode).id : (l.source as string);
+        const tgt = typeof l.target === "object" ? (l.target as SimNode).id : (l.target as string);
+        connectedNodeIds.add(src);
+        connectedNodeIds.add(tgt);
+      }
+      filteredNodes = filteredNodes.filter((n) => connectedNodeIds.has(n.id));
+    }
+
+    nodes = filteredNodes;
+    links = filteredLinks;
+
+    if (simulation) {
+      simulation.nodes(nodes);
+      const linkForce = simulation.force("link") as any;
+      if (linkForce) linkForce.links(links);
+      simulation.alpha(0.3).restart();
+    }
+  }
+
+  // Watch filter/orphan changes
+  $effect(() => {
+    filterQuery;
+    showOrphans;
+    if (allNodes.length > 0) {
+      applyFilterAndOrphans();
+    }
+  });
+
+  // Watch force parameter changes
+  $effect(() => {
+    if (!simulation) return;
+
+    const linkForce = simulation.force("link") as any;
+    if (linkForce) {
+      linkForce.distance(linkDistance);
+      linkForce.strength(linkStrength / 100);
+    }
+
+    const chargeForce = simulation.force("charge") as any;
+    if (chargeForce) {
+      chargeForce.strength(-repelForce);
+    }
+
+    const center = simulation.force("center") as any;
+    if (center) {
+      center.strength(centerForce / 100);
+    }
+
+    simulation.alpha(0.3).restart();
+  });
 
   onMount(async () => {
     updateSize();
@@ -341,7 +445,7 @@
         return;
       }
 
-      nodes = data.nodes.map((n: GraphNode) => ({
+      allNodes = data.nodes.map((n: GraphNode) => ({
         id: n.id,
         label: n.label,
         node_type: n.node_type,
@@ -349,10 +453,10 @@
         y: height / 2 + (Math.random() - 0.5) * 200,
       }));
 
-      assignCompanyColors(nodes);
+      assignCompanyColors(allNodes);
 
-      const nodeMap = new Map(nodes.map((n) => [n.id, n]));
-      links = data.edges
+      const nodeMap = new Map(allNodes.map((n) => [n.id, n]));
+      allLinks = data.edges
         .filter((e: GraphEdge) => nodeMap.has(e.source) && nodeMap.has(e.target))
         .map((e: GraphEdge) => ({
           source: nodeMap.get(e.source)!,
@@ -360,18 +464,21 @@
           edge_type: e.edge_type,
         }));
 
+      nodes = [...allNodes];
+      links = [...allLinks];
+
       simulation = forceSimulation<SimNode>(nodes)
         .force(
           "link",
           forceLink<SimNode, SimLink>(links)
             .id((d) => d.id)
-            .distance(60)
+            .distance(linkDistance)
+            .strength(linkStrength / 100)
         )
-        .force("charge", forceManyBody().strength(-120))
-        .force("center", forceCenter(width / 2, height / 2))
+        .force("charge", forceManyBody().strength(-repelForce))
+        .force("center", forceCenter(width / 2, height / 2).strength(centerForce / 100))
         .force("collide", forceCollide<SimNode>().radius((d) => getRadius(d.node_type) + 4))
         .on("tick", () => {
-          // Trigger Svelte reactivity by reassigning
           nodes = [...nodes];
           links = [...links];
         });
@@ -410,7 +517,7 @@
       onpointerup={handleBgPointerUp}
       onwheel={handleWheel}
     >
-      <!-- SVG filter for glow effect -->
+      <!-- SVG defs -->
       <defs>
         <filter id="node-glow" x="-50%" y="-50%" width="200%" height="200%">
           <feGaussianBlur stdDeviation="4" result="blur" />
@@ -419,6 +526,30 @@
             <feMergeNode in="SourceGraphic" />
           </feMerge>
         </filter>
+        {#if showArrows}
+          <marker
+            id="arrowhead"
+            viewBox="0 0 10 7"
+            refX="10"
+            refY="3.5"
+            markerWidth="8"
+            markerHeight="6"
+            orient="auto"
+          >
+            <polygon points="0 0, 10 3.5, 0 7" fill="#464440" />
+          </marker>
+          <marker
+            id="arrowhead-active"
+            viewBox="0 0 10 7"
+            refX="10"
+            refY="3.5"
+            markerWidth="8"
+            markerHeight="6"
+            orient="auto"
+          >
+            <polygon points="0 0, 10 3.5, 0 7" fill="#787470" />
+          </marker>
+        {/if}
       </defs>
 
       <!-- Pan/zoom transform group -->
@@ -433,6 +564,7 @@
             y2={(link.target as SimNode).y ?? 0}
             stroke={isLinkActive(link) ? "#787470" : "#464440"}
             stroke-width={isLinkActive(link) ? 1.5 : 1}
+            marker-end={showArrows ? (isLinkActive(link) ? "url(#arrowhead-active)" : "url(#arrowhead)") : "none"}
           />
         {/each}
 
@@ -451,7 +583,6 @@
             onpointerup={handleNodePointerUp}
             onmouseenter={() => handleMouseEnter(node)}
             onmouseleave={handleMouseLeave}
-            onclick={() => handleClick(node)}
           >
             <circle
               cx={node.x ?? 0}
@@ -459,20 +590,43 @@
               r={getRadius(node.node_type)}
               fill={getColor(node)}
             />
-            <text
-              x={node.x ?? 0}
-              y={(node.y ?? 0) + getRadius(node.node_type) + 12}
-              text-anchor="middle"
-              fill="#78756E"
-              font-family="'DM Sans', sans-serif"
-              font-size="10"
-            >
-              {node.label.length > 20 ? node.label.slice(0, 18) + "..." : node.label}
-            </text>
+            {#if showLabels}
+              <text
+                x={node.x ?? 0}
+                y={(node.y ?? 0) + getRadius(node.node_type) + 12}
+                text-anchor="middle"
+                fill="#78756E"
+                font-family="'DM Sans', sans-serif"
+                font-size="10"
+              >
+                {node.label.length > 20 ? node.label.slice(0, 18) + "..." : node.label}
+              </text>
+            {/if}
           </g>
         {/each}
       </g>
     </svg>
+
+    <!-- Controls panel -->
+    <GraphControls
+      {filterQuery}
+      onFilterChange={(q) => filterQuery = q}
+      groups={controlGroups}
+      {showLabels}
+      onShowLabelsChange={(v) => showLabels = v}
+      {showArrows}
+      onShowArrowsChange={(v) => showArrows = v}
+      {showOrphans}
+      onShowOrphansChange={(v) => showOrphans = v}
+      {centerForce}
+      onCenterForceChange={(v) => centerForce = v}
+      {repelForce}
+      onRepelForceChange={(v) => repelForce = v}
+      {linkDistance}
+      onLinkDistanceChange={(v) => linkDistance = v}
+      {linkStrength}
+      onLinkStrengthChange={(v) => linkStrength = v}
+    />
 
     <!-- Legend -->
     <div class="graph-legend">
