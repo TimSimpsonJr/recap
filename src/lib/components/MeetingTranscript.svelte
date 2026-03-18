@@ -9,8 +9,8 @@
   let { utterances, onSeek }: Props = $props();
 
   const speakerColors = [
-    "#A8A078", "#7EA8A0", "#A07EA8", "#A8907E",
-    "#7E90A8", "#A87E8C", "#8CA87E", "#A8A87E",
+    "#C4A84D", "#5e9e96", "#8e6e9e", "#9e826e",
+    "#6e829e", "#9e6e7e", "#7e9e6e", "#9e9e6e",
   ];
 
   function getSpeakerColor(speaker: string, allSpeakers: string[]): string {
@@ -53,7 +53,7 @@
             cursor: pointer;
             font-family: 'DM Sans', sans-serif;
             font-size: 12.5px;
-            color: #585650;
+            color: var(--text-faint);
             min-width: 42px;
             text-align: right;
             line-height: 1.5;
@@ -72,7 +72,7 @@
           >
             {u.speaker}
           </span>
-          <span style="color: #B0ADA5; line-height: 1.5;">
+          <span style="color: var(--text-secondary); line-height: 1.5;">
             {u.text}
           </span>
         </div>
@@ -85,7 +85,7 @@
     style="
       font-family: 'DM Sans', sans-serif;
       font-size: 15px;
-      color: #585650;
+      color: var(--text-faint);
     "
   >
     No transcript available
@@ -94,10 +94,10 @@
 
 <style>
   .utterance-row:hover {
-    background: #2B2B28;
+    background: var(--raised);
   }
 
   .utterance-row button:hover {
-    color: #A8A078 !important;
+    color: var(--gold) !important;
   }
 </style>

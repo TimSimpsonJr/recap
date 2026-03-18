@@ -32,8 +32,8 @@
 
   function dotColor(stage: Stage): string {
     const st = status[stage];
-    if (st.error) return "#D06850";
-    if (st.completed) return "#A8A078";
+    if (st.error) return "#ef534a";
+    if (st.completed) return "#C4A84D";
     return "#464440";
   }
 
@@ -46,8 +46,8 @@
 
   function stageIconColor(stage: Stage): string {
     const st = status[stage];
-    if (st.error) return "#D06850";
-    if (st.completed) return "#A8A078";
+    if (st.error) return "#ef534a";
+    if (st.completed) return "#C4A84D";
     return "#585650";
   }
 
@@ -141,7 +141,7 @@
         margin-top: 8px;
         padding: 10px 12px;
         border-radius: 6px;
-        background: #1A1A18;
+        background: var(--bg);
         font-family: 'DM Sans', sans-serif;
         font-size: 12px;
         min-width: 240px;
@@ -171,15 +171,15 @@
 
           <div style="flex: 1; min-width: 0;">
             <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
-              <span style="color: #D8D5CE; text-transform: capitalize;">{stage}</span>
+              <span style="color: var(--text); text-transform: capitalize;">{stage}</span>
               {#if st.completed && st.timestamp}
-                <span style="color: #78756E; font-size: 11px; white-space: nowrap;">
+                <span style="color: var(--text-muted); font-size: 11px; white-space: nowrap;">
                   {formatTimestamp(st.timestamp)}
                 </span>
               {/if}
             </div>
             {#if st.error}
-              <div style="color: #D06850; font-size: 11px; margin-top: 2px; word-break: break-word;">
+              <div style="color: var(--red); font-size: 11px; margin-top: 2px; word-break: break-word;">
                 {st.error}
               </div>
               {#if recordingPath}
@@ -193,7 +193,7 @@
                     border: 1px solid rgba(208,104,80,0.3);
                     border-radius: 3px;
                     background: rgba(208,104,80,0.08);
-                    color: #D06850;
+                    color: var(--red);
                     font-family: 'DM Sans', sans-serif;
                     font-size: 11px;
                     cursor: pointer;

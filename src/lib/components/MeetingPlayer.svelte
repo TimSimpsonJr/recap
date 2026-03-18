@@ -53,7 +53,7 @@
       width: 100%;
       border-radius: 8px;
       overflow: hidden;
-      background: #1A1A18;
+      background: var(--bg);
     `;
 
     const outlet = document.createElement("media-outlet");
@@ -66,17 +66,17 @@
       align-items: center;
       gap: 8px;
       padding: 8px 12px;
-      background: #1A1A18;
+      background: var(--bg);
       font-family: 'DM Sans', sans-serif;
       font-size: 13.5px;
-      color: #B0ADA5;
+      color: var(--text-secondary);
     `;
 
     // Play/pause button
     const playBtn = document.createElement("button");
     playBtn.textContent = "\u25B6";
     playBtn.style.cssText = `
-      color: #D8D5CE; cursor: pointer; background: none; border: none;
+      color: var(--text); cursor: pointer; background: none; border: none;
       font-size: 18px; padding: 4px 8px;
     `;
     playBtn.addEventListener("click", () => {
@@ -90,7 +90,7 @@
 
     // Time display
     const timeDisplay = document.createElement("span");
-    timeDisplay.style.cssText = "font-size: 12.5px; color: #78756E; min-width: 80px;";
+    timeDisplay.style.cssText = "font-size: 12.5px; color: var(--text-muted); min-width: 80px;";
     timeDisplay.textContent = "0:00 / 0:00";
     controls.appendChild(timeDisplay);
 
@@ -145,11 +145,11 @@
     class="flex items-center justify-center"
     style="
       height: 200px;
-      background: #242422;
+      background: var(--surface);
       border-radius: 8px;
       font-family: 'DM Sans', sans-serif;
       font-size: 14.5px;
-      color: #585650;
+      color: var(--text-faint);
     "
   >
     No recording available
