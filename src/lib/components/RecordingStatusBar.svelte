@@ -13,8 +13,8 @@
     class="flex items-center justify-between"
     style="
       padding: 8px 28px;
-      background: #1A1A18;
-      border-bottom: 1px solid #262624;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
       font-family: 'DM Sans', sans-serif;
       font-size: 15px;
     "
@@ -22,18 +22,18 @@
     <div class="flex items-center gap-3">
       {#if tag === "recording"}
         <span class="rec-dot"></span>
-        <span style="color: #B0ADA5;">Recording</span>
+        <span style="color: var(--text-secondary);">Recording</span>
       {:else if tag === "detected"}
-        <span style="color: #78756E;">
+        <span style="color: var(--text-muted);">
           <svg class="inline-block mr-1" width="14" height="14" viewBox="0 0 14 14" fill="none">
-            <circle cx="7" cy="7" r="5" stroke="#78756E" stroke-width="1.5"/>
-            <circle cx="7" cy="7" r="2" fill="#78756E"/>
+            <circle cx="7" cy="7" r="5" stroke="var(--text-muted)" stroke-width="1.5"/>
+            <circle cx="7" cy="7" r="2" fill="var(--text-muted)"/>
           </svg>
           {processName} detected
         </span>
       {:else if tag === "processing"}
         <span class="spinner"></span>
-        <span style="color: #B0ADA5;">Processing recording...</span>
+        <span style="color: var(--text-secondary);">Processing recording...</span>
       {/if}
     </div>
 
@@ -45,8 +45,8 @@
             padding: 4px 14px;
             border-radius: 6px;
             border: none;
-            background: #A8A078;
-            color: #1D1D1B;
+            background: var(--gold);
+            color: var(--bg);
             font-family: 'DM Sans', sans-serif;
             font-size: 13.5px;
             font-weight: 600;
@@ -62,8 +62,8 @@
             padding: 4px 14px;
             border-radius: 6px;
             border: none;
-            background: #A8A078;
-            color: #1D1D1B;
+            background: var(--gold);
+            color: var(--bg);
             font-family: 'DM Sans', sans-serif;
             font-size: 13.5px;
             font-weight: 600;
@@ -83,7 +83,7 @@
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: #ef4444;
+    background: var(--red);
     animation: pulse 1.5s ease-in-out infinite;
   }
 
@@ -96,8 +96,8 @@
     display: inline-block;
     width: 14px;
     height: 14px;
-    border: 2px solid #464440;
-    border-top-color: #A8A078;
+    border: 2px solid var(--border);
+    border-top-color: var(--gold);
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
   }
