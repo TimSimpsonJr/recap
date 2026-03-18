@@ -222,6 +222,18 @@ export async function retryProcessing(
   });
 }
 
+// Speaker label correction IPC
+export async function getKnownParticipants(recordingsDir: string): Promise<string[]> {
+  return invoke('get_known_participants', { recordingsDir });
+}
+
+export async function updateSpeakerLabels(
+  recordingDir: string,
+  corrections: Record<string, string>
+): Promise<void> {
+  return invoke('update_speaker_labels', { recordingDir, corrections });
+}
+
 // Filter options IPC
 export async function getFilterOptions(
   recordingsDir: string
@@ -234,4 +246,49 @@ export async function getGraphData(
   recordingsDir: string
 ): Promise<GraphData> {
   return invoke("get_graph_data", { recordingsDir });
+}
+
+// Calendar types (matches Rust CalendarEvent, CalendarParticipant, CalendarCache)
+export interface CalendarParticipant {
+  name: string;
+  email: string | null;
+}
+
+export interface CalendarEvent {
+  id: string;
+  title: string;
+  description: string | null;
+  start: string;
+  end: string;
+  participants: CalendarParticipant[];
+  location: string | null;
+}
+
+export interface CalendarCache {
+  events: CalendarEvent[];
+  last_synced: string;
+}
+
+// Calendar IPC
+export async function fetchCalendarEvents(
+  startDate: string,
+  endDate: string
+): Promise<CalendarEvent[]> {
+  return invoke("fetch_calendar_events", { startDate, endDate });
+}
+
+export async function getUpcomingMeetings(
+  hoursAhead: number
+): Promise<CalendarEvent[]> {
+  return invoke("get_upcoming_meetings", { hoursAhead });
+}
+
+export async function syncCalendar(): Promise<CalendarCache> {
+  return invoke("sync_calendar");
+}
+
+export async function getCalendarMatches(
+  recordingsDir: string
+): Promise<Record<string, string>> {
+  return invoke("get_calendar_matches", { recordingsDir });
 }
