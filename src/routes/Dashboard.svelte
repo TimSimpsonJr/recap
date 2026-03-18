@@ -54,7 +54,7 @@
   });
 </script>
 
-<div class="flex flex-col" style="background: #1D1D1B; height: calc(100vh - 44px);">
+<div class="flex flex-col h-full" style="background: #1D1D1B;">
   <RecordingStatusBar />
 
   <div class="flex flex-1 overflow-hidden">

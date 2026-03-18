@@ -83,7 +83,7 @@
   });
 </script>
 
-<div class="min-h-screen" style="background: #1D1D1B;">
+<div class="flex flex-col h-screen" style="background: #1D1D1B;">
   {#if !initialized}
     <div
       class="flex items-center justify-center h-screen"
@@ -94,7 +94,7 @@
   {:else}
     <!-- Nav bar -->
     <nav
-      class="flex items-center"
+      class="flex items-center shrink-0"
       style="
         height: 44px;
         padding: 0 28px;
@@ -148,16 +148,18 @@
     </nav>
 
     <!-- Route content -->
-    {#if currentRoute === "settings"}
-      <Settings />
-    {:else if currentRoute === "meeting" && meetingId}
-      {#key meetingId}
-        <MeetingDetail {meetingId} />
-      {/key}
-    {:else if currentRoute === "graph"}
-      <GraphView />
-    {:else}
-      <Dashboard />
-    {/if}
+    <div class="flex-1 overflow-y-auto">
+      {#if currentRoute === "settings"}
+        <Settings />
+      {:else if currentRoute === "meeting" && meetingId}
+        {#key meetingId}
+          <MeetingDetail {meetingId} />
+        {/key}
+      {:else if currentRoute === "graph"}
+        <GraphView />
+      {:else}
+        <Dashboard />
+      {/if}
+    </div>
   {/if}
 </div>
