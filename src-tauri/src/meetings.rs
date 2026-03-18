@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -54,6 +54,37 @@ pub struct MeetingListResponse {
     pub next_cursor: Option<String>,
 }
 
+/// Filter options for the sidebar.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FilterOptions {
+    pub companies: Vec<String>,
+    pub participants: Vec<String>,
+    pub platforms: Vec<String>,
+}
+
+/// Graph node for the relationship graph view.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphNode {
+    pub id: String,
+    pub label: String,
+    pub node_type: String, // "meeting", "person", "company"
+}
+
+/// Graph edge for the relationship graph view.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphEdge {
+    pub source: String,
+    pub target: String,
+    pub edge_type: String, // "attended", "works_at"
+}
+
+/// Full graph data for the graph view.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GraphData {
+    pub nodes: Vec<GraphNode>,
+    pub edges: Vec<GraphEdge>,
+}
+
 /// Internal: meeting metadata from meeting.json (matches Python's MeetingMetadata).
 #[derive(Debug, Clone, Deserialize)]
 pub(crate) struct MeetingJson {
@@ -61,6 +92,7 @@ pub(crate) struct MeetingJson {
     pub date: String,
     pub participants: Vec<ParticipantJson>,
     pub platform: String,
+    pub company: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -462,4 +494,169 @@ pub async fn list_meetings(
     };
 
     Ok(MeetingListResponse { items, next_cursor })
+}
+
+#[tauri::command]
+pub async fn get_filter_options(
+    recordings_dir: String,
+) -> Result<FilterOptions, String> {
+    let recordings_path = PathBuf::from(&recordings_dir);
+    if !recordings_path.is_dir() {
+        return Err(format!("Recordings directory does not exist: {}", recordings_dir));
+    }
+
+    let mut companies: HashSet<String> = HashSet::new();
+    let mut participants: HashSet<String> = HashSet::new();
+    let mut platforms: HashSet<String> = HashSet::new();
+
+    let entries = std::fs::read_dir(&recordings_path)
+        .map_err(|e| format!("Failed to read recordings directory: {}", e))?;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_meeting_json = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| n.ends_with(".meeting.json"))
+            .unwrap_or(false);
+        if !is_meeting_json {
+            continue;
+        }
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let meta: MeetingJson = match serde_json::from_str(&content) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+
+        if let Some(company) = &meta.company {
+            if !company.is_empty() {
+                companies.insert(company.clone());
+            }
+        }
+        for p in &meta.participants {
+            if !p.name.is_empty() {
+                participants.insert(p.name.clone());
+            }
+        }
+        if !meta.platform.is_empty() && meta.platform != "unknown" {
+            platforms.insert(meta.platform.clone());
+        }
+    }
+
+    let mut companies: Vec<String> = companies.into_iter().collect();
+    let mut participants: Vec<String> = participants.into_iter().collect();
+    let mut platforms: Vec<String> = platforms.into_iter().collect();
+    companies.sort();
+    participants.sort();
+    platforms.sort();
+
+    Ok(FilterOptions {
+        companies,
+        participants,
+        platforms,
+    })
+}
+
+#[tauri::command]
+pub async fn get_graph_data(
+    recordings_dir: String,
+) -> Result<GraphData, String> {
+    let recordings_path = PathBuf::from(&recordings_dir);
+    if !recordings_path.is_dir() {
+        return Err(format!("Recordings directory does not exist: {}", recordings_dir));
+    }
+
+    let mut nodes: Vec<GraphNode> = Vec::new();
+    let mut edges: Vec<GraphEdge> = Vec::new();
+    let mut seen_people: HashSet<String> = HashSet::new();
+    let mut seen_companies: HashSet<String> = HashSet::new();
+
+    let entries = std::fs::read_dir(&recordings_path)
+        .map_err(|e| format!("Failed to read recordings directory: {}", e))?;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_meeting_json = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| n.ends_with(".meeting.json"))
+            .unwrap_or(false);
+        if !is_meeting_json {
+            continue;
+        }
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let meta: MeetingJson = match serde_json::from_str(&content) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+
+        // Derive meeting ID from filename.
+        let stem = match path.file_stem().and_then(|s| s.to_str()) {
+            Some(s) => s,
+            None => continue,
+        };
+        let meeting_id = stem.strip_suffix(".meeting").unwrap_or(stem).to_string();
+        let meeting_node_id = format!("meeting:{}", meeting_id);
+
+        nodes.push(GraphNode {
+            id: meeting_node_id.clone(),
+            label: meta.title.clone(),
+            node_type: "meeting".to_string(),
+        });
+
+        // Add company node and edge if present.
+        if let Some(company) = &meta.company {
+            if !company.is_empty() {
+                let company_node_id = format!("company:{}", company);
+                if seen_companies.insert(company.clone()) {
+                    nodes.push(GraphNode {
+                        id: company_node_id.clone(),
+                        label: company.clone(),
+                        node_type: "company".to_string(),
+                    });
+                }
+            }
+        }
+
+        // Add person nodes and edges.
+        for p in &meta.participants {
+            if p.name.is_empty() {
+                continue;
+            }
+            let person_node_id = format!("person:{}", p.name);
+            if seen_people.insert(p.name.clone()) {
+                nodes.push(GraphNode {
+                    id: person_node_id.clone(),
+                    label: p.name.clone(),
+                    node_type: "person".to_string(),
+                });
+
+                // If there's a company, add works_at edge.
+                if let Some(company) = &meta.company {
+                    if !company.is_empty() {
+                        edges.push(GraphEdge {
+                            source: person_node_id.clone(),
+                            target: format!("company:{}", company),
+                            edge_type: "works_at".to_string(),
+                        });
+                    }
+                }
+            }
+
+            // Person attended meeting.
+            edges.push(GraphEdge {
+                source: person_node_id,
+                target: meeting_node_id.clone(),
+                edge_type: "attended".to_string(),
+            });
+        }
+    }
+
+    Ok(GraphData { nodes, edges })
 }

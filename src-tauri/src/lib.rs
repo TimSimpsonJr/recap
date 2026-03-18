@@ -68,6 +68,8 @@ pub fn run() {
             meetings::list_meetings,
             meetings::get_meeting_detail,
             meetings::search_meetings,
+            meetings::get_filter_options,
+            meetings::get_graph_data,
         ])
         .on_window_event(|window, event| {
             // Closing the window hides it instead of quitting

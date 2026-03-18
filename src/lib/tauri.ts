@@ -117,6 +117,31 @@ export interface MeetingListResponse {
   next_cursor: string | null;
 }
 
+// Filter options for the sidebar (matches Rust FilterOptions)
+export interface FilterOptions {
+  companies: string[];
+  participants: string[];
+  platforms: string[];
+}
+
+// Graph types (matches Rust GraphNode, GraphEdge, GraphData)
+export interface GraphNode {
+  id: string;
+  label: string;
+  node_type: string; // "meeting", "person", "company"
+}
+
+export interface GraphEdge {
+  source: string;
+  target: string;
+  edge_type: string; // "attended", "works_at"
+}
+
+export interface GraphData {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+}
+
 // Recorder state — discriminated union matching Rust RecorderState
 export type RecorderState =
   | "idle"
@@ -193,4 +218,18 @@ export async function retryProcessing(
     recordingDir,
     fromStage: fromStage ?? null,
   });
+}
+
+// Filter options IPC
+export async function getFilterOptions(
+  recordingsDir: string
+): Promise<FilterOptions> {
+  return invoke("get_filter_options", { recordingsDir });
+}
+
+// Graph data IPC
+export async function getGraphData(
+  recordingsDir: string
+): Promise<GraphData> {
+  return invoke("get_graph_data", { recordingsDir });
 }

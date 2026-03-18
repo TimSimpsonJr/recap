@@ -1,10 +1,12 @@
-import { writable, get } from "svelte/store";
+import { writable, get, derived } from "svelte/store";
 import { listen } from "@tauri-apps/api/event";
 import { settings } from "./settings";
 import {
   listMeetings,
   searchMeetings,
+  getFilterOptions,
   type MeetingSummary,
+  type FilterOptions,
 } from "../tauri";
 
 export interface MeetingsState {
@@ -24,6 +26,107 @@ const initial: MeetingsState = {
 };
 
 export const meetings = writable<MeetingsState>({ ...initial });
+
+// ---------------------------------------------------------------------------
+// Filter state
+// ---------------------------------------------------------------------------
+
+export interface ActiveFilters {
+  companies: string[];
+  participants: string[];
+  platforms: string[];
+}
+
+const initialFilters: ActiveFilters = {
+  companies: [],
+  participants: [],
+  platforms: [],
+};
+
+export const activeFilters = writable<ActiveFilters>({ ...initialFilters });
+export const filterOptions = writable<FilterOptions>({
+  companies: [],
+  participants: [],
+  platforms: [],
+});
+
+export async function loadFilterOptions(): Promise<void> {
+  const s = get(settings);
+  const recordingsDir = s.recordingsFolder;
+  if (!recordingsDir) return;
+
+  try {
+    const options = await getFilterOptions(recordingsDir);
+    filterOptions.set(options);
+  } catch (e) {
+    console.error("Failed to load filter options:", e);
+  }
+}
+
+export function clearAllFilters(): void {
+  activeFilters.set({ ...initialFilters });
+}
+
+export function toggleFilter(
+  category: keyof ActiveFilters,
+  value: string
+): void {
+  activeFilters.update((f) => {
+    const current = f[category];
+    const idx = current.indexOf(value);
+    if (idx >= 0) {
+      return { ...f, [category]: current.filter((v) => v !== value) };
+    } else {
+      return { ...f, [category]: [...current, value] };
+    }
+  });
+}
+
+/** Apply active filters to a list of meetings (client-side). */
+export function applyFilters(
+  items: MeetingSummary[],
+  filters: ActiveFilters
+): MeetingSummary[] {
+  return items.filter((m) => {
+    if (
+      filters.platforms.length > 0 &&
+      !filters.platforms.includes(m.platform)
+    ) {
+      return false;
+    }
+    if (
+      filters.participants.length > 0 &&
+      !m.participants.some((p) => filters.participants.includes(p))
+    ) {
+      return false;
+    }
+    // Company filter: we don't have company on MeetingSummary, so skip for now.
+    // In future, if company is added to MeetingSummary, filter here.
+    return true;
+  });
+}
+
+/** Derived store that applies active filters to the meetings list. */
+export const filteredMeetings = derived(
+  [meetings, activeFilters],
+  ([$meetings, $activeFilters]) => {
+    const hasFilters =
+      $activeFilters.companies.length > 0 ||
+      $activeFilters.participants.length > 0 ||
+      $activeFilters.platforms.length > 0;
+
+    if (!hasFilters) {
+      return $meetings;
+    }
+
+    return {
+      ...$meetings,
+      items: applyFilters($meetings.items, $activeFilters),
+    };
+  }
+);
+
+// ---------------------------------------------------------------------------
 
 function getPaths(): { recordingsDir: string; vaultMeetingsDir: string | undefined } {
   const s = get(settings);
