@@ -63,84 +63,88 @@
   async function handleDisconnect() {
     await disconnect(provider);
   }
+
+  const inputStyle = "width:100%;background:#282826;border:1px solid #262624;border-radius:6px;padding:6px 12px;font-size:13.5px;color:#D8D5CE;font-family:'DM Sans',sans-serif;outline:none;";
+  const labelStyle = "display:block;font-size:12.5px;color:#78756E;margin-bottom:4px;font-family:'DM Sans',sans-serif;";
 </script>
 
-<div class="border border-gray-200 rounded-lg p-4 bg-white">
-  <h3 class="font-medium text-gray-900 mb-3">{label}</h3>
+<div style="display:flex;flex-direction:column;gap:12px;">
+  <label style="display:block;">
+    <span style={labelStyle}>Client ID</span>
+    <input
+      type="text"
+      value={clientId}
+      oninput={onClientIdInput}
+      onblur={saveCredentials}
+      style={inputStyle}
+      placeholder="Enter client ID"
+    />
+  </label>
 
-  <div class="space-y-3">
-    <label class="block">
-      <span class="block text-sm text-gray-600 mb-1">Client ID</span>
-      <input
-        type="text"
-        value={clientId}
-        oninput={onClientIdInput}
-        onblur={saveCredentials}
-        class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm"
-        placeholder="Enter client ID"
-      />
+  <label style="display:block;">
+    <span style={labelStyle}>Client Secret</span>
+    <input
+      type="password"
+      value={clientSecret}
+      oninput={onClientSecretInput}
+      onblur={saveCredentials}
+      style={inputStyle}
+      placeholder="Enter client secret"
+    />
+  </label>
+
+  {#if showRegion}
+    <label style="display:block;">
+      <span style={labelStyle}>Region</span>
+      <select
+        style={inputStyle}
+        value={$settings.zohoRegion}
+        onchange={(e) => saveSetting("zohoRegion", (e.target as HTMLSelectElement).value)}
+      >
+        <option value="com">.com (US)</option>
+        <option value="eu">.eu (Europe)</option>
+        <option value="in">.in (India)</option>
+        <option value="com.au">.com.au (Australia)</option>
+      </select>
     </label>
+  {/if}
 
-    <label class="block">
-      <span class="block text-sm text-gray-600 mb-1">Client Secret</span>
-      <input
-        type="password"
-        value={clientSecret}
-        oninput={onClientSecretInput}
-        onblur={saveCredentials}
-        class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm"
-        placeholder="Enter client secret"
-      />
-    </label>
-
-    {#if showRegion}
-      <label class="block">
-        <span class="block text-sm text-gray-600 mb-1">Region</span>
-        <select
-          class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm"
-          value={$settings.zohoRegion}
-          onchange={(e) => saveSetting("zohoRegion", (e.target as HTMLSelectElement).value)}
-        >
-          <option value="com">.com (US)</option>
-          <option value="eu">.eu (Europe)</option>
-          <option value="in">.in (India)</option>
-          <option value="com.au">.com.au (Australia)</option>
-        </select>
-      </label>
-    {/if}
-
-    <div class="flex items-center justify-between pt-2">
-      <div class="text-sm">
-        {#if providerState.status === "connected"}
-          <span class="text-green-600">Connected{providerState.displayName ? ` as ${providerState.displayName}` : ""}</span>
-        {:else if providerState.status === "reconnect_required"}
-          <span class="text-amber-600">Reconnect required</span>
-        {:else}
-          <span class="text-gray-400">Disconnected</span>
-        {/if}
-      </div>
-
-      <div>
-        {#if providerState.status === "connected"}
-          <button onclick={handleDisconnect} class="text-sm text-red-600 hover:underline">
-            Disconnect
-          </button>
-        {:else}
-          <button
-            onclick={connect}
-            disabled={!hasCredentials || connecting}
-            class="text-sm bg-blue-600 text-white px-3 py-1 rounded hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {connecting ? "Connecting..." : "Connect"}
-          </button>
-        {/if}
-      </div>
+  <div style="display:flex;align-items:center;justify-content:space-between;padding-top:8px;">
+    <div style="font-size:13px;">
+      {#if providerState.status === "connected"}
+        <span style="color:#4ade80;">Connected{providerState.displayName ? ` as ${providerState.displayName}` : ""}</span>
+      {:else if providerState.status === "reconnect_required"}
+        <span style="color:#f59e0b;">Reconnect required</span>
+      {:else}
+        <span style="color:#78756E;">Disconnected</span>
+      {/if}
     </div>
 
-    {#if provider === "microsoft" && providerState.status === "connected"}
-      <p class="text-xs text-amber-600 mt-1">
-        Note: Personal accounts have limited recording API access. Recording will require manual start.
-      </p>
-    {/if}
+    <div>
+      {#if providerState.status === "connected"}
+        <button
+          onclick={handleDisconnect}
+          style="font-size:13px;color:#D06850;background:none;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;"
+          onmouseenter={(e) => { e.currentTarget.style.textDecoration = 'underline'; }}
+          onmouseleave={(e) => { e.currentTarget.style.textDecoration = 'none'; }}
+        >
+          Disconnect
+        </button>
+      {:else}
+        <button
+          onclick={connect}
+          disabled={!hasCredentials || connecting}
+          style="font-size:13px;background:#A8A078;color:#1D1D1B;padding:6px 16px;border-radius:6px;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:500;opacity:{!hasCredentials || connecting ? '0.5' : '1'};"
+        >
+          {connecting ? "Connecting..." : "Connect"}
+        </button>
+      {/if}
+    </div>
   </div>
+
+  {#if provider === "microsoft" && providerState.status === "connected"}
+    <p style="font-size:12px;color:#f59e0b;margin-top:4px;">
+      Note: Personal accounts have limited recording API access. Recording will require manual start.
+    </p>
+  {/if}
 </div>

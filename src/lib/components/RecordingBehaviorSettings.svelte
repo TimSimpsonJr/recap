@@ -1,26 +1,29 @@
 <script lang="ts">
   import { settings, saveSetting } from "../stores/settings";
+
+  const inputStyle = "width:100%;background:#282826;border:1px solid #262624;border-radius:6px;padding:6px 12px;font-size:13.5px;color:#D8D5CE;font-family:'DM Sans',sans-serif;outline:none;";
+  const labelStyle = "display:block;font-size:12.5px;color:#78756E;margin-bottom:4px;font-family:'DM Sans',sans-serif;";
 </script>
 
-<div class="space-y-4">
+<div style="display:flex;flex-direction:column;gap:12px;">
   <!-- Auto-detect toggle -->
-  <label class="flex items-center justify-between">
-    <span class="text-sm text-gray-600">Auto-detect Zoom meetings</span>
+  <label style="display:flex;align-items:center;justify-content:space-between;">
+    <span style="font-size:13.5px;color:#B0ADA5;font-family:'DM Sans',sans-serif;">Auto-detect Zoom meetings</span>
     <input
       type="checkbox"
       checked={$settings.autoDetectMeetings}
       onchange={(e) => saveSetting("autoDetectMeetings", e.currentTarget.checked)}
-      class="rounded"
+      style="accent-color:#A8A078;"
     />
   </label>
 
   <!-- Detection action dropdown -->
-  <label class="block">
-    <span class="block text-sm text-gray-600 mb-1">When meeting detected</span>
+  <label style="display:block;">
+    <span style={labelStyle}>When meeting detected</span>
     <select
       value={$settings.detectionAction}
       onchange={(e) => saveSetting("detectionAction", e.currentTarget.value as "ask" | "always_record" | "never_record")}
-      class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm"
+      style={inputStyle}
     >
       <option value="ask">Ask me</option>
       <option value="always_record">Always record</option>
@@ -30,27 +33,27 @@
 
   <!-- Conditional: timeout settings (only when "ask") -->
   {#if $settings.detectionAction === "ask"}
-    <label class="block">
-      <span class="block text-sm text-gray-600 mb-1">When notification times out</span>
+    <label style="display:block;">
+      <span style={labelStyle}>When notification times out</span>
       <select
         value={$settings.timeoutAction}
         onchange={(e) => saveSetting("timeoutAction", e.currentTarget.value as "record" | "skip")}
-        class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm"
+        style={inputStyle}
       >
         <option value="record">Start recording</option>
         <option value="skip">Skip recording</option>
       </select>
     </label>
 
-    <label class="block">
-      <span class="block text-sm text-gray-600 mb-1">Notification timeout (seconds)</span>
+    <label style="display:block;">
+      <span style={labelStyle}>Notification timeout (seconds)</span>
       <input
         type="number"
         min="10"
         max="300"
         value={$settings.notificationTimeoutSeconds}
         onblur={(e) => saveSetting("notificationTimeoutSeconds", parseInt(e.currentTarget.value))}
-        class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm"
+        style={inputStyle}
       />
     </label>
   {/if}

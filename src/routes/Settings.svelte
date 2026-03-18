@@ -1,5 +1,8 @@
 <script lang="ts">
+  import type { ProviderName } from "../lib/stores/credentials";
   import ProviderCard from "../lib/components/ProviderCard.svelte";
+  import ProviderStatusCard from "../lib/components/ProviderStatusCard.svelte";
+  import Modal from "../lib/components/Modal.svelte";
   import SettingsSection from "../lib/components/SettingsSection.svelte";
   import VaultSettings from "../lib/components/VaultSettings.svelte";
   import RecordingSettings from "../lib/components/RecordingSettings.svelte";
@@ -9,23 +12,44 @@
   import GeneralSettings from "../lib/components/GeneralSettings.svelte";
   import AboutSection from "../lib/components/AboutSection.svelte";
   import { credentials } from "../lib/stores/credentials";
+
+  type ProviderEntry = { provider: ProviderName; label: string; showRegion?: boolean };
+
+  const providers: ProviderEntry[] = [
+    { provider: "zoom", label: "Zoom" },
+    { provider: "google", label: "Google" },
+    { provider: "microsoft", label: "Microsoft Teams" },
+    { provider: "zoho", label: "Zoho", showRegion: true },
+    { provider: "todoist", label: "Todoist" },
+  ];
+
+  let activeModal = $state<ProviderName | null>(null);
+
+  function openModal(provider: ProviderName) {
+    activeModal = provider;
+  }
+
+  function closeModal() {
+    activeModal = null;
+  }
+
+  let activeProvider = $derived(providers.find((p) => p.provider === activeModal));
 </script>
 
-<div class="max-w-3xl mx-auto p-8">
-  <div class="flex items-center justify-between mb-8">
-    <h1 class="text-2xl font-bold text-gray-900">Settings</h1>
-    <a href="#dashboard" class="text-blue-600 hover:underline text-sm">Back to Dashboard</a>
-  </div>
-
-  <div class="space-y-8">
+<div style="max-width:700px;margin:0 auto;padding:24px 28px 48px;">
+  <div style="display:flex;flex-direction:column;gap:28px;">
     <section>
-      <h2 class="text-lg font-semibold text-gray-800 mb-4">Platform Connections</h2>
-      <div class="space-y-4">
-        <ProviderCard provider="zoom" label="Zoom" providerState={$credentials.zoom} />
-        <ProviderCard provider="google" label="Google" providerState={$credentials.google} />
-        <ProviderCard provider="microsoft" label="Microsoft Teams" providerState={$credentials.microsoft} />
-        <ProviderCard provider="zoho" label="Zoho" providerState={$credentials.zoho} showRegion={true} />
-        <ProviderCard provider="todoist" label="Todoist" providerState={$credentials.todoist} />
+      <h2 style="font-family:'Source Serif 4',serif;font-size:16px;font-weight:600;color:#D8D5CE;margin-bottom:12px;">
+        Platform Connections
+      </h2>
+      <div style="display:flex;flex-direction:column;gap:4px;">
+        {#each providers as p}
+          <ProviderStatusCard
+            label={p.label}
+            providerState={$credentials[p.provider]}
+            onconfigure={() => openModal(p.provider)}
+          />
+        {/each}
       </div>
     </section>
 
@@ -35,7 +59,7 @@
 
     <SettingsSection title="Recording">
       <RecordingSettings />
-      <div class="mt-4 pt-4 border-t border-gray-200">
+      <div style="border-top:1px solid #262624;padding-top:12px;">
         <RecordingBehaviorSettings />
       </div>
     </SettingsSection>
@@ -57,3 +81,14 @@
     </SettingsSection>
   </div>
 </div>
+
+{#if activeModal && activeProvider}
+  <Modal title="{activeProvider.label} Connection" onclose={closeModal}>
+    <ProviderCard
+      provider={activeProvider.provider}
+      label={activeProvider.label}
+      providerState={$credentials[activeProvider.provider]}
+      showRegion={activeProvider.showRegion ?? false}
+    />
+  </Modal>
+{/if}

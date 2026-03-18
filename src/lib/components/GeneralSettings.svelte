@@ -2,14 +2,14 @@
   import { settings, saveSetting } from "../stores/settings";
 </script>
 
-<div class="space-y-3">
-  <label class="flex items-center gap-2 text-sm text-gray-600">
-    <input type="checkbox" disabled class="rounded" />
+<div style="display:flex;flex-direction:column;gap:12px;">
+  <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;color:#78756E;font-family:'DM Sans',sans-serif;">
+    <input type="checkbox" disabled style="accent-color:#A8A078;" />
     Start on login
-    <span class="text-xs text-gray-400">(enabled in final release)</span>
+    <span style="font-size:11px;color:#585650;">(enabled in final release)</span>
   </label>
-  <label class="flex items-center gap-2 text-sm text-gray-600">
-    <input type="checkbox" checked={$settings.showNotificationOnComplete} onchange={(e) => saveSetting("showNotificationOnComplete", e.currentTarget.checked)} class="rounded" />
+  <label style="display:flex;align-items:center;gap:8px;font-size:13.5px;color:#B0ADA5;font-family:'DM Sans',sans-serif;">
+    <input type="checkbox" checked={$settings.showNotificationOnComplete} onchange={(e) => saveSetting("showNotificationOnComplete", e.currentTarget.checked)} style="accent-color:#A8A078;" />
     Show notification when processing complete
   </label>
 </div>
