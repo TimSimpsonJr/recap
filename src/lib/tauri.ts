@@ -293,16 +293,40 @@ export async function getCalendarMatches(
   return invoke("get_calendar_matches", { recordingsDir });
 }
 
-// Briefing types (matches Rust BriefingResponse)
-export interface BriefingResponse {
-  content: string;
-  generated_at: string;
-  event_id: string;
+// Briefing types (matches Rust Briefing, BriefingActionItem)
+export interface BriefingActionItem {
+  assignee: string;
+  description: string;
+  from_meeting: string;
+}
+
+export interface Briefing {
+  topics: string[];
+  action_items: BriefingActionItem[];
+  context: string;
+  relationship_summary: string;
+  first_meeting: boolean;
 }
 
 // Briefing IPC
-export async function getBriefing(eventId: string): Promise<BriefingResponse> {
-  return invoke("get_briefing", { eventId });
+export async function generateBriefing(
+  eventId: string,
+  title: string,
+  participants: string[],
+  time: string,
+  recordingsDir: string,
+  vaultMeetingsDir?: string,
+  eventDescription?: string
+): Promise<Briefing> {
+  return invoke("generate_briefing", {
+    eventId,
+    title,
+    participants,
+    time,
+    recordingsDir,
+    vaultMeetingsDir: vaultMeetingsDir ?? null,
+    eventDescription: eventDescription ?? null,
+  });
 }
 
 export async function invalidateBriefingCache(
