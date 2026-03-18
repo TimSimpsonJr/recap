@@ -38,9 +38,16 @@ def _load_status(working_dir: pathlib.Path) -> dict:
     }
 
 
-def _save_status(working_dir: pathlib.Path, status: dict) -> None:
-    """Write status.json to working dir."""
-    (working_dir / "status.json").write_text(json.dumps(status, indent=2))
+def _save_status(
+    working_dir: pathlib.Path,
+    status: dict,
+    recordings_dir_stem: pathlib.Path | None = None,
+) -> None:
+    """Write status.json to working dir and optionally to recordings folder."""
+    payload = json.dumps(status, indent=2)
+    (working_dir / "status.json").write_text(payload)
+    if recordings_dir_stem is not None:
+        recordings_dir_stem.with_suffix(".status.json").write_text(payload)
 
 
 def _mark_stage(status: dict, stage: str, completed: bool, error: str | None = None) -> None:
@@ -121,6 +128,11 @@ def run_pipeline(
     results["recording"] = recording_dest
     logger.info("Moved recording to %s", recording_dest)
 
+    # Copy meeting metadata alongside recording for dashboard scanning
+    meeting_json_dest = recording_dest.with_suffix(".meeting.json")
+    shutil.copy2(str(metadata_path), str(meeting_json_dest))
+    logger.info("Copied meeting metadata to %s", meeting_json_dest)
+
     # Transcribe
     transcript_path = recording_dest.with_suffix(".transcript.json")
     transcript = None
@@ -136,10 +148,10 @@ def run_pipeline(
                 save_transcript=transcript_path,
             )
             _mark_stage(status, "transcribe", True)
-            _save_status(working_dir, status)
+            _save_status(working_dir, status, recording_dest)
         except Exception as e:
             _mark_stage(status, "transcribe", False, str(e))
-            _save_status(working_dir, status)
+            _save_status(working_dir, status, recording_dest)
             raise
     elif transcript_path.exists():
         transcript = json.loads(transcript_path.read_text())
@@ -152,11 +164,11 @@ def run_pipeline(
             config.frames_path.mkdir(parents=True, exist_ok=True)
             frames = extract_frames(recording_dest, config.frames_path)
             _mark_stage(status, "frames", True)
-            _save_status(working_dir, status)
+            _save_status(working_dir, status, recording_dest)
         except Exception as e:
             logger.warning("Frame extraction failed, continuing: %s", e)
             _mark_stage(status, "frames", False, str(e))
-            _save_status(working_dir, status)
+            _save_status(working_dir, status, recording_dest)
     results["frames"] = [f.path for f in frames]
 
     # Analyze with Claude
@@ -172,10 +184,10 @@ def run_pipeline(
                 claude_command=config.claude.command,
             )
             _mark_stage(status, "analyze", True)
-            _save_status(working_dir, status)
+            _save_status(working_dir, status, recording_dest)
         except Exception as e:
             _mark_stage(status, "analyze", False, str(e))
-            _save_status(working_dir, status)
+            _save_status(working_dir, status, recording_dest)
             raise
 
     # Export: meeting note, profiles, Todoist tasks
@@ -219,10 +231,10 @@ def run_pipeline(
                 results["profiles_created"] = []
 
             _mark_stage(status, "export", True)
-            _save_status(working_dir, status)
+            _save_status(working_dir, status, recording_dest)
         except Exception as e:
             _mark_stage(status, "export", False, str(e))
-            _save_status(working_dir, status)
+            _save_status(working_dir, status, recording_dest)
             raise
 
     # Create Todoist tasks (warn on failure, save retry)
