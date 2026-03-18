@@ -7,8 +7,35 @@
   import GraphView from "./routes/GraphView.svelte";
   import { loadCredentials, credentials, saveTokens } from "./lib/stores/credentials";
   import type { ProviderName } from "./lib/stores/credentials";
-  import { loadSettings, settings } from "./lib/stores/settings";
+  import { loadSettings, settings, saveSetting } from "./lib/stores/settings";
   import { exchangeOAuthCode } from "./lib/tauri";
+
+  function setZoom(level: number) {
+    const clamped = Math.round(Math.min(2.0, Math.max(0.5, level)) * 10) / 10;
+    document.documentElement.style.zoom = String(clamped);
+    saveSetting("zoomLevel", clamped);
+  }
+
+  function handleKeydown(e: KeyboardEvent) {
+    if (!e.ctrlKey) return;
+    if (e.key === "=" || e.key === "+") {
+      e.preventDefault();
+      setZoom((get(settings).zoomLevel ?? 1.0) + 0.1);
+    } else if (e.key === "-") {
+      e.preventDefault();
+      setZoom((get(settings).zoomLevel ?? 1.0) - 0.1);
+    } else if (e.key === "0") {
+      e.preventDefault();
+      setZoom(1.0);
+    }
+  }
+
+  function handleWheel(e: WheelEvent) {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    const current = get(settings).zoomLevel ?? 1.0;
+    setZoom(current + (e.deltaY < 0 ? 0.1 : -0.1));
+  }
 
   let currentRoute = $state("dashboard");
   let meetingId = $state<string | null>(null);
@@ -27,6 +54,12 @@
       console.error("Failed to load settings:", err);
     }
     initialized = true;
+
+    // Apply persisted zoom level
+    const savedZoom = get(settings).zoomLevel;
+    if (savedZoom && savedZoom !== 1.0) {
+      document.documentElement.style.zoom = String(savedZoom);
+    }
 
     const updateRoute = () => {
       const hash = window.location.hash.slice(1) || "dashboard";
@@ -90,7 +123,10 @@
   });
 </script>
 
-<div class="flex flex-col h-screen" style="background: var(--bg);">
+<svelte:window onkeydown={handleKeydown} />
+
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="flex flex-col h-screen" style="background: var(--bg);" onwheel={handleWheel}>
   {#if !initialized}
     <div
       class="flex items-center justify-center h-screen"
