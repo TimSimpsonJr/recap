@@ -1,0 +1,39 @@
+# Future Phases — Deferred Features
+
+Features explicitly deferred from current phases. Each should be scoped into its own phase when dependencies are ready.
+
+## Onboarding Flow (First-Run Experience)
+
+**Deferred from:** Phase 5b
+**Blocked by:** Real integrations need to be wired up first
+
+When Settings aren't configured (no vault path, no recordings directory, no calendar connected), the dashboard is empty with no guidance. A first-run onboarding flow should:
+
+- Detect unconfigured state on app launch
+- Walk the user through: recordings directory selection, Obsidian vault path, Zoho Calendar OAuth, Zoom OAuth
+- Show progress indicators for each setup step
+- Allow skipping optional integrations (calendar, Zoom) with a "configure later" option
+- After completion, transition smoothly into the main dashboard
+- Re-accessible from Settings ("Re-run setup wizard")
+
+**Design note:** Should feel lightweight and integrated — not a blocking modal wizard. Consider an inline setup checklist that lives in the dashboard until all steps are complete or dismissed.
+
+## Bulk Operations
+
+**Deferred from:** Phase 5b
+
+- Delete multiple meetings at once (checkbox select + bulk delete)
+- Reprocess all failed meetings in one action
+- Bulk speaker label correction (apply corrections across multiple meetings)
+
+## Todoist Completion Sync
+
+**Deferred from:** Phase 2 (core pipeline design)
+
+Sync task completion status back from Todoist to vault notes. Currently one-way only (vault → Todoist).
+
+## Non-Zoom Platform Recording
+
+**Deferred from:** App shell design
+
+Local audio/screen capture for Teams, Google Meet, Zoho Meet. Requires WASAPI or virtual audio cable strategy. See app-shell design doc for full context.
