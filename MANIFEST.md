@@ -23,16 +23,16 @@ recap/
 ├── src/
 │   ├── main.ts                         # Mounts App.svelte to #app
 │   ├── app.css                         # Global CSS — Tailwind import
-│   ├── App.svelte                      # Root: hash routing, top nav bar, store init, OAuth callback listener
+│   ├── App.svelte                      # Root: hash routing (#meeting, #filter/participant), nav bar, OAuth listeners
 │   ├── routes/
-│   │   ├── Dashboard.svelte            # Meeting list with search, filters, pagination
-│   │   ├── MeetingDetail.svelte        # Detail view — player, notes, transcript, screenshots
-│   │   ├── GraphView.svelte            # Force-directed meeting graph (d3-force)
+│   │   ├── Dashboard.svelte            # Split-panel: FilterSidebar | MeetingList | DetailPanel
+│   │   ├── MeetingDetail.svelte        # Full-page detail view (legacy, kept for reference)
+│   │   ├── GraphView.svelte            # Force-directed graph with controls panel + sidebar
 │   │   └── Settings.svelte             # Full settings page — connections, vault, whisperx, etc.
 │   └── lib/
 │       ├── tauri.ts                    # Typed invoke() wrappers (OAuth, sidecar, diagnostics)
 │       ├── assets.ts                   # Asset URL utility (convertFileSrc wrapper)
-│       ├── markdown.ts                 # Obsidian markdown renderer (marked + wikilink plugin)
+│       ├── markdown.ts                 # Obsidian markdown renderer (wikilinks → clickable participant links)
 │       ├── stores/
 │       │   ├── credentials.ts          # Stronghold-backed credential store (5 providers)
 │       │   ├── settings.ts             # tauri-plugin-store backed app settings (incl. recording behavior)
@@ -49,17 +49,20 @@ recap/
 │           ├── GeneralSettings.svelte  # Autostart (disabled), notifications
 │           ├── AboutSection.svelte     # Version, sidecar, ffmpeg, NVENC status
 │           ├── SearchBar.svelte        # Debounced search input for meeting list
-│           ├── FilterSidebar.svelte    # Date range, pipeline status, tag filters
-│           ├── MeetingList.svelte      # Paginated meeting list container
-│           ├── MeetingRow.svelte       # Single meeting row — title, date, status badge
+│           ├── FilterSidebar.svelte    # Collapsible sidebar — company, participant, platform filters
+│           ├── MeetingList.svelte      # Paginated meeting list with selection support
+│           ├── MeetingRow.svelte       # Single meeting row — title, date, status, selected state
+│           ├── DetailPanel.svelte      # Inline detail panel — header, notes/transcript tabs, close button
 │           ├── PipelineStatusBadge.svelte # Color-coded pipeline stage indicator
 │           ├── RecordingStatusBar.svelte  # Live recording indicator bar
 │           ├── RetryBanner.svelte      # Pipeline error retry prompt
-│           ├── MeetingHeader.svelte    # Detail view header — title, date, metadata
+│           ├── MeetingHeader.svelte    # Detail view header — title, date, metadata (optional back link)
 │           ├── MeetingPlayer.svelte    # Vidstack video player wrapper
-│           ├── MeetingNotes.svelte     # Rendered Obsidian markdown notes
+│           ├── MeetingNotes.svelte     # Rendered Obsidian markdown with clickable wikilinks
 │           ├── MeetingTranscript.svelte # Timestamped transcript with seek support
-│           └── ScreenshotGallery.svelte # Grid gallery of extracted frames
+│           ├── ScreenshotGallery.svelte # Grid gallery of extracted frames
+│           ├── GraphControls.svelte    # Obsidian-style graph settings (filters, groups, display, forces)
+│           └── GraphSidebar.svelte     # Graph slide-in sidebar — person/company meeting list + detail
 ├── recap/                              # Python ML pipeline package
 │   ├── cli.py                          # CLI: process command with --from/--only stage restart
 │   ├── pipeline.py                     # Orchestrator: stage-tracked pipeline with status.json
@@ -99,16 +102,21 @@ recap/
 
 ## Key Relationships
 
-- `App.svelte` initializes stores on mount, listens for two OAuth events: `oauth-callback` (deep link) and `oauth-tokens` (localhost)
+- `App.svelte` initializes stores on mount, routes `#meeting/{id}` and `#filter/participant/{name}` to Dashboard
+- `Dashboard.svelte` renders split-panel: FilterSidebar | MeetingList (320px when detail open) | DetailPanel
+- `DetailPanel.svelte` loads meeting detail inline — same content as MeetingDetail but without full-page navigation
+- `MeetingRow.svelte` supports `isSelected` + `onSelect` for inline selection (no hash navigation)
+- `GraphView.svelte` integrates `GraphControls` (force parameters, display toggles) and `GraphSidebar` (person/company drill-down)
+- `GraphControls.svelte` sliders update d3 simulation forces in real-time via callback props
+- `GraphSidebar.svelte` shows filtered meeting list for clicked person/company nodes, with inline detail view
+- `markdown.ts` renders `[[wikilinks]]` as clickable `<a href="#filter/participant/{name}">` links
 - `lib.rs` registers all plugins in `.setup()`, creates tray, manages `RecorderHandle` state, hides window on start
 - `deep_link.rs` emits `oauth-callback` → `App.svelte` exchanges code via IPC → saves tokens via Stronghold
 - `oauth.rs` `start_oauth` opens browser; for Google/Microsoft, spawns localhost server → exchanges code → emits `oauth-tokens`
 - `credentials.ts` store wraps Stronghold JS API; `settings.ts` wraps tauri-plugin-store
-- `scripts/build-sidecar.py` → PyInstaller → `src-tauri/binaries/recap-pipeline-{triple}.exe`
 - `meetings.rs` scans vault filesystem, exposes IPC commands → `meetings.ts` store consumes via typed invoke wrappers
 - `FilterSidebar.svelte` drives filter state in `meetings.ts` store → triggers IPC re-fetch with filter params
 - `MeetingTranscript.svelte` timestamp clicks seek `MeetingPlayer.svelte` (Vidstack) via shared time binding
-- `GraphView.svelte` calls graph data IPC from `meetings.rs` → renders d3-force layout
 - `recorder.ts` store listens for recorder events → `RecordingStatusBar.svelte` reflects live state
 - `recorder.rs` orchestrates `monitor.rs` → `capture.rs` → ffmpeg merge → `zoom.rs` → `sidecar.rs`
 - `pipeline.py` tracks stage completion in `status.json`; `cli.py` `--from`/`--only` flags skip completed stages
