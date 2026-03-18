@@ -292,3 +292,21 @@ export async function getCalendarMatches(
 ): Promise<Record<string, string>> {
   return invoke("get_calendar_matches", { recordingsDir });
 }
+
+// Briefing types (matches Rust BriefingResponse)
+export interface BriefingResponse {
+  content: string;
+  generated_at: string;
+  event_id: string;
+}
+
+// Briefing IPC
+export async function getBriefing(eventId: string): Promise<BriefingResponse> {
+  return invoke("get_briefing", { eventId });
+}
+
+export async function invalidateBriefingCache(
+  participantNames: string[]
+): Promise<void> {
+  return invoke("invalidate_briefing_cache", { participantNames });
+}
