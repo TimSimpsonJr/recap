@@ -14,6 +14,7 @@
     initMeetingsListener,
     destroyMeetingsListener,
   } from "../lib/stores/meetings";
+  import { settings } from "../lib/stores/settings";
   import { initRecorderListener, destroyRecorderListener } from "../lib/stores/recorder";
   import RecordingStatusBar from "../lib/components/RecordingStatusBar.svelte";
   import SearchBar from "../lib/components/SearchBar.svelte";
@@ -185,6 +186,31 @@
           "
         >
           {$meetings.error}
+        </div>
+      {/if}
+
+      {#if !$settings.recordingsFolder}
+        <div
+          class="mt-4 p-4 rounded-lg"
+          style="
+            background: rgba(180,165,130,0.08);
+            font-family: 'DM Sans', sans-serif;
+            font-size: 14.5px;
+            color: #B4A882;
+            text-align: center;
+          "
+        >
+          <p style="margin: 0 0 8px 0;">No recordings folder configured</p>
+          <a
+            href="#settings"
+            style="
+              color: #A8A078;
+              text-decoration: underline;
+              font-weight: 600;
+            "
+          >
+            Configure in Settings
+          </a>
         </div>
       {/if}
 

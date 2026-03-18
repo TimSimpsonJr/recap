@@ -509,7 +509,15 @@
   {#if loading}
     <div class="graph-message">Loading graph...</div>
   {:else if error}
-    <div class="graph-message graph-error">{error}</div>
+    <div class="graph-message graph-error">
+      {error}
+      {#if error?.includes("No recordings folder")}
+        <br />
+        <a href="#settings" style="color: #A8A078; text-decoration: underline; font-weight: 600; margin-top: 8px; display: inline-block;">
+          Configure in Settings
+        </a>
+      {/if}
+    </div>
   {:else if nodes.length === 0}
     <div class="graph-message">No meeting data to display</div>
   {:else}
