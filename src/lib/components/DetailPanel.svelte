@@ -165,8 +165,8 @@
   .detail-panel {
     height: 100%;
     overflow-y: auto;
-    background: #1D1D1B;
-    border-left: 1px solid #262624;
+    background: var(--bg);
+    border-left: 1px solid var(--border);
     position: relative;
   }
 
@@ -183,15 +183,15 @@
     height: 28px;
     border-radius: 6px;
     border: none;
-    background: #282826;
-    color: #78756E;
+    background: var(--surface);
+    color: var(--text-muted);
     cursor: pointer;
     transition: background 120ms ease, color 120ms ease;
   }
 
   .close-btn:hover {
-    background: #2B2B28;
-    color: #D8D5CE;
+    background: var(--raised);
+    color: var(--text);
   }
 
   .detail-loading {
@@ -199,14 +199,14 @@
     align-items: center;
     justify-content: center;
     height: 100%;
-    color: #585650;
+    color: var(--text-faint);
   }
 
   .detail-error {
     padding: 24px;
     font-family: 'DM Sans', sans-serif;
     font-size: 14.5px;
-    color: #D06850;
+    color: var(--red);
     background: rgba(200,80,60,0.10);
     margin: 16px;
     border-radius: 8px;
@@ -222,7 +222,7 @@
   .detail-tabs {
     display: flex;
     gap: 0;
-    border-bottom: 1px solid #262624;
+    border-bottom: 1px solid var(--border);
     font-family: 'DM Sans', sans-serif;
     font-size: 14.5px;
   }
@@ -235,23 +235,23 @@
     font-family: 'DM Sans', sans-serif;
     font-size: 14.5px;
     font-weight: 400;
-    color: #585650;
+    color: var(--text-faint);
     border-bottom: 2px solid transparent;
     margin-bottom: -1px;
   }
 
   .detail-tab.active {
     font-weight: 600;
-    color: #A8A078;
-    border-bottom-color: #A8A078;
+    color: var(--gold);
+    border-bottom-color: var(--gold);
   }
 
   .spinner {
     display: inline-block;
     width: 24px;
     height: 24px;
-    border: 2px solid #464440;
-    border-top-color: #A8A078;
+    border: 2px solid var(--border);
+    border-top-color: var(--gold);
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
   }

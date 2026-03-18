@@ -29,17 +29,17 @@
 >
   <div
     class="modal-card"
-    style="background:#242422;border-radius:12px;max-width:480px;width:90%;max-height:85vh;overflow-y:auto;padding:24px;position:relative;box-shadow:0 4px 24px rgba(0,0,0,0.5);"
+    style="background:var(--surface);border-radius:12px;max-width:480px;width:90%;max-height:85vh;overflow-y:auto;padding:24px;position:relative;box-shadow:0 4px 24px rgba(0,0,0,0.5);"
   >
     <button
       onclick={onclose}
-      style="position:absolute;top:12px;right:12px;background:none;border:none;color:#78756E;font-size:20px;cursor:pointer;padding:4px 8px;line-height:1;"
+      style="position:absolute;top:12px;right:12px;background:none;border:none;color:var(--text-muted);font-size:20px;cursor:pointer;padding:4px 8px;line-height:1;"
       aria-label="Close"
     >
       &times;
     </button>
 
-    <h2 style="font-family:'Source Serif 4',serif;font-size:18px;font-weight:600;color:#D8D5CE;margin:0 0 16px 0;">
+    <h2 style="font-family:'Source Serif 4',serif;font-size:18px;font-weight:600;color:var(--text);margin:0 0 16px 0;">
       {title}
     </h2>
 

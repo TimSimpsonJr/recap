@@ -40,25 +40,25 @@
   style="
     padding: 14px 16px;
     border-radius: 8px;
-    background: {isSelected ? '#2B2B28' : '#242422'};
+    background: {isSelected ? 'var(--raised)' : 'var(--surface)'};
     text-decoration: none;
     transition: background 120ms ease, box-shadow 120ms ease;
-    {isSelected ? 'box-shadow: inset 2px 0 0 #A8A078;' : ''}
+    {isSelected ? 'box-shadow: inset 2px 0 0 var(--gold);' : ''}
   "
   onmouseenter={(e) => {
     if (!isSelected) {
       const el = e.currentTarget as HTMLElement;
-      el.style.background = '#2B2B28';
+      el.style.background = 'var(--raised)';
       el.style.boxShadow = '0 1px 8px rgba(0,0,0,0.25)';
     }
   }}
   onmouseleave={(e) => {
     const el = e.currentTarget as HTMLElement;
     if (isSelected) {
-      el.style.background = '#2B2B28';
-      el.style.boxShadow = 'inset 2px 0 0 #A8A078';
+      el.style.background = 'var(--raised)';
+      el.style.boxShadow = 'inset 2px 0 0 var(--gold)';
     } else {
-      el.style.background = '#242422';
+      el.style.background = 'var(--surface)';
       el.style.boxShadow = 'none';
     }
   }}
@@ -70,7 +70,7 @@
           font-family: 'Source Serif 4', serif;
           font-size: 16px;
           font-weight: 600;
-          color: #D8D5CE;
+          color: var(--text);
           margin: 0 0 4px 0;
           overflow: hidden;
           text-overflow: ellipsis;
@@ -84,18 +84,18 @@
         style="
           font-family: 'DM Sans', sans-serif;
           font-size: 13.5px;
-          color: #78756E;
+          color: var(--text-muted);
         "
       >
         {#if meeting.platform}
           <span>{meeting.platform}</span>
         {/if}
         {#if durationText}
-          <span style="color: #464440; margin: 0 6px;">&middot;</span>
+          <span style="color: var(--border); margin: 0 6px;">&middot;</span>
           <span>{durationText}</span>
         {/if}
         {#if participantText}
-          <span style="color: #464440; margin: 0 6px;">&middot;</span>
+          <span style="color: var(--border); margin: 0 6px;">&middot;</span>
           <span>{participantText}</span>
         {/if}
       </div>

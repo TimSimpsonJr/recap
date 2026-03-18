@@ -33,8 +33,8 @@
     min-width: {expanded ? '200px' : '0px'};
     overflow: hidden;
     transition: width 200ms ease, min-width 200ms ease;
-    background: #1A1A18;
-    border-right: {expanded ? '1px solid #262624' : 'none'};
+    background: var(--bg);
+    border-right: {expanded ? '1px solid var(--border)' : 'none'};
     height: 100%;
     flex-shrink: 0;
   "
@@ -59,7 +59,7 @@
           style="
             font-size: 13.5px;
             font-weight: 600;
-            color: #D8D5CE;
+            color: var(--text);
             letter-spacing: 0.5px;
           "
         >Filters</span>
@@ -73,7 +73,7 @@
               cursor: pointer;
               font-family: 'DM Sans', sans-serif;
               font-size: 14px;
-              color: #A8A078;
+              color: var(--gold);
             "
           >Clear all</button>
         {/if}
@@ -96,12 +96,12 @@
               font-family: 'DM Sans', sans-serif;
               font-size: 12px;
               font-weight: 600;
-              color: #585650;
+              color: var(--text-faint);
               text-transform: uppercase;
               letter-spacing: 0.8px;
             "
           >
-            <span style="font-size: 9px; color: #585650;">
+            <span style="font-size: 9px; color: var(--text-faint);">
               {companiesOpen ? "\u25BC" : "\u25B6"}
             </span>
             Company
@@ -110,7 +110,7 @@
                 style="
                   margin-left: auto;
                   background: rgba(168,160,120,0.15);
-                  color: #A8A078;
+                  color: var(--gold);
                   font-size: 10px;
                   font-weight: 600;
                   padding: 1px 6px;
@@ -130,7 +130,7 @@
                     padding: 3px 0;
                     cursor: pointer;
                     font-size: 14px;
-                    color: #B0ADA5;
+                    color: var(--text-secondary);
                   "
                 >
                   <input
@@ -164,12 +164,12 @@
               font-family: 'DM Sans', sans-serif;
               font-size: 12px;
               font-weight: 600;
-              color: #585650;
+              color: var(--text-faint);
               text-transform: uppercase;
               letter-spacing: 0.8px;
             "
           >
-            <span style="font-size: 9px; color: #585650;">
+            <span style="font-size: 9px; color: var(--text-faint);">
               {platformsOpen ? "\u25BC" : "\u25B6"}
             </span>
             Platform
@@ -178,7 +178,7 @@
                 style="
                   margin-left: auto;
                   background: rgba(168,160,120,0.15);
-                  color: #A8A078;
+                  color: var(--gold);
                   font-size: 10px;
                   font-weight: 600;
                   padding: 1px 6px;
@@ -198,7 +198,7 @@
                     padding: 3px 0;
                     cursor: pointer;
                     font-size: 14px;
-                    color: #B0ADA5;
+                    color: var(--text-secondary);
                   "
                 >
                   <input
@@ -232,12 +232,12 @@
               font-family: 'DM Sans', sans-serif;
               font-size: 12px;
               font-weight: 600;
-              color: #585650;
+              color: var(--text-faint);
               text-transform: uppercase;
               letter-spacing: 0.8px;
             "
           >
-            <span style="font-size: 9px; color: #585650;">
+            <span style="font-size: 9px; color: var(--text-faint);">
               {participantsOpen ? "\u25BC" : "\u25B6"}
             </span>
             Participants
@@ -246,7 +246,7 @@
                 style="
                   margin-left: auto;
                   background: rgba(168,160,120,0.15);
-                  color: #A8A078;
+                  color: var(--gold);
                   font-size: 10px;
                   font-weight: 600;
                   padding: 1px 6px;
@@ -266,7 +266,7 @@
                     padding: 3px 0;
                     cursor: pointer;
                     font-size: 14px;
-                    color: #B0ADA5;
+                    color: var(--text-secondary);
                   "
                 >
                   <input
@@ -288,7 +288,7 @@
         <div
           style="
             font-size: 13.5px;
-            color: #585650;
+            color: var(--text-faint);
             padding: 8px 0;
           "
         >
@@ -305,7 +305,7 @@
     -webkit-appearance: none;
     width: 14px;
     height: 14px;
-    border: 1.5px solid #464440;
+    border: 1.5px solid var(--border);
     border-radius: 3px;
     background: transparent;
     cursor: pointer;
@@ -314,8 +314,8 @@
   }
 
   .filter-checkbox:checked {
-    background: #A8A078;
-    border-color: #A8A078;
+    background: var(--gold);
+    border-color: var(--gold);
   }
 
   .filter-checkbox:checked::after {
@@ -325,7 +325,7 @@
     top: 0px;
     width: 5px;
     height: 8px;
-    border: solid #1A1A18;
+    border: solid var(--bg);
     border-width: 0 2px 2px 0;
     transform: rotate(45deg);
   }
