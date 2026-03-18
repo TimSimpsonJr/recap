@@ -1,11 +1,13 @@
 use tauri::Manager;
 use tauri_plugin_window_state::{AppHandleExt, StateFlags, WindowExt};
 
+mod briefing;
 mod calendar;
 mod credentials;
 mod deep_link;
 mod diagnostics;
 mod meetings;
+mod notifications;
 mod oauth;
 mod recorder;
 mod sidecar;
@@ -47,6 +49,16 @@ pub fn run() {
             // Deep link handler
             deep_link::setup_deep_links(app.handle())?;
 
+            // Start periodic notification check (every 60 seconds)
+            let notification_handle = app.handle().clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+                loop {
+                    interval.tick().await;
+                    let _ = notifications::check_upcoming_notifications(&notification_handle);
+                }
+            });
+
             // Show the main window on launch.
             // TODO: When auto-start-with-Windows is implemented, check if launched
             // via startup and hide instead (start in tray).
@@ -84,6 +96,8 @@ pub fn run() {
             calendar::get_upcoming_meetings,
             calendar::sync_calendar,
             calendar::get_calendar_matches,
+            briefing::generate_briefing,
+            briefing::invalidate_briefing_cache,
         ])
         .on_window_event(|window, event| {
             // Closing the window hides it instead of quitting
