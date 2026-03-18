@@ -36,9 +36,11 @@ export interface SidecarResult {
 
 export async function runPipeline(
   configPath: string,
-  recordingPath: string
+  recordingPath: string,
+  metadataPath?: string,
+  fromStage?: string
 ): Promise<SidecarResult> {
-  return invoke("run_pipeline", { configPath, recordingPath });
+  return invoke("run_pipeline", { configPath, recordingPath, metadataPath, fromStage });
 }
 
 export async function checkSidecarStatus(): Promise<boolean> {

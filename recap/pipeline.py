@@ -17,6 +17,13 @@ from recap.vault import find_previous_meeting, write_meeting_note, write_profile
 
 logger = logging.getLogger(__name__)
 
+# Stage definitions:
+# - merge: handled by Rust side (ffmpeg merge of video + dual audio) before pipeline runs
+# - frames: extract video frames for visual context
+# - transcribe: WhisperX transcription (includes diarization via WhisperX's built-in speaker assignment)
+# - diarize: reserved for future standalone diarization; currently bundled into transcribe
+# - analyze: Claude analysis of transcript + metadata
+# - export: write meeting note, profile stubs, Todoist tasks
 PIPELINE_STAGES = ["merge", "frames", "transcribe", "diarize", "analyze", "export"]
 
 

@@ -40,15 +40,22 @@ pub struct ZoomParticipant {
 /// Client for the Zoom REST API.
 pub struct ZoomClient {
     access_token: String,
+    refresh_token: String,
     client_id: String,
     client_secret: String,
     http: reqwest::Client,
 }
 
 impl ZoomClient {
-    pub fn new(access_token: String, client_id: String, client_secret: String) -> Self {
+    pub fn new(
+        access_token: String,
+        refresh_token: String,
+        client_id: String,
+        client_secret: String,
+    ) -> Self {
         Self {
             access_token,
+            refresh_token,
             client_id,
             client_secret,
             http: reqwest::Client::new(),
@@ -202,13 +209,16 @@ impl ZoomClient {
             .map_err(|e| ZoomError::Request(e.to_string()))
     }
 
-    /// Refresh the access token using client credentials.
+    /// Refresh the access token using the refresh_token grant type.
     async fn refresh_access_token(&mut self) -> Result<(), ZoomError> {
         let response = self
             .http
             .post("https://zoom.us/oauth/token")
             .basic_auth(&self.client_id, Some(&self.client_secret))
-            .form(&[("grant_type", "client_credentials")])
+            .form(&[
+                ("grant_type", "refresh_token"),
+                ("refresh_token", &self.refresh_token),
+            ])
             .send()
             .await
             .map_err(|e| ZoomError::Request(format!("Token refresh: {}", e)))?;
@@ -232,7 +242,7 @@ impl ZoomClient {
 pub fn fallback_metadata() -> serde_json::Value {
     serde_json::json!({
         "title": "Zoom Meeting",
-        "date": chrono::Utc::now().format("%Y-%m-%d").to_string(),
+        "date": chrono::Local::now().format("%Y-%m-%d").to_string(),
         "participants": [],
         "platform": "zoom"
     })

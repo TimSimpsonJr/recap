@@ -32,6 +32,7 @@ impl<R: Runtime> RecorderHandle<R> {
                 local_audio: None,
                 video: None,
                 monitor_stop: None,
+                monitor_handle: None,
             })),
         }
     }
@@ -50,6 +51,7 @@ pub struct RecorderInner<R: Runtime> {
     local_audio: Option<AudioCapture>,
     video: Option<VideoCapture>,
     monitor_stop: Option<Arc<std::sync::atomic::AtomicBool>>,
+    monitor_handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl<R: Runtime> RecorderInner<R> {
@@ -71,14 +73,18 @@ impl<R: Runtime> RecorderInner<R> {
 
     /// Start monitoring for meeting audio sessions.
     pub fn start_monitor(&mut self, tx: mpsc::Sender<MonitorEvent>) {
-        let (_, stop) = monitor::start_monitoring(tx);
+        let (handle, stop) = monitor::start_monitoring(tx);
         self.monitor_stop = Some(stop);
+        self.monitor_handle = Some(handle);
     }
 
-    /// Stop the monitor.
+    /// Stop the monitor and join the thread.
     pub fn stop_monitor(&mut self) {
         if let Some(stop) = self.monitor_stop.take() {
             monitor::stop_monitoring(&stop);
+        }
+        if let Some(handle) = self.monitor_handle.take() {
+            let _ = handle.join();
         }
     }
 
@@ -407,6 +413,58 @@ pub async fn start_recording(
 
 #[tauri::command]
 pub async fn stop_recording(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, RecorderHandle<tauri::Wry>>,
+) -> Result<(), String> {
+    let mut inner = state.handle().lock().await;
+
+    match inner.state() {
+        RecorderState::Recording => {
+            // Stop capture and process the recording (merge, metadata, pipeline)
+            if let Some(session) = inner.stop_capture()? {
+                inner.set_state(RecorderState::Processing);
+                let working_dir = session.working_dir.clone();
+
+                // Merge audio/video into final MP4
+                let merged = merge_recording(&session)?;
+
+                // Write meeting metadata JSON
+                let metadata_path = write_meeting_json(&working_dir, None)?;
+
+                // Write initial pipeline status
+                let _ = write_initial_status(&working_dir);
+
+                inner.return_to_idle();
+
+                // Trigger pipeline sidecar asynchronously
+                let config_path = working_dir.join("config.json");
+                let merged_str = merged.to_string_lossy().to_string();
+                let meta_str = metadata_path.to_string_lossy().to_string();
+                let config_str = config_path.to_string_lossy().to_string();
+
+                tauri::async_runtime::spawn(async move {
+                    let _ = crate::sidecar::run_pipeline(
+                        app,
+                        config_str,
+                        merged_str,
+                        Some(meta_str),
+                        None,
+                    )
+                    .await;
+                });
+            }
+            Ok(())
+        }
+        _ => Err(format!(
+            "Cannot stop recording in state: {:?}",
+            inner.state()
+        )),
+    }
+}
+
+/// Cancel recording: stop capture, delete temp files, return to idle.
+#[tauri::command]
+pub async fn cancel_recording(
     state: tauri::State<'_, RecorderHandle<tauri::Wry>>,
 ) -> Result<(), String> {
     let mut inner = state.handle().lock().await;
@@ -417,7 +475,7 @@ pub async fn stop_recording(
             Ok(())
         }
         _ => Err(format!(
-            "Cannot stop recording in state: {:?}",
+            "Cannot cancel recording in state: {:?}",
             inner.state()
         )),
     }
@@ -425,11 +483,30 @@ pub async fn stop_recording(
 
 #[tauri::command]
 pub async fn retry_processing(
+    app: tauri::AppHandle,
     _state: tauri::State<'_, RecorderHandle<tauri::Wry>>,
-    _recording_dir: String,
-    _from_stage: Option<String>,
+    recording_dir: String,
+    from_stage: Option<String>,
 ) -> Result<(), String> {
-    // This will be fully wired in Task 12 when sidecar.rs gets --from support.
-    // For now, placeholder that returns ok.
-    Ok(())
+    // Find the merged file and metadata in the recording dir
+    let dir = std::path::PathBuf::from(&recording_dir);
+    let merged = dir.join("recording.mp4");
+    let metadata = dir.join("meeting.json");
+    let config = dir.join("config.json");
+
+    if !merged.exists() {
+        return Err(format!("Recording not found: {}", merged.display()));
+    }
+
+    let merged_str = merged.to_string_lossy().to_string();
+    let config_str = config.to_string_lossy().to_string();
+    let meta_str = if metadata.exists() {
+        Some(metadata.to_string_lossy().to_string())
+    } else {
+        None
+    };
+
+    crate::sidecar::run_pipeline(app, config_str, merged_str, meta_str, from_stage)
+        .await
+        .map(|_| ())
 }

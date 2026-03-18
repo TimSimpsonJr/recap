@@ -60,6 +60,7 @@ pub fn run() {
             recorder::recorder::get_recorder_state,
             recorder::recorder::start_recording,
             recorder::recorder::stop_recording,
+            recorder::recorder::cancel_recording,
             recorder::recorder::retry_processing,
             diagnostics::check_nvenc,
             diagnostics::check_ffmpeg,

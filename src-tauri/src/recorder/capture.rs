@@ -6,15 +6,24 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
+use windows::core::{implement, IUnknown, Interface, PCWSTR};
 use windows::Win32::Media::Audio::{
-    eCapture, eConsole, eRender, IAudioCaptureClient, IAudioClient, IMMDevice,
+    eCapture, eConsole, eRender, ActivateAudioInterfaceAsync,
+    IAudioCaptureClient, IAudioClient, IActivateAudioInterfaceAsyncOperation,
+    IActivateAudioInterfaceCompletionHandler,
+    IActivateAudioInterfaceCompletionHandler_Impl, IMMDevice,
     IMMDeviceEnumerator, MMDeviceEnumerator, AUDCLNT_SHAREMODE_SHARED,
-    AUDCLNT_STREAMFLAGS_LOOPBACK, WAVEFORMATEX,
+    AUDCLNT_STREAMFLAGS_LOOPBACK, AUDIOCLIENT_ACTIVATION_PARAMS,
+    AUDIOCLIENT_ACTIVATION_PARAMS_0, AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK,
+    AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS, PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE,
+    VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK, WAVEFORMATEX,
 };
 use windows::Win32::System::Com::{
     CoCreateInstance, CoInitializeEx, CoUninitialize, CLSCTX_ALL, COINIT_MULTITHREADED,
 };
+use windows_core::PROPVARIANT;
 use windows::Win32::System::Threading::{CreateEventW, WaitForSingleObject};
+use windows::Win32::System::Variant::VT_BLOB;
 
 /// Errors that can occur during capture.
 #[derive(Debug)]
@@ -51,13 +60,12 @@ pub struct AudioCapture {
 }
 
 impl AudioCapture {
-    /// Start capturing remote audio from the specified process via WASAPI loopback.
+    /// Start capturing remote audio from the specified process via per-process WASAPI loopback.
     ///
-    /// Uses the default render endpoint in loopback mode to capture system audio.
-    /// For per-process capture (Windows 10 21H1+), ActivateAudioInterfaceAsync
-    /// would be used — here we use device loopback as a simpler first pass that
-    /// can be upgraded to per-process loopback later.
-    pub fn start_remote(_pid: u32, output_path: PathBuf) -> Result<Self, CaptureError> {
+    /// Uses ActivateAudioInterfaceAsync with AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS
+    /// to capture only audio from the target process tree (Windows 10 2004+).
+    /// Falls back to device-wide loopback if per-process activation fails.
+    pub fn start_remote(pid: u32, output_path: PathBuf) -> Result<Self, CaptureError> {
         let stop = Arc::new(AtomicBool::new(false));
         let stop_clone = stop.clone();
 
@@ -66,7 +74,16 @@ impl AudioCapture {
                 let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
             }
 
-            let result = unsafe { capture_loopback(output_path, &stop_clone) };
+            // Try per-process loopback first, fall back to device-wide
+            let result = unsafe {
+                match capture_process_loopback(pid, &output_path, &stop_clone) {
+                    Ok(()) => Ok(()),
+                    Err(e) => {
+                        eprintln!("Per-process loopback failed ({}), falling back to device loopback", e);
+                        capture_loopback(output_path, &stop_clone)
+                    }
+                }
+            };
 
             unsafe {
                 CoUninitialize();
@@ -171,7 +188,212 @@ fn finalize_wav_header(file: &mut File) -> Result<(), CaptureError> {
     Ok(())
 }
 
-/// Capture audio from the default render device in loopback mode.
+type ActivationResult = Arc<(
+    std::sync::Mutex<Option<Result<IAudioClient, String>>>,
+    std::sync::Condvar,
+)>;
+
+/// COM completion handler for ActivateAudioInterfaceAsync.
+#[implement(IActivateAudioInterfaceCompletionHandler)]
+struct ActivationHandler {
+    shared: ActivationResult,
+}
+
+impl IActivateAudioInterfaceCompletionHandler_Impl for ActivationHandler_Impl {
+    fn ActivateCompleted(
+        &self,
+        activate_operation: Option<&IActivateAudioInterfaceAsyncOperation>,
+    ) -> windows::core::Result<()> {
+        let op = activate_operation.ok_or(windows::core::Error::from(
+            windows::Win32::Foundation::E_POINTER,
+        ))?;
+
+        let mut hr = windows::core::HRESULT(0);
+        let mut activated_interface: Option<IUnknown> = None;
+        unsafe {
+            op.GetActivateResult(&mut hr, &mut activated_interface)?;
+        }
+
+        let result = if hr.is_ok() {
+            match activated_interface {
+                Some(iface) => match iface.cast::<IAudioClient>() {
+                    Ok(client) => Ok(client),
+                    Err(e) => Err(format!("Cast to IAudioClient failed: {}", e)),
+                },
+                None => Err("No interface returned".to_string()),
+            }
+        } else {
+            Err(format!("Activation failed: HRESULT {:?}", hr))
+        };
+
+        let (lock, cvar) = &*self.shared;
+        *lock.lock().unwrap() = Some(result);
+        cvar.notify_one();
+
+        Ok(())
+    }
+}
+
+/// Capture audio from a specific process via per-process WASAPI loopback.
+/// Requires Windows 10 version 2004 (build 19041) or later.
+unsafe fn capture_process_loopback(
+    pid: u32,
+    output_path: &PathBuf,
+    stop: &AtomicBool,
+) -> Result<(), CaptureError> {
+    // Set up process loopback activation params
+    let loopback_params = AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS {
+        TargetProcessId: pid,
+        ProcessLoopbackMode: PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE,
+    };
+
+    let activation_params = AUDIOCLIENT_ACTIVATION_PARAMS {
+        ActivationType: AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK,
+        Anonymous: AUDIOCLIENT_ACTIVATION_PARAMS_0 {
+            ProcessLoopbackParams: loopback_params,
+        },
+    };
+
+    // Wrap in PROPVARIANT as a VT_BLOB using raw memory layout
+    // PROPVARIANT layout: u16 vt, u16 reserved1, u16 reserved2, u16 reserved3, then union data
+    let params_ptr = &activation_params as *const AUDIOCLIENT_ACTIVATION_PARAMS;
+    let params_size = std::mem::size_of::<AUDIOCLIENT_ACTIVATION_PARAMS>() as u32;
+
+    #[repr(C)]
+    struct RawPropVariantBlob {
+        vt: u16,
+        reserved1: u16,
+        reserved2: u16,
+        reserved3: u16,
+        cb_size: u32,
+        p_blob_data: *mut u8,
+    }
+
+    let raw_pv = RawPropVariantBlob {
+        vt: VT_BLOB.0,
+        reserved1: 0,
+        reserved2: 0,
+        reserved3: 0,
+        cb_size: params_size,
+        p_blob_data: params_ptr as *mut u8,
+    };
+
+    let propvariant_ptr = &raw_pv as *const RawPropVariantBlob as *const PROPVARIANT;
+
+    // Create shared state for completion handler
+    let shared: ActivationResult = Arc::new((
+        std::sync::Mutex::new(None),
+        std::sync::Condvar::new(),
+    ));
+
+    let handler = ActivationHandler {
+        shared: shared.clone(),
+    };
+    let handler: IActivateAudioInterfaceCompletionHandler = handler.into();
+
+    // Call ActivateAudioInterfaceAsync
+    let _operation = ActivateAudioInterfaceAsync(
+        PCWSTR(VIRTUAL_AUDIO_DEVICE_PROCESS_LOOPBACK.as_ptr()),
+        &IAudioClient::IID,
+        Some(propvariant_ptr),
+        &handler,
+    )
+    .map_err(|e| CaptureError::RemoteAttachFailed(format!("ActivateAudioInterfaceAsync: {}", e)))?;
+
+    // Wait for completion (5 second timeout)
+    let (lock, cvar) = &*shared;
+    let guard = lock.lock().unwrap();
+    let mut result = cvar
+        .wait_timeout(guard, std::time::Duration::from_secs(5))
+        .unwrap();
+    let result = result.0.take()
+        .ok_or_else(|| CaptureError::RemoteAttachFailed("Activation timed out".to_string()))?;
+
+    let audio_client = result
+        .map_err(|e| CaptureError::RemoteAttachFailed(e))?;
+
+    // Now use the activated audio client for capture (same as capture_from_device but with existing client)
+    let mix_format: *mut WAVEFORMATEX = audio_client
+        .GetMixFormat()
+        .map_err(|e| CaptureError::RemoteAttachFailed(format!("GetMixFormat: {}", e)))?;
+
+    let format = &*mix_format;
+    let channels = format.nChannels;
+    let sample_rate = format.nSamplesPerSec;
+    let bits_per_sample = format.wBitsPerSample;
+
+    audio_client
+        .Initialize(
+            AUDCLNT_SHAREMODE_SHARED,
+            0, // No special flags needed for process loopback
+            10_000_000,
+            0,
+            mix_format,
+            None,
+        )
+        .map_err(|e| CaptureError::RemoteAttachFailed(format!("Initialize: {}", e)))?;
+
+    let capture_client: IAudioCaptureClient = audio_client
+        .GetService()
+        .map_err(|e| CaptureError::RemoteAttachFailed(format!("GetService: {}", e)))?;
+
+    let capture_event = CreateEventW(None, false, false, None)
+        .map_err(|e| CaptureError::RemoteAttachFailed(format!("CreateEvent: {}", e)))?;
+
+    audio_client
+        .SetEventHandle(capture_event)
+        .map_err(|e| CaptureError::RemoteAttachFailed(format!("SetEventHandle: {}", e)))?;
+
+    let mut file = File::create(output_path)?;
+    write_wav_header(&mut file, channels, sample_rate, bits_per_sample)?;
+
+    audio_client
+        .Start()
+        .map_err(|e| CaptureError::RemoteAttachFailed(format!("Start: {}", e)))?;
+
+    while !stop.load(Ordering::Relaxed) {
+        WaitForSingleObject(capture_event, 100);
+
+        loop {
+            let mut buffer_ptr = std::ptr::null_mut();
+            let mut num_frames = 0u32;
+            let mut flags = 0u32;
+
+            match capture_client.GetBuffer(
+                &mut buffer_ptr,
+                &mut num_frames,
+                &mut flags,
+                None,
+                None,
+            ) {
+                Ok(()) => {}
+                Err(_) => break,
+            }
+
+            if num_frames > 0 {
+                let bytes_per_frame = channels as usize * bits_per_sample as usize / 8;
+                let data_len = num_frames as usize * bytes_per_frame;
+                let data = std::slice::from_raw_parts(buffer_ptr, data_len);
+                let _ = file.write_all(data);
+            }
+
+            let _ = capture_client.ReleaseBuffer(num_frames);
+
+            if num_frames == 0 {
+                break;
+            }
+        }
+    }
+
+    let _ = audio_client.Stop();
+    finalize_wav_header(&mut file)?;
+    windows::Win32::System::Com::CoTaskMemFree(Some(mix_format as *const _));
+    let _ = windows::Win32::Foundation::CloseHandle(capture_event);
+
+    Ok(())
+}
+
+/// Capture audio from the default render device in loopback mode (fallback).
 unsafe fn capture_loopback(
     output_path: PathBuf,
     stop: &AtomicBool,
