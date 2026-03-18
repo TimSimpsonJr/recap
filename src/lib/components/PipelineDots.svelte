@@ -23,6 +23,7 @@
   let ariaLabel = $derived.by(() => {
     const parts = stages.map((s) => {
       const st = status[s];
+      if (st.waiting) return `${s}: awaiting review`;
       if (st.error) return `${s}: failed`;
       if (st.completed) return `${s}: completed`;
       return `${s}: pending`;
@@ -32,13 +33,19 @@
 
   function dotColor(stage: Stage): string {
     const st = status[stage];
+    if (st.waiting) return "#D4A843";
     if (st.error) return "#ef534a";
     if (st.completed) return "#C4A84D";
     return "#363d47";
   }
 
+  function isDotPulsing(stage: Stage): boolean {
+    return !!status[stage].waiting;
+  }
+
   function stageIcon(stage: Stage): string {
     const st = status[stage];
+    if (st.waiting) return "\u25CB";
     if (st.error) return "\u2717";
     if (st.completed) return "\u2713";
     return "\u2022";
@@ -46,6 +53,7 @@
 
   function stageIconColor(stage: Stage): string {
     const st = status[stage];
+    if (st.waiting) return "#D4A843";
     if (st.error) return "#ef534a";
     if (st.completed) return "#C4A84D";
     return "#545d6a";
@@ -74,6 +82,7 @@
 
   function dotTitle(stage: Stage): string {
     const s = status[stage];
+    if (s.waiting) return `${stage}: ${s.waiting}`;
     if (s.error) return `${stage}: ${s.error}`;
     if (s.completed) return `${stage}: done`;
     return `${stage}: pending`;
@@ -121,6 +130,7 @@
     {#each stages as stage}
       <span
         title={dotTitle(stage)}
+        class={isDotPulsing(stage) ? 'pulse' : ''}
         style="
           display: inline-block;
           width: 6px;
@@ -178,7 +188,11 @@
                 </span>
               {/if}
             </div>
-            {#if st.error}
+            {#if st.waiting}
+              <div style="color: #D4A843; font-size: 11px; margin-top: 2px; word-break: break-word;">
+                {st.waiting}
+              </div>
+            {:else if st.error}
               <div style="color: var(--red); font-size: 11px; margin-top: 2px; word-break: break-word;">
                 {st.error}
               </div>
@@ -216,3 +230,13 @@
     </div>
   {/if}
 </div>
+
+<style>
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+  :global(.pulse) {
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+</style>

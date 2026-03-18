@@ -61,6 +61,7 @@ export interface PipelineStageStatus {
   completed: boolean;
   timestamp: string | null;
   error: string | null;
+  waiting: string | null;
 }
 
 // Full pipeline status (matches Rust PipelineStatus)
