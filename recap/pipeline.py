@@ -10,7 +10,7 @@ import subprocess
 from recap.analyze import analyze
 from recap.config import RecapConfig
 from recap.frames import extract_frames
-from recap.models import MeetingMetadata
+from recap.models import MeetingMetadata, TranscriptResult
 from recap.todoist import create_tasks, save_retry_file
 from recap.transcribe import transcribe
 from recap.vault import find_previous_meeting, write_meeting_note, write_profile_stubs, slugify
@@ -93,6 +93,17 @@ def _get_audio_duration(path: pathlib.Path) -> float:
     except (ValueError, OSError):
         logger.warning("Could not determine audio duration, defaulting to 0")
         return 0.0
+
+
+def _apply_speaker_labels(transcript: TranscriptResult, labels_path: pathlib.Path) -> TranscriptResult:
+    """Apply speaker label corrections from a JSON mapping file."""
+    if not labels_path.exists():
+        return transcript
+    labels = json.loads(labels_path.read_text())
+    for utterance in transcript.utterances:
+        if utterance.speaker in labels:
+            utterance.speaker = labels[utterance.speaker]
+    return transcript
 
 
 def run_pipeline(
@@ -183,6 +194,11 @@ def run_pipeline(
         _save_status(working_dir, status, recording_dest)
         logger.info("No participants available — pausing for speaker review")
         return {"paused": True, "waiting_at": "analyze"}
+
+    # Apply speaker label corrections if available
+    labels_path = working_dir / "speaker_labels.json"
+    if transcript is not None and isinstance(transcript, TranscriptResult):
+        transcript = _apply_speaker_labels(transcript, labels_path)
 
     # Analyze with Claude
     analysis = None
