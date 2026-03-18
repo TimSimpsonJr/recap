@@ -12,6 +12,7 @@
   import { settings } from "../lib/stores/settings";
   import { get } from "svelte/store";
   import { getGraphData, type GraphNode, type GraphEdge } from "../lib/tauri";
+  import { USE_DUMMY_DATA, DUMMY_GRAPH_DATA } from "../lib/dummy-data";
   import GraphControls from "../lib/components/GraphControls.svelte";
   import GraphSidebar from "../lib/components/GraphSidebar.svelte";
 
@@ -420,22 +421,26 @@
     updateSize();
     window.addEventListener("resize", updateSize);
 
-    const s = get(settings);
-    const recordingsDir = s.recordingsFolder;
-
-    if (!recordingsDir) {
-      error = "No recordings folder configured";
-      loading = false;
-      return;
-    }
-
     let data;
-    try {
-      data = await getGraphData(recordingsDir);
-    } catch (e) {
-      error = e instanceof Error ? e.message : String(e);
-      loading = false;
-      return;
+    if (USE_DUMMY_DATA) {
+      data = DUMMY_GRAPH_DATA;
+    } else {
+      const s = get(settings);
+      const recordingsDir = s.recordingsFolder;
+
+      if (!recordingsDir) {
+        error = "No recordings folder configured";
+        loading = false;
+        return;
+      }
+
+      try {
+        data = await getGraphData(recordingsDir);
+      } catch (e) {
+        error = e instanceof Error ? e.message : String(e);
+        loading = false;
+        return;
+      }
     }
 
     try {

@@ -2,6 +2,7 @@
   import { get } from "svelte/store";
   import { settings } from "../stores/settings";
   import { getMeetingDetail, type MeetingDetail, type Utterance } from "../tauri";
+  import { USE_DUMMY_DATA, getDummyDetail } from "../dummy-data";
   import MeetingHeader from "./MeetingHeader.svelte";
   import RetryBanner from "./RetryBanner.svelte";
   import MeetingPlayer from "./MeetingPlayer.svelte";
@@ -28,6 +29,11 @@
     error = null;
     activeTab = "notes";
     try {
+      if (USE_DUMMY_DATA) {
+        detail = getDummyDetail(meetingId);
+        loading = false;
+        return;
+      }
       const s = get(settings);
       const recordingsDir = s.recordingsFolder;
       if (!recordingsDir) {

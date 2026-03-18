@@ -3,6 +3,7 @@
   import { get } from "svelte/store";
   import { settings } from "../stores/settings";
   import { getMeetingDetail, type MeetingDetail } from "../tauri";
+  import { USE_DUMMY_DATA, getDummyDetail } from "../dummy-data";
   import MeetingNotes from "./MeetingNotes.svelte";
   import MeetingTranscript from "./MeetingTranscript.svelte";
 
@@ -31,6 +32,12 @@
     detailLoading = true;
     detailError = null;
     activeTab = "notes";
+
+    if (USE_DUMMY_DATA) {
+      detail = getDummyDetail(meetingId);
+      detailLoading = false;
+      return;
+    }
 
     try {
       const s = get(settings);

@@ -8,6 +8,7 @@ import {
   type MeetingSummary,
   type FilterOptions,
 } from "../tauri";
+import { USE_DUMMY_DATA, DUMMY_MEETINGS, DUMMY_FILTER_OPTIONS } from "../dummy-data";
 
 export interface MeetingsState {
   items: MeetingSummary[];
@@ -51,6 +52,7 @@ export const filterOptions = writable<FilterOptions>({
 });
 
 export async function loadFilterOptions(): Promise<void> {
+  if (USE_DUMMY_DATA) return;
   const s = get(settings);
   const recordingsDir = s.recordingsFolder;
   if (!recordingsDir) return;
@@ -145,6 +147,11 @@ function getPaths(): { recordingsDir: string; vaultMeetingsDir: string | undefin
 
 /** Load the first page of meetings, replacing existing state. */
 export async function loadMeetings(): Promise<void> {
+  if (USE_DUMMY_DATA) {
+    meetings.set({ items: DUMMY_MEETINGS, nextCursor: null, loading: false, error: null, searchQuery: "" });
+    filterOptions.set(DUMMY_FILTER_OPTIONS);
+    return;
+  }
   const { recordingsDir, vaultMeetingsDir } = getPaths();
   if (!recordingsDir) {
     meetings.set({ ...initial, error: "No recordings folder configured" });

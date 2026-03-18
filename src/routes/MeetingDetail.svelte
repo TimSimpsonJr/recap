@@ -3,6 +3,7 @@
   import { get } from "svelte/store";
   import { settings } from "../lib/stores/settings";
   import { getMeetingDetail, type MeetingDetail } from "../lib/tauri";
+  import { USE_DUMMY_DATA, getDummyDetail } from "../lib/dummy-data";
   import MeetingHeader from "../lib/components/MeetingHeader.svelte";
   import RetryBanner from "../lib/components/RetryBanner.svelte";
   import MeetingPlayer from "../lib/components/MeetingPlayer.svelte";
@@ -31,6 +32,11 @@
     loading = true;
     error = null;
     try {
+      if (USE_DUMMY_DATA) {
+        detail = getDummyDetail(meetingId);
+        loading = false;
+        return;
+      }
       const s = get(settings);
       const recordingsDir = s.recordingsFolder;
       if (!recordingsDir) {
