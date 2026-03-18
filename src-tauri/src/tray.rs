@@ -1,8 +1,11 @@
 use tauri::{
     menu::{Menu, MenuItem, PredefinedMenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
-    Manager, Runtime,
+    Emitter, Manager, Runtime,
 };
+
+use crate::recorder::recorder::RecorderHandle;
+use crate::recorder::types::RecorderState;
 
 pub fn create_tray<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
     let start_recording =
@@ -39,12 +42,34 @@ pub fn create_tray<R: Runtime>(app: &tauri::AppHandle<R>) -> tauri::Result<()> {
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
+            "start_recording" => {
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let state = app.state::<RecorderHandle<tauri::Wry>>();
+                    let mut inner = state.handle().lock().await;
+                    if let RecorderState::Detected { ref process_name, pid } = inner.state().clone() {
+                        if let Err(e) = inner.start_capture(process_name.clone(), pid) {
+                            log::error!("Failed to start recording: {}", e);
+                        }
+                    }
+                });
+            }
+            "stop_recording" => {
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    let state = app.state::<RecorderHandle<tauri::Wry>>();
+                    let mut inner = state.handle().lock().await;
+                    if inner.state() == RecorderState::Recording {
+                        inner.cancel_recording();
+                    }
+                });
+            }
             "open_dashboard" => {
                 show_main_window(app);
             }
             "settings" => {
                 show_main_window(app);
-                // TODO: emit event to navigate to settings route
+                let _ = app.emit("navigate", "/settings");
             }
             "quit" => {
                 app.exit(0);

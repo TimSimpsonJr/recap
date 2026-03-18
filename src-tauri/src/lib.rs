@@ -2,13 +2,16 @@ use tauri::Manager;
 
 mod credentials;
 mod deep_link;
+mod diagnostics;
 mod oauth;
+mod recorder;
 mod sidecar;
 mod tray;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_store::Builder::default().build())
@@ -30,6 +33,10 @@ pub fn run() {
             // Deep link plugin
             app.handle().plugin(tauri_plugin_deep_link::init())?;
 
+            // Recorder managed state
+            let recorder_handle = recorder::recorder::RecorderHandle::new(app.handle().clone());
+            app.manage(recorder_handle);
+
             // System tray
             tray::create_tray(app.handle())?;
 
@@ -50,6 +57,13 @@ pub fn run() {
             oauth::exchange_oauth_code,
             sidecar::run_pipeline,
             sidecar::check_sidecar_status,
+            recorder::recorder::get_recorder_state,
+            recorder::recorder::start_recording,
+            recorder::recorder::stop_recording,
+            recorder::recorder::cancel_recording,
+            recorder::recorder::retry_processing,
+            diagnostics::check_nvenc,
+            diagnostics::check_ffmpeg,
         ])
         .on_window_event(|window, event| {
             // Closing the window hides it instead of quitting

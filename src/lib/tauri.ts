@@ -36,11 +36,22 @@ export interface SidecarResult {
 
 export async function runPipeline(
   configPath: string,
-  recordingPath: string
+  recordingPath: string,
+  metadataPath?: string,
+  fromStage?: string
 ): Promise<SidecarResult> {
-  return invoke("run_pipeline", { configPath, recordingPath });
+  return invoke("run_pipeline", { configPath, recordingPath, metadataPath, fromStage });
 }
 
 export async function checkSidecarStatus(): Promise<boolean> {
   return invoke("check_sidecar_status");
+}
+
+// Diagnostics
+export async function checkNvenc(): Promise<string> {
+  return invoke("check_nvenc");
+}
+
+export async function checkFfmpeg(): Promise<boolean> {
+  return invoke("check_ffmpeg");
 }

@@ -26,6 +26,16 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     process_parser.add_argument(
         "--config", default="config.yaml", help="Path to config file (default: config.yaml)"
     )
+    process_parser.add_argument(
+        "--from", dest="from_stage",
+        choices=["merge", "frames", "transcribe", "diarize", "analyze", "export"],
+        help="Restart from this stage (skip earlier completed stages)",
+    )
+    process_parser.add_argument(
+        "--only",
+        choices=["merge", "frames", "transcribe", "diarize", "analyze", "export"],
+        help="Re-run only this single stage",
+    )
 
     # retry-todoist command
     retry_parser = subparsers.add_parser("retry-todoist", help="Retry failed Todoist task creation")
@@ -74,7 +84,11 @@ def main(argv: list[str] | None = None) -> None:
             logger.error("Metadata file not found: %s", metadata_path)
             sys.exit(1)
 
-        results = run_pipeline(audio_path, metadata_path, config)
+        results = run_pipeline(
+            audio_path, metadata_path, config,
+            from_stage=args.from_stage,
+            only_stage=args.only,
+        )
 
         if results.get("meeting_note"):
             logger.info("Meeting note: %s", results["meeting_note"])

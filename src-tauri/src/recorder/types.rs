@@ -1,0 +1,120 @@
+use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+use std::time::Instant;
+
+/// Recording session lifecycle states.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RecorderState {
+    /// No meeting detected, monitoring for audio sessions.
+    Idle,
+    /// Meeting audio session detected, awaiting user response or auto-record.
+    Detected { process_name: String, pid: u32 },
+    /// Actively capturing audio + video.
+    Recording,
+    /// Capture stopped, merging and processing.
+    Processing,
+    /// User declined recording for this session.
+    Declined,
+}
+
+/// What to do when a meeting is detected.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DetectionAction {
+    /// Show a notification and ask the user.
+    Ask,
+    /// Always start recording immediately.
+    AlwaysRecord,
+    /// Never record (monitoring still runs for manual start).
+    NeverRecord,
+}
+
+/// What to do when the notification times out.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TimeoutAction {
+    Record,
+    Skip,
+}
+
+/// Configuration for recording behavior. Read from settings store.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecordingConfig {
+    pub auto_detect: bool,
+    pub detection_action: DetectionAction,
+    pub timeout_action: TimeoutAction,
+    pub timeout_seconds: u64,
+}
+
+impl Default for RecordingConfig {
+    fn default() -> Self {
+        Self {
+            auto_detect: true,
+            detection_action: DetectionAction::Ask,
+            timeout_action: TimeoutAction::Record,
+            timeout_seconds: 60,
+        }
+    }
+}
+
+/// Info about an active recording session.
+#[derive(Debug)]
+pub struct RecordingSession {
+    pub process_name: String,
+    pub pid: u32,
+    pub started_at: Instant,
+    pub working_dir: PathBuf,
+    pub remote_audio_path: PathBuf,
+    pub local_audio_path: PathBuf,
+    pub video_path: PathBuf,
+}
+
+/// Pipeline stage for restart support.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PipelineStage {
+    Merge,
+    Frames,
+    Transcribe,
+    Diarize,
+    Analyze,
+    Export,
+}
+
+/// Status of a pipeline run, written to status.json.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StageStatus {
+    pub completed: bool,
+    pub timestamp: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Full pipeline status for a recording.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PipelineStatus {
+    pub merge: StageStatus,
+    pub frames: StageStatus,
+    pub transcribe: StageStatus,
+    pub diarize: StageStatus,
+    pub analyze: StageStatus,
+    pub export: StageStatus,
+}
+
+impl Default for PipelineStatus {
+    fn default() -> Self {
+        let empty = || StageStatus {
+            completed: false,
+            timestamp: None,
+            error: None,
+        };
+        Self {
+            merge: empty(),
+            frames: empty(),
+            transcribe: empty(),
+            diarize: empty(),
+            analyze: empty(),
+            export: empty(),
+        }
+    }
+}

@@ -15,12 +15,30 @@ pub async fn run_pipeline(
     app: tauri::AppHandle,
     config_path: String,
     recording_path: String,
+    metadata_path: Option<String>,
+    from_stage: Option<String>,
 ) -> Result<SidecarResult, String> {
+    let mut args = vec![
+        "process".to_string(),
+        "--config".to_string(),
+        config_path,
+        recording_path,
+    ];
+
+    if let Some(meta) = metadata_path {
+        args.push(meta);
+    }
+
+    if let Some(stage) = from_stage {
+        args.push("--from".to_string());
+        args.push(stage);
+    }
+
     let sidecar = app
         .shell()
         .sidecar("recap-pipeline")
         .map_err(|e| format!("Failed to create sidecar command: {}", e))?
-        .args(["process", "--config", &config_path, &recording_path]);
+        .args(&args);
 
     let output = sidecar
         .output()
