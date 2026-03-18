@@ -5,6 +5,7 @@ use std::time::Instant;
 
 use serde_json::json;
 use tauri::{AppHandle, Emitter, Runtime};
+use tauri_plugin_notification::NotificationExt;
 use tokio::sync::{mpsc, Mutex};
 
 use super::capture::{AudioCapture, CaptureError, VideoCapture};
@@ -71,6 +72,17 @@ impl<R: Runtime> RecorderInner<R> {
         let _ = self.app.emit("recorder-state-changed", new_state);
     }
 
+    /// Send a desktop notification.
+    fn notify(&self, title: &str, body: &str) {
+        let _ = self
+            .app
+            .notification()
+            .builder()
+            .title(title)
+            .body(body)
+            .show();
+    }
+
     /// Start monitoring for meeting audio sessions.
     pub fn start_monitor(&mut self, tx: mpsc::Sender<MonitorEvent>) {
         let (handle, stop) = monitor::start_monitoring(tx);
@@ -107,8 +119,10 @@ impl<R: Runtime> RecorderInner<R> {
                     process_name: process_name.clone(),
                     pid,
                 });
-                // Frontend/notification system will show prompt.
-                // Timeout handling is done by the caller.
+                self.notify(
+                    "Meeting Detected",
+                    &format!("{} is active. Open Recap to start recording.", process_name),
+                );
             }
             DetectionAction::NeverRecord => {
                 self.set_state(RecorderState::Declined);
@@ -198,6 +212,7 @@ impl<R: Runtime> RecorderInner<R> {
         self.video = video;
 
         self.set_state(RecorderState::Recording);
+        self.notify("Recording Started", "Capturing audio and video from your meeting.");
         Ok(())
     }
 
@@ -434,6 +449,7 @@ pub async fn stop_recording(
                 // Write initial pipeline status
                 let _ = write_initial_status(&working_dir);
 
+                inner.notify("Processing Recording", "Merging audio/video and running pipeline...");
                 inner.return_to_idle();
 
                 // Trigger pipeline sidecar asynchronously
@@ -442,15 +458,44 @@ pub async fn stop_recording(
                 let meta_str = metadata_path.to_string_lossy().to_string();
                 let config_str = config_path.to_string_lossy().to_string();
 
+                let app_clone = app.clone();
                 tauri::async_runtime::spawn(async move {
-                    let _ = crate::sidecar::run_pipeline(
-                        app,
+                    match crate::sidecar::run_pipeline(
+                        app.clone(),
                         config_str,
                         merged_str,
                         Some(meta_str),
                         None,
                     )
-                    .await;
+                    .await
+                    {
+                        Ok(result) if result.success => {
+                            let _ = app_clone
+                                .notification()
+                                .builder()
+                                .title("Meeting Note Ready")
+                                .body("Your meeting has been processed. Check your vault.")
+                                .show();
+                        }
+                        Ok(result) => {
+                            let _ = app_clone
+                                .notification()
+                                .builder()
+                                .title("Pipeline Failed")
+                                .body(&format!("Processing error. Check logs for details."))
+                                .show();
+                            log::error!("Pipeline failed: {}", result.stderr);
+                        }
+                        Err(e) => {
+                            let _ = app_clone
+                                .notification()
+                                .builder()
+                                .title("Pipeline Error")
+                                .body("Failed to run processing pipeline.")
+                                .show();
+                            log::error!("Pipeline error: {}", e);
+                        }
+                    }
                 });
             }
             Ok(())

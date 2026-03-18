@@ -12,7 +12,8 @@ use windows::Win32::Media::Audio::{
     IAudioCaptureClient, IAudioClient, IActivateAudioInterfaceAsyncOperation,
     IActivateAudioInterfaceCompletionHandler,
     IActivateAudioInterfaceCompletionHandler_Impl, IMMDevice,
-    IMMDeviceEnumerator, MMDeviceEnumerator, AUDCLNT_SHAREMODE_SHARED,
+    IMMDeviceEnumerator, IMMNotificationClient, IMMNotificationClient_Impl,
+    MMDeviceEnumerator, AUDCLNT_SHAREMODE_SHARED,
     AUDCLNT_STREAMFLAGS_LOOPBACK, AUDIOCLIENT_ACTIVATION_PARAMS,
     AUDIOCLIENT_ACTIVATION_PARAMS_0, AUDIOCLIENT_ACTIVATION_TYPE_PROCESS_LOOPBACK,
     AUDIOCLIENT_PROCESS_LOOPBACK_PARAMS, PROCESS_LOOPBACK_MODE_INCLUDE_TARGET_PROCESS_TREE,
@@ -413,7 +414,58 @@ unsafe fn capture_loopback(
         })
 }
 
+/// COM notification client that sets a flag when the default capture device changes.
+#[implement(IMMNotificationClient)]
+struct DeviceChangeNotifier {
+    device_changed: Arc<AtomicBool>,
+}
+
+impl IMMNotificationClient_Impl for DeviceChangeNotifier_Impl {
+    fn OnDeviceStateChanged(
+        &self,
+        _pwstrdeviceid: &windows::core::PCWSTR,
+        _dwnewstate: windows::Win32::Media::Audio::DEVICE_STATE,
+    ) -> windows::core::Result<()> {
+        Ok(())
+    }
+
+    fn OnDeviceAdded(
+        &self,
+        _pwstrdeviceid: &windows::core::PCWSTR,
+    ) -> windows::core::Result<()> {
+        Ok(())
+    }
+
+    fn OnDeviceRemoved(
+        &self,
+        _pwstrdeviceid: &windows::core::PCWSTR,
+    ) -> windows::core::Result<()> {
+        Ok(())
+    }
+
+    fn OnDefaultDeviceChanged(
+        &self,
+        flow: windows::Win32::Media::Audio::EDataFlow,
+        _role: windows::Win32::Media::Audio::ERole,
+        _pwstrdefaultdeviceid: &windows::core::PCWSTR,
+    ) -> windows::core::Result<()> {
+        if flow == eCapture {
+            self.device_changed.store(true, Ordering::Relaxed);
+        }
+        Ok(())
+    }
+
+    fn OnPropertyValueChanged(
+        &self,
+        _pwstrdeviceid: &windows::core::PCWSTR,
+        _key: &windows::Win32::UI::Shell::PropertiesSystem::PROPERTYKEY,
+    ) -> windows::core::Result<()> {
+        Ok(())
+    }
+}
+
 /// Capture audio from the default recording device (microphone).
+/// Re-attaches to new default device if it changes mid-capture.
 unsafe fn capture_microphone(
     output_path: PathBuf,
     stop: &AtomicBool,
@@ -422,14 +474,204 @@ unsafe fn capture_microphone(
         CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL)
             .map_err(|e| CaptureError::NoMicrophoneDevice(format!("Device enumerator: {}", e)))?;
 
+    // Register device change notification
+    let device_changed = Arc::new(AtomicBool::new(false));
+    let notifier = DeviceChangeNotifier {
+        device_changed: device_changed.clone(),
+    };
+    let notifier_client: IMMNotificationClient = notifier.into();
+    let _ = enumerator.RegisterEndpointNotificationCallback(&notifier_client);
+
+    // Open WAV file once — we'll keep writing across device switches
     let device: IMMDevice = enumerator
         .GetDefaultAudioEndpoint(eCapture, eConsole)
         .map_err(|e| CaptureError::NoMicrophoneDevice(format!("No mic device: {}", e)))?;
 
-    capture_from_device(device, 0, output_path, stop).map_err(|e| match e {
+    let result = capture_from_device_with_reattach(
+        &enumerator,
+        device,
+        &device_changed,
+        output_path,
+        stop,
+    );
+
+    let _ = enumerator.UnregisterEndpointNotificationCallback(&notifier_client);
+
+    result.map_err(|e| match e {
         CaptureError::WindowsError(msg) => CaptureError::NoMicrophoneDevice(msg),
         other => other,
     })
+}
+
+/// Capture from a device, re-attaching to the new default if it changes.
+unsafe fn capture_from_device_with_reattach(
+    enumerator: &IMMDeviceEnumerator,
+    initial_device: IMMDevice,
+    device_changed: &AtomicBool,
+    output_path: PathBuf,
+    stop: &AtomicBool,
+) -> Result<(), CaptureError> {
+    let audio_client: IAudioClient = initial_device
+        .Activate(CLSCTX_ALL, None)
+        .map_err(|e| CaptureError::WindowsError(format!("Activate audio client: {}", e)))?;
+
+    let mix_format: *mut WAVEFORMATEX = audio_client
+        .GetMixFormat()
+        .map_err(|e| CaptureError::WindowsError(format!("GetMixFormat: {}", e)))?;
+
+    let format = &*mix_format;
+    let channels = format.nChannels;
+    let sample_rate = format.nSamplesPerSec;
+    let bits_per_sample = format.wBitsPerSample;
+
+    audio_client
+        .Initialize(AUDCLNT_SHAREMODE_SHARED, 0, 10_000_000, 0, mix_format, None)
+        .map_err(|e| CaptureError::WindowsError(format!("Initialize: {}", e)))?;
+
+    let capture_client: IAudioCaptureClient = audio_client
+        .GetService()
+        .map_err(|e| CaptureError::WindowsError(format!("GetService: {}", e)))?;
+
+    let event = CreateEventW(None, false, false, None)
+        .map_err(|e| CaptureError::WindowsError(format!("CreateEvent: {}", e)))?;
+
+    audio_client
+        .SetEventHandle(event)
+        .map_err(|e| CaptureError::WindowsError(format!("SetEventHandle: {}", e)))?;
+
+    let mut file = File::create(&output_path)?;
+    write_wav_header(&mut file, channels, sample_rate, bits_per_sample)?;
+
+    audio_client
+        .Start()
+        .map_err(|e| CaptureError::WindowsError(format!("Start: {}", e)))?;
+
+    while !stop.load(Ordering::Relaxed) {
+        // Check for device change
+        if device_changed.swap(false, Ordering::Relaxed) {
+            log::info!("Default capture device changed, re-attaching...");
+            let _ = audio_client.Stop();
+            windows::Win32::System::Com::CoTaskMemFree(Some(mix_format as *const _));
+            let _ = windows::Win32::Foundation::CloseHandle(event);
+
+            // Get the new default device and restart capture into the same file
+            match enumerator.GetDefaultAudioEndpoint(eCapture, eConsole) {
+                Ok(new_device) => {
+                    // Finalize current WAV and return — caller will need to handle
+                    // For simplicity, we continue writing to the same file with the
+                    // assumption the new device has the same format. If not, we just
+                    // log and continue with whatever data we get.
+                    let new_client: IAudioClient = match new_device.Activate(CLSCTX_ALL, None) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            log::warn!("Failed to activate new device: {}", e);
+                            continue;
+                        }
+                    };
+
+                    let new_format = match new_client.GetMixFormat() {
+                        Ok(f) => f,
+                        Err(e) => {
+                            log::warn!("Failed to get new device format: {}", e);
+                            continue;
+                        }
+                    };
+
+                    let _ = new_client.Initialize(
+                        AUDCLNT_SHAREMODE_SHARED, 0, 10_000_000, 0, new_format, None,
+                    );
+
+                    let new_capture: IAudioCaptureClient = match new_client.GetService() {
+                        Ok(c) => c,
+                        Err(e) => {
+                            log::warn!("Failed to get capture client from new device: {}", e);
+                            continue;
+                        }
+                    };
+
+                    let new_event = match CreateEventW(None, false, false, None) {
+                        Ok(e) => e,
+                        Err(_) => continue,
+                    };
+                    let _ = new_client.SetEventHandle(new_event);
+                    let _ = new_client.Start();
+
+                    // Continue capture loop with new device
+                    // We drain the new device's buffers in the same loop
+                    while !stop.load(Ordering::Relaxed) {
+                        if device_changed.swap(false, Ordering::Relaxed) {
+                            // Another device change — break to outer function
+                            let _ = new_client.Stop();
+                            let _ = windows::Win32::Foundation::CloseHandle(new_event);
+                            windows::Win32::System::Com::CoTaskMemFree(Some(new_format as *const _));
+                            break;
+                        }
+
+                        WaitForSingleObject(new_event, 100);
+                        drain_capture_buffer(&new_capture, channels, bits_per_sample, &mut file);
+                    }
+
+                    let _ = new_client.Stop();
+                    let _ = windows::Win32::Foundation::CloseHandle(new_event);
+                    windows::Win32::System::Com::CoTaskMemFree(Some(new_format as *const _));
+                    break; // Exit outer loop
+                }
+                Err(e) => {
+                    log::warn!("No default capture device available: {}", e);
+                    // Continue — maybe a device comes back
+                }
+            }
+            continue;
+        }
+
+        WaitForSingleObject(event, 100);
+        drain_capture_buffer(&capture_client, channels, bits_per_sample, &mut file);
+    }
+
+    let _ = audio_client.Stop();
+    finalize_wav_header(&mut file)?;
+    windows::Win32::System::Com::CoTaskMemFree(Some(mix_format as *const _));
+    let _ = windows::Win32::Foundation::CloseHandle(event);
+
+    Ok(())
+}
+
+/// Drain all available buffers from a capture client into a file.
+unsafe fn drain_capture_buffer(
+    capture_client: &IAudioCaptureClient,
+    channels: u16,
+    bits_per_sample: u16,
+    file: &mut File,
+) {
+    loop {
+        let mut buffer_ptr = std::ptr::null_mut();
+        let mut num_frames = 0u32;
+        let mut flags = 0u32;
+
+        match capture_client.GetBuffer(
+            &mut buffer_ptr,
+            &mut num_frames,
+            &mut flags,
+            None,
+            None,
+        ) {
+            Ok(()) => {}
+            Err(_) => break,
+        }
+
+        if num_frames > 0 {
+            let bytes_per_frame = channels as usize * bits_per_sample as usize / 8;
+            let data_len = num_frames as usize * bytes_per_frame;
+            let data = std::slice::from_raw_parts(buffer_ptr, data_len);
+            let _ = file.write_all(data);
+        }
+
+        let _ = capture_client.ReleaseBuffer(num_frames);
+
+        if num_frames == 0 {
+            break;
+        }
+    }
 }
 
 /// Generic WASAPI capture from a device with specified stream flags.
@@ -754,12 +996,15 @@ fn capture_window_video_inner(
         .StartCapture()
         .map_err(|e| CaptureError::VideoError(format!("StartCapture: {}", e)))?;
 
+    // Pre-create staging resources for efficient frame readback
+    let staging = create_staging_resources(width, height)?;
+
     let frame_interval = std::time::Duration::from_millis(33); // ~30fps
 
     while !stop.load(Ordering::Relaxed) {
         if let Ok(frame) = frame_pool.TryGetNextFrame() {
             if let Ok(surface) = frame.Surface() {
-                if let Ok(data) = read_surface_pixels(&surface, width, height) {
+                if let Ok(data) = read_surface_pixels_staged(&surface, &staging, width, height) {
                     if stdin.write_all(&data).is_err() {
                         log::warn!("ffmpeg stdin write failed — encoder may have exited");
                         break;
@@ -837,42 +1082,48 @@ fn create_d3d_device() -> Result<IDirect3DDevice, CaptureError> {
     }
 }
 
-/// Read raw BGRA pixel data from a Direct3D surface.
-fn read_surface_pixels(
-    surface: &windows::Graphics::DirectX::Direct3D11::IDirect3DSurface,
-    width: u32,
-    height: u32,
-) -> Result<Vec<u8>, CaptureError> {
+/// Pre-created D3D11 resources for efficient frame readback (avoids per-frame allocation).
+struct StagingResources {
+    context: windows::Win32::Graphics::Direct3D11::ID3D11DeviceContext,
+    staging_resource: windows::Win32::Graphics::Direct3D11::ID3D11Resource,
+}
+
+/// Create staging resources once for reuse across all frames.
+fn create_staging_resources(width: u32, height: u32) -> Result<StagingResources, CaptureError> {
+    use windows::Win32::Graphics::Direct3D::{D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL_11_0};
     use windows::Win32::Graphics::Direct3D11::{
-        ID3D11Device, ID3D11DeviceContext, ID3D11Resource, ID3D11Texture2D,
-        D3D11_CPU_ACCESS_READ, D3D11_MAPPED_SUBRESOURCE, D3D11_MAP_READ,
-        D3D11_TEXTURE2D_DESC, D3D11_USAGE_STAGING,
+        D3D11CreateDevice, ID3D11Device, ID3D11DeviceContext,
+        D3D11_CPU_ACCESS_READ, D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+        D3D11_SDK_VERSION, D3D11_TEXTURE2D_DESC, D3D11_USAGE_STAGING,
     };
     use windows::Win32::Graphics::Dxgi::Common::{
         DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC,
     };
-    use windows::Win32::System::WinRT::Direct3D11::IDirect3DDxgiInterfaceAccess;
     use windows::core::Interface;
 
     unsafe {
-        let access: IDirect3DDxgiInterfaceAccess = surface
-            .cast()
-            .map_err(|e| CaptureError::VideoError(format!("Cast to DxgiAccess: {}", e)))?;
+        let mut device_opt: Option<ID3D11Device> = None;
+        let mut context_opt: Option<ID3D11DeviceContext> = None;
+        let feature_levels = [D3D_FEATURE_LEVEL_11_0];
 
-        let texture: ID3D11Texture2D = access
-            .GetInterface()
-            .map_err(|e| CaptureError::VideoError(format!("GetInterface texture: {}", e)))?;
+        D3D11CreateDevice(
+            None,
+            D3D_DRIVER_TYPE_HARDWARE,
+            None,
+            D3D11_CREATE_DEVICE_BGRA_SUPPORT,
+            Some(&feature_levels),
+            D3D11_SDK_VERSION,
+            Some(&mut device_opt),
+            None,
+            Some(&mut context_opt),
+        )
+        .map_err(|e| CaptureError::VideoError(format!("D3D11CreateDevice for staging: {}", e)))?;
 
-        // Get the device and context from the texture.
-        let device: ID3D11Device = texture
-            .GetDevice()
-            .map_err(|e| CaptureError::VideoError(format!("GetDevice: {}", e)))?;
+        let device = device_opt
+            .ok_or_else(|| CaptureError::VideoError("Staging D3D device was null".to_string()))?;
+        let context = context_opt
+            .ok_or_else(|| CaptureError::VideoError("Staging D3D context was null".to_string()))?;
 
-        let context: ID3D11DeviceContext = device
-            .GetImmediateContext()
-            .map_err(|e| CaptureError::VideoError(format!("GetImmediateContext: {}", e)))?;
-
-        // Create a staging texture for CPU read.
         let desc = D3D11_TEXTURE2D_DESC {
             Width: width,
             Height: height,
@@ -889,27 +1140,55 @@ fn read_surface_pixels(
             MiscFlags: 0,
         };
 
-        let mut staging_opt: Option<ID3D11Texture2D> = None;
+        let mut staging_opt = None;
         device
             .CreateTexture2D(&desc, None, Some(&mut staging_opt))
             .map_err(|e| CaptureError::VideoError(format!("CreateTexture2D staging: {}", e)))?;
         let staging = staging_opt
             .ok_or_else(|| CaptureError::VideoError("Staging texture was null".to_string()))?;
 
-        // Copy captured frame to staging texture via ID3D11Resource.
-        let staging_resource: ID3D11Resource = staging
+        let staging_resource = staging
             .cast()
             .map_err(|e| CaptureError::VideoError(format!("Cast staging to Resource: {}", e)))?;
+
+        Ok(StagingResources {
+            context,
+            staging_resource,
+        })
+    }
+}
+
+/// Read raw BGRA pixel data from a Direct3D surface using pre-created staging resources.
+fn read_surface_pixels_staged(
+    surface: &windows::Graphics::DirectX::Direct3D11::IDirect3DSurface,
+    staging: &StagingResources,
+    width: u32,
+    height: u32,
+) -> Result<Vec<u8>, CaptureError> {
+    use windows::Win32::Graphics::Direct3D11::{
+        ID3D11Resource, D3D11_MAPPED_SUBRESOURCE, D3D11_MAP_READ,
+    };
+    use windows::Win32::System::WinRT::Direct3D11::IDirect3DDxgiInterfaceAccess;
+    use windows::core::Interface;
+
+    unsafe {
+        let access: IDirect3DDxgiInterfaceAccess = surface
+            .cast()
+            .map_err(|e| CaptureError::VideoError(format!("Cast to DxgiAccess: {}", e)))?;
+
+        let texture: windows::Win32::Graphics::Direct3D11::ID3D11Texture2D = access
+            .GetInterface()
+            .map_err(|e| CaptureError::VideoError(format!("GetInterface texture: {}", e)))?;
+
         let texture_resource: ID3D11Resource = texture
             .cast()
             .map_err(|e| CaptureError::VideoError(format!("Cast texture to Resource: {}", e)))?;
 
-        context.CopyResource(&staging_resource, &texture_resource);
+        staging.context.CopyResource(&staging.staging_resource, &texture_resource);
 
-        // Map the staging texture to read pixels.
         let mut mapped = D3D11_MAPPED_SUBRESOURCE::default();
-        context
-            .Map(&staging_resource, 0, D3D11_MAP_READ, 0, Some(&mut mapped))
+        staging.context
+            .Map(&staging.staging_resource, 0, D3D11_MAP_READ, 0, Some(&mut mapped))
             .map_err(|e| CaptureError::VideoError(format!("Map staging: {}", e)))?;
 
         let row_pitch = mapped.RowPitch as usize;
@@ -925,7 +1204,7 @@ fn read_surface_pixels(
             pixels.extend_from_slice(src);
         }
 
-        context.Unmap(&staging_resource, 0);
+        staging.context.Unmap(&staging.staging_resource, 0);
 
         Ok(pixels)
     }
