@@ -2,28 +2,15 @@
   import { onMount, onDestroy } from "svelte";
   import { assetUrl } from "../assets";
 
-  // Register vidstack custom elements
-  import "vidstack/define/media-player.js";
-  import "vidstack/define/media-outlet.js";
-  import "vidstack/define/media-play-button.js";
-  import "vidstack/define/media-mute-button.js";
-  import "vidstack/define/media-time-slider.js";
-  import "vidstack/define/media-volume-slider.js";
-  import "vidstack/define/media-time.js";
-
-  // Base styles
-  import "vidstack/styles/defaults.css";
-  import "vidstack/styles/base.css";
-
   interface Props {
     src: string | null;
     audioOnly?: boolean;
-    onSeekRequest?: (time: number) => void;
   }
 
-  let { src, audioOnly = false, onSeekRequest }: Props = $props();
+  let { src, audioOnly = false }: Props = $props();
   let containerEl: HTMLDivElement | undefined = $state();
   let playerEl: HTMLElement | null = $state(null);
+  let vidstackReady = $state(false);
 
   let resolvedSrc = $derived(src ? assetUrl(src) : null);
 
@@ -36,17 +23,26 @@
     }
   }
 
-  function clearContainer() {
-    if (!containerEl) return;
-    while (containerEl.firstChild) {
-      containerEl.removeChild(containerEl.firstChild);
+  // Dynamically import vidstack to avoid the "Class extends undefined" error
+  // that occurs when vidstack's custom elements are imported at module load time.
+  async function loadVidstack() {
+    try {
+      await import("vidstack/define/media-player.js");
+      await import("vidstack/define/media-outlet.js");
+      vidstackReady = true;
+    } catch (e) {
+      console.warn("Vidstack failed to load:", e);
+      vidstackReady = false;
     }
   }
 
   function buildPlayer() {
-    if (!containerEl || !resolvedSrc) return;
+    if (!containerEl || !resolvedSrc || !vidstackReady) return;
 
-    clearContainer();
+    // Clear existing
+    while (containerEl.firstChild) {
+      containerEl.removeChild(containerEl.firstChild);
+    }
 
     const player = document.createElement("media-player");
     player.setAttribute("src", resolvedSrc);
@@ -54,10 +50,6 @@
       player.setAttribute("view-type", "audio");
     }
     player.style.cssText = `
-      --media-brand: #A8A078;
-      --media-focus-ring-color: rgba(168,160,120,0.4);
-      --media-slider-track-fill-bg: #A8A078;
-      --media-slider-thumb-bg: #D8D5CE;
       width: 100%;
       border-radius: 8px;
       overflow: hidden;
@@ -67,7 +59,7 @@
     const outlet = document.createElement("media-outlet");
     player.appendChild(outlet);
 
-    // Controls bar
+    // Simple native controls bar using HTML
     const controls = document.createElement("div");
     controls.style.cssText = `
       display: flex;
@@ -80,62 +72,74 @@
       color: #B0ADA5;
     `;
 
-    const playBtn = document.createElement("media-play-button");
-    playBtn.style.cssText = "color: #D8D5CE; cursor: pointer; width: 28px; height: 28px;";
+    // Play/pause button
+    const playBtn = document.createElement("button");
+    playBtn.textContent = "\u25B6";
+    playBtn.style.cssText = `
+      color: #D8D5CE; cursor: pointer; background: none; border: none;
+      font-size: 16px; padding: 4px 8px;
+    `;
+    playBtn.addEventListener("click", () => {
+      if ((player as any).paused) {
+        (player as any).play?.();
+      } else {
+        (player as any).pause?.();
+      }
+    });
     controls.appendChild(playBtn);
 
-    const timeSlider = document.createElement("media-time-slider");
-    timeSlider.style.cssText = "flex: 1;";
-    controls.appendChild(timeSlider);
+    // Time display
+    const timeDisplay = document.createElement("span");
+    timeDisplay.style.cssText = "font-size: 11px; color: #78756E; min-width: 80px;";
+    timeDisplay.textContent = "0:00 / 0:00";
+    controls.appendChild(timeDisplay);
 
-    const currentTime = document.createElement("media-time");
-    currentTime.setAttribute("type", "current");
-    currentTime.style.cssText = "color: #B0ADA5; font-size: 11px; min-width: 40px; text-align: right;";
-    controls.appendChild(currentTime);
-
-    const sep = document.createElement("span");
-    sep.textContent = "/";
-    sep.style.cssText = "color: #585650; font-size: 11px;";
-    controls.appendChild(sep);
-
-    const duration = document.createElement("media-time");
-    duration.setAttribute("type", "duration");
-    duration.style.cssText = "color: #78756E; font-size: 11px; min-width: 40px;";
-    controls.appendChild(duration);
-
-    const muteBtn = document.createElement("media-mute-button");
-    muteBtn.style.cssText = "color: #D8D5CE; cursor: pointer; width: 28px; height: 28px;";
-    controls.appendChild(muteBtn);
-
-    const volSlider = document.createElement("media-volume-slider");
-    volSlider.style.cssText = "width: 80px;";
-    controls.appendChild(volSlider);
+    // Update time display periodically
+    const timeInterval = setInterval(() => {
+      const ct = (player as any).currentTime || 0;
+      const dur = (player as any).duration || 0;
+      const fmt = (s: number) => {
+        const m = Math.floor(s / 60);
+        const sec = Math.floor(s % 60);
+        return `${m}:${String(sec).padStart(2, "0")}`;
+      };
+      timeDisplay.textContent = `${fmt(ct)} / ${fmt(dur)}`;
+    }, 500);
 
     player.appendChild(controls);
     containerEl.appendChild(player);
     playerEl = player;
+
+    // Cleanup interval on destroy
+    (containerEl as any).__timeInterval = timeInterval;
   }
 
-  onMount(() => {
+  onMount(async () => {
+    await loadVidstack();
     if (resolvedSrc && containerEl) {
       buildPlayer();
     }
   });
 
-  // Rebuild player when src changes
   $effect(() => {
-    if (resolvedSrc && containerEl) {
+    if (resolvedSrc && containerEl && vidstackReady) {
       buildPlayer();
     }
   });
 
   onDestroy(() => {
-    clearContainer();
+    if (containerEl) {
+      const interval = (containerEl as any).__timeInterval;
+      if (interval) clearInterval(interval);
+      while (containerEl.firstChild) {
+        containerEl.removeChild(containerEl.firstChild);
+      }
+    }
   });
 </script>
 
 {#if src}
-  <div bind:this={containerEl} class="meeting-player" style="width: 100%;"></div>
+  <div bind:this={containerEl} style="width: 100%;"></div>
 {:else}
   <div
     class="flex items-center justify-center"
