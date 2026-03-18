@@ -5,6 +5,7 @@
   import Settings from "./routes/Settings.svelte";
   import Dashboard from "./routes/Dashboard.svelte";
   import MeetingDetail from "./routes/MeetingDetail.svelte";
+  import GraphView from "./routes/GraphView.svelte";
   import { loadCredentials, credentials, saveTokens } from "./lib/stores/credentials";
   import type { ProviderName } from "./lib/stores/credentials";
   import { loadSettings, settings } from "./lib/stores/settings";
@@ -154,17 +155,7 @@
         <MeetingDetail {meetingId} />
       {/key}
     {:else if currentRoute === "graph"}
-      <div
-        class="flex items-center justify-center"
-        style="
-          height: calc(100vh - 44px);
-          font-family: 'DM Sans', sans-serif;
-          font-size: 13.5px;
-          color: #585650;
-        "
-      >
-        Graph view coming soon
-      </div>
+      <GraphView />
     {:else}
       <Dashboard />
     {/if}

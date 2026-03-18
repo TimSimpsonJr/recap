@@ -19,6 +19,7 @@
     "@tauri-apps/plugin-shell": "^2.3.5",
     "@tauri-apps/plugin-store": "^2.4.2",
     "@tauri-apps/plugin-stronghold": "^2.3.1",
+    "d3-force": "^3.0.0",
     "marked": "^17.0.4",
     "vidstack": "^0.6.15"
   },
@@ -26,6 +27,7 @@
     "@sveltejs/vite-plugin-svelte": "^5.0.0",
     "@tailwindcss/vite": "^4.2.1",
     "@tauri-apps/cli": "^2",
+    "@types/d3-force": "^3.0.10",
     "svelte": "^5.0.0",
     "tailwindcss": "^4.2.1",
     "typescript": "~5.6.2",
