@@ -259,3 +259,12 @@ export function destroyMeetingsListener(): void {
     unlistenPipeline = null;
   }
 }
+
+/** Reset meetings state and reload. Called when settings paths change. */
+export async function resetMeetings(): Promise<void> {
+  meetings.set({ ...initial });
+  activeFilters.set({ ...initialFilters });
+  filterOptions.set({ companies: [], participants: [], platforms: [] });
+  await loadMeetings();
+  await loadFilterOptions();
+}
