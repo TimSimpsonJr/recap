@@ -4,11 +4,12 @@
   import { listen } from "@tauri-apps/api/event";
   import Settings from "./routes/Settings.svelte";
   import Dashboard from "./routes/Dashboard.svelte";
+  import Calendar from "./routes/Calendar.svelte";
   import GraphView from "./routes/GraphView.svelte";
   import { loadCredentials, credentials, saveTokens } from "./lib/stores/credentials";
   import type { ProviderName } from "./lib/stores/credentials";
   import { loadSettings, settings, saveSetting } from "./lib/stores/settings";
-  import { exchangeOAuthCode } from "./lib/tauri";
+  import { exchangeOAuthCode, syncCalendar } from "./lib/tauri";
 
   function setZoom(level: number) {
     const clamped = Math.round(Math.min(2.0, Math.max(0.5, level)) * 10) / 10;
@@ -169,6 +170,16 @@
         "
       >Meetings</a>
       <a
+        href="#calendar"
+        style="
+          font-size: 14.5px;
+          text-decoration: none;
+          padding: 10px 0;
+          border-bottom: 2px solid {currentRoute === 'calendar' ? 'var(--gold)' : 'transparent'};
+          color: {currentRoute === 'calendar' ? 'var(--gold)' : 'var(--text-faint)'};
+        "
+      >Calendar</a>
+      <a
         href="#graph"
         style="
           font-size: 14.5px;
@@ -194,6 +205,8 @@
     <div class="flex-1 overflow-hidden">
       {#if currentRoute === "settings"}
         <Settings />
+      {:else if currentRoute === "calendar"}
+        <Calendar />
       {:else if currentRoute === "graph"}
         <GraphView />
       {:else}
