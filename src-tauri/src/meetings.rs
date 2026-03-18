@@ -216,8 +216,145 @@ fn read_pipeline_status(dir: &Path, id: &str) -> PipelineStatus {
 }
 
 // ---------------------------------------------------------------------------
-// IPC command
+// Screenshot scanning
 // ---------------------------------------------------------------------------
+
+const SCREENSHOT_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg"];
+
+/// Scan `frames_dir` for screenshot files whose name starts with `meeting_id`.
+fn scan_screenshots(meeting_id: &str, frames_dir: &Path) -> Vec<Screenshot> {
+    let entries = match std::fs::read_dir(frames_dir) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut screenshots: Vec<Screenshot> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_image = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| SCREENSHOT_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
+            .unwrap_or(false);
+        if !is_image {
+            continue;
+        }
+        let fname = match path.file_name().and_then(|n| n.to_str()) {
+            Some(n) => n.to_string(),
+            None => continue,
+        };
+        if fname.starts_with(meeting_id) {
+            screenshots.push(Screenshot {
+                path: path.to_string_lossy().into_owned(),
+                caption: None,
+            });
+        }
+    }
+    screenshots.sort_by(|a, b| a.path.cmp(&b.path));
+    screenshots
+}
+
+// ---------------------------------------------------------------------------
+// IPC commands
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub async fn get_meeting_detail(
+    meeting_id: String,
+    recordings_dir: String,
+    vault_meetings_dir: Option<String>,
+    frames_dir: Option<String>,
+) -> Result<MeetingDetail, String> {
+    let recordings_path = PathBuf::from(&recordings_dir);
+
+    // 1. Try to load from {recordings_dir}/{meeting_id}.meeting.json
+    let meeting_json_path = recordings_path.join(format!("{}.meeting.json", meeting_id));
+    let mut summary = if meeting_json_path.exists() {
+        parse_meeting_json(&meeting_json_path)
+            .ok_or_else(|| format!("Failed to parse meeting.json for {}", meeting_id))?
+    } else {
+        // 2. Try to find a recording file and build summary from filename
+        let mut found: Option<MeetingSummary> = None;
+        for ext in RECORDING_EXTENSIONS {
+            let candidate = recordings_path.join(format!("{}.{}", meeting_id, ext));
+            if candidate.exists() {
+                found = summary_from_filename(&candidate);
+                break;
+            }
+        }
+        found.ok_or_else(|| format!("Meeting not found: {}", meeting_id))?
+    };
+
+    // 3. Match vault note and read note content
+    let vault_notes = vault_meetings_dir
+        .as_deref()
+        .map(|p| scan_vault_notes(Path::new(p)))
+        .unwrap_or_default();
+    match_vault_note(&mut summary, &vault_notes);
+
+    let note_content = summary
+        .note_path
+        .as_ref()
+        .and_then(|p| std::fs::read_to_string(p).ok());
+
+    // 4. Read transcript JSON
+    let transcript_path = recordings_path.join(format!("{}.transcript.json", meeting_id));
+    let transcript: Option<Vec<Utterance>> = if transcript_path.exists() {
+        std::fs::read_to_string(&transcript_path)
+            .ok()
+            .and_then(|content| serde_json::from_str(&content).ok())
+    } else {
+        None
+    };
+
+    // 5. Scan screenshots
+    let screenshots = frames_dir
+        .as_deref()
+        .map(|d| scan_screenshots(&meeting_id, Path::new(d)))
+        .unwrap_or_default();
+
+    Ok(MeetingDetail {
+        summary,
+        note_content,
+        transcript,
+        screenshots,
+    })
+}
+
+#[tauri::command]
+pub async fn search_meetings(
+    query: String,
+    recordings_dir: String,
+    vault_meetings_dir: Option<String>,
+    limit: Option<usize>,
+) -> Result<Vec<MeetingSummary>, String> {
+    let limit = limit.unwrap_or(50);
+    let query_lower = query.to_lowercase();
+
+    // Reuse list_meetings logic with a large limit, then filter.
+    let all = list_meetings(
+        recordings_dir,
+        vault_meetings_dir,
+        None,
+        Some(1000),
+    )
+    .await?;
+
+    let results: Vec<MeetingSummary> = all
+        .items
+        .into_iter()
+        .filter(|s| {
+            s.title.to_lowercase().contains(&query_lower)
+                || s.date.to_lowercase().contains(&query_lower)
+                || s.participants
+                    .iter()
+                    .any(|p| p.to_lowercase().contains(&query_lower))
+        })
+        .take(limit)
+        .collect();
+
+    Ok(results)
+}
 
 #[tauri::command]
 pub async fn list_meetings(

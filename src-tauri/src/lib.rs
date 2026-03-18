@@ -66,6 +66,8 @@ pub fn run() {
             diagnostics::check_nvenc,
             diagnostics::check_ffmpeg,
             meetings::list_meetings,
+            meetings::get_meeting_detail,
+            meetings::search_meetings,
         ])
         .on_window_event(|window, event| {
             // Closing the window hides it instead of quitting
