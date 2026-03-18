@@ -13,6 +13,7 @@
   type Stage = (typeof stages)[number];
 
   let expanded = $state(false);
+  let retrying = $state<string | null>(null);
 
   let ariaLabel = $derived.by(() => {
     const parts = stages.map((s) => {
@@ -66,11 +67,22 @@
     e.preventDefault();
   }
 
+  function dotTitle(stage: Stage): string {
+    const s = status[stage];
+    if (s.error) return `${stage}: ${s.error}`;
+    if (s.completed) return `${stage}: done`;
+    return `${stage}: pending`;
+  }
+
   async function handleRetry(e: MouseEvent, stage: Stage) {
     e.stopPropagation();
     e.preventDefault();
-    if (recordingPath) {
+    if (!recordingPath || retrying) return;
+    retrying = stage;
+    try {
       await retryProcessing(recordingPath, stage);
+    } finally {
+      retrying = null;
     }
   }
 </script>
@@ -102,6 +114,7 @@
   >
     {#each stages as stage}
       <span
+        title={dotTitle(stage)}
         style="
           display: inline-block;
           width: 6px;
@@ -166,6 +179,7 @@
               {#if recordingPath}
                 <button
                   type="button"
+                  disabled={retrying !== null}
                   onclick={(e) => handleRetry(e, stage)}
                   style="
                     margin-top: 4px;
@@ -186,7 +200,7 @@
                     (e.currentTarget as HTMLElement).style.background = 'rgba(208,104,80,0.08)';
                   }}
                 >
-                  Retry
+                  {retrying === stage ? '...' : 'Retry'}
                 </button>
               {/if}
             {/if}
