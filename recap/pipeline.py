@@ -33,7 +33,7 @@ def _load_status(working_dir: pathlib.Path) -> dict:
     if status_path.exists():
         return json.loads(status_path.read_text())
     return {
-        stage: {"completed": False, "timestamp": None, "error": None}
+        stage: {"completed": False, "timestamp": None, "error": None, "waiting": None}
         for stage in PIPELINE_STAGES
     }
 
@@ -57,7 +57,13 @@ def _mark_stage(status: dict, stage: str, completed: bool, error: str | None = N
         "completed": completed,
         "timestamp": datetime.now().isoformat() if completed else None,
         "error": error,
+        "waiting": None,
     }
+
+
+def _mark_waiting(status: dict, stage: str, reason: str) -> None:
+    """Set a waiting state on a stage (e.g. awaiting speaker review)."""
+    status[stage]["waiting"] = reason
 
 
 def _should_run(stage: str, status: dict, from_stage: str | None, only_stage: str | None) -> bool:
