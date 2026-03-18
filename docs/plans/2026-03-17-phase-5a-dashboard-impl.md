@@ -6,9 +6,11 @@
 
 **Architecture:** Rust IPC backend scans the recordings folder for meeting metadata files. Svelte frontend renders list and detail views with vidstack for playback. Tauri's asset protocol serves local media files to the webview.
 
-**Tech Stack:** Tauri v2 (Rust), Svelte 5, Tailwind CSS 4, vidstack, marked
+**Tech Stack:** Tauri v2 (Rust), Svelte 5, Tailwind CSS 4, vidstack, marked, d3-force (graph view)
 
-**Design doc:** `docs/plans/2026-03-17-phase-5a-dashboard-ui-design.md`
+**Design docs:**
+- Architecture & data: `docs/plans/2026-03-17-phase-5a-dashboard-ui-design.md`
+- Visual design: `docs/plans/2026-03-17-phase-5a-frontend-design.md`
 
 ---
 
@@ -1986,10 +1988,155 @@ git commit -m "docs: update MANIFEST.md with Phase 5a dashboard components"
 
 ---
 
-Plan complete and saved to `docs/plans/2026-03-17-phase-5a-dashboard-impl.md`. Two execution options:
+### Task 22: Theme System — Warm Ink Base Styles + Google Fonts
 
-**1. Subagent-Driven (this session)** — I dispatch a fresh subagent per task, review between tasks, fast iteration
+**Files:**
+- Modify: `src/app.css` (add CSS variables, font imports, base dark mode styles)
+- Modify: `index.html` (add Google Fonts preconnect)
 
-**2. Parallel Session (separate)** — Open new session with executing-plans, batch execution with checkpoints
+**Step 1: Set up theme CSS variables and base styles**
 
-Which approach?
+Add to `src/app.css` the complete design token system from `docs/plans/2026-03-17-phase-5a-frontend-design.md`. This includes all color tokens, typography variables, and base element styles. Add Google Fonts imports for Source Serif 4 and DM Sans.
+
+All components should use these CSS variables rather than hardcoded Tailwind color classes. This makes the theme maintainable and sets up for a potential light mode later.
+
+**Step 2: Commit**
+
+```bash
+git add src/app.css index.html
+git commit -m "feat: add Warm Ink theme system with CSS variables and Google Fonts"
+```
+
+---
+
+### Task 23: Top Navigation Bar Component
+
+**Files:**
+- Create: `src/lib/components/TopNav.svelte`
+- Modify: `src/App.svelte` (replace per-view header with TopNav)
+
+**Step 1: Create TopNav component**
+
+Horizontal nav bar: "Recap" title (serif, 16px) on left, tab links (Meetings, Graph, Settings) in center. Active tab gets accent underline. Height 44px. Background `--bg-overlay`, bottom border `--border-subtle`.
+
+On the meeting detail view, show a back arrow before the tabs.
+
+**Step 2: Update App.svelte to use TopNav**
+
+Replace the per-view headers (title + settings link) with a single TopNav above the route content. Routes no longer render their own headers.
+
+**Step 3: Commit**
+
+```bash
+git add src/lib/components/TopNav.svelte src/App.svelte
+git commit -m "feat: add TopNav component with tab-based navigation"
+```
+
+---
+
+### Task 24: Filter Sidebar Component
+
+**Files:**
+- Create: `src/lib/components/FilterSidebar.svelte`
+- Modify: `src/lib/stores/meetings.ts` (add filter state and IPC)
+- Modify: `src/routes/Dashboard.svelte` (integrate sidebar)
+
+**Step 1: Add filter data extraction to Rust**
+
+Add a new IPC command `get_filter_options` to `src-tauri/src/meetings.rs` that scans meeting.json files and returns unique companies, participants, and platforms.
+
+**Step 2: Create FilterSidebar component**
+
+Collapsible left panel (~200px wide). Toggle button to show/hide. Sections: Company, Participants, Platform — each with checkboxes. Active filters shown as count badges. "Clear all" link at top.
+
+**Step 3: Integrate with Dashboard**
+
+Dashboard layout becomes flex: optional sidebar + meeting list. Filter state flows through the meetings store.
+
+**Step 4: Commit**
+
+```bash
+git add src/lib/components/FilterSidebar.svelte src/lib/stores/meetings.ts src/routes/Dashboard.svelte src-tauri/src/meetings.rs
+git commit -m "feat: add collapsible filter sidebar with company/participant/platform filters"
+```
+
+---
+
+### Task 25: Graph View
+
+**Files:**
+- Create: `src/routes/GraphView.svelte`
+- Modify: `src/App.svelte` (add `#graph` route)
+
+**Step 1: Install d3-force**
+
+```bash
+npm install d3-force
+npm install -D @types/d3-force
+```
+
+**Step 2: Create GraphView component**
+
+Force-directed graph using d3-force rendered to an SVG or canvas. Node types: Meeting (accent color), Person (muted), Company (status-done). Edges: attendance and company membership. Click a node to navigate.
+
+Start with a basic implementation — nodes, edges, force simulation, hover highlight. Polish later.
+
+**Step 3: Add routing**
+
+Add `#graph` route in App.svelte, accessible via the Graph tab in TopNav.
+
+**Step 4: Commit**
+
+```bash
+git add src/routes/GraphView.svelte src/App.svelte package.json package-lock.json
+git commit -m "feat: add force-directed graph view showing meeting/people/company relationships"
+```
+
+---
+
+### Task 26: Apply Warm Ink Theme to All Components
+
+**Files:**
+- Modify: all component `.svelte` files created in Tasks 11-18
+
+**Step 1: Replace Tailwind utility colors with CSS variables**
+
+Go through every component and replace hardcoded Tailwind color classes (e.g., `bg-gray-50`, `text-gray-900`, `border-gray-200`) with the CSS variable equivalents from the theme system. For example:
+- `bg-gray-50` → `background: var(--bg-base)`
+- `text-gray-900` → `color: var(--text-primary)`
+- `border-gray-200` → `border-color: var(--border-subtle)`
+
+**Step 2: Verify visual consistency**
+
+Build and check that all components render correctly with the dark theme.
+
+**Step 3: Commit**
+
+```bash
+git add src/
+git commit -m "feat: apply Warm Ink dark theme to all dashboard components"
+```
+
+---
+
+### Task 27: Update MANIFEST.md (Final)
+
+Replace Task 21 with this expanded version that includes all new components.
+
+**Files:**
+- Modify: `MANIFEST.md`
+
+**Step 1: Update the structural map**
+
+Add all new files and update Key Relationships for:
+- TopNav, FilterSidebar, GraphView
+- Theme system in app.css
+- meetings.rs filter options IPC
+- Graph route
+
+**Step 2: Commit**
+
+```bash
+git add MANIFEST.md
+git commit -m "docs: update MANIFEST.md with complete Phase 5a structure"
+```
