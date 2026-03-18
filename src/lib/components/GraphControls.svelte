@@ -247,7 +247,7 @@
   }
 
   .graph-controls-panel {
-    width: 260px;
+    width: 320px;
     background: #242422;
     border-radius: 10px;
     padding: 8px 0;

@@ -1,4 +1,5 @@
 use tauri::Manager;
+use tauri_plugin_window_state::{AppHandleExt, StateFlags, WindowExt};
 
 mod credentials;
 mod deep_link;
@@ -20,6 +21,7 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
             // Stronghold with Argon2 password hashing
             let salt_path = app
@@ -44,9 +46,14 @@ pub fn run() {
             // Deep link handler
             deep_link::setup_deep_links(app.handle())?;
 
-            // Start minimized to tray — hide the main window
+            // Show the main window on launch.
+            // TODO: When auto-start-with-Windows is implemented, check if launched
+            // via startup and hide instead (start in tray).
             if let Some(window) = app.get_webview_window("main") {
-                let _ = window.hide();
+                // Restore saved window state (size, position) if available
+                let _ = window.restore_state(StateFlags::all());
+                let _ = window.show();
+                let _ = window.set_focus();
             }
 
             Ok(())
@@ -74,6 +81,8 @@ pub fn run() {
         .on_window_event(|window, event| {
             // Closing the window hides it instead of quitting
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                // Save window state before hiding (plugin won't save on hide)
+                let _ = window.app_handle().save_window_state(StateFlags::all());
                 let _ = window.hide();
                 api.prevent_close();
             }

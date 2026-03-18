@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- Warm Geometric v3: No background, fills the canvas -->
+  <!-- Outer ring — thick stroke, centered -->
+  <circle cx="256" cy="220" r="175" fill="none" stroke="#A8A078" stroke-width="36"/>
+  <!-- Inner filled circle — record dot -->
+  <circle cx="256" cy="220" r="65" fill="#A8A078"/>
+  <!-- Three participant dots — large -->
+  <circle cx="148" cy="460" r="32" fill="#78756E"/>
+  <circle cx="256" cy="460" r="32" fill="#A8A078"/>
+  <circle cx="364" cy="460" r="32" fill="#78756E"/>
+</svg>

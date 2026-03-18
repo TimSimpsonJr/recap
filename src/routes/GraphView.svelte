@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy } from "svelte";
+  import { onMount, onDestroy, untrack } from "svelte";
   import {
     forceSimulation,
     forceLink,
@@ -366,12 +366,14 @@
     nodes = filteredNodes;
     links = filteredLinks;
 
-    if (simulation) {
-      simulation.nodes(nodes);
-      const linkForce = simulation.force("link") as any;
-      if (linkForce) linkForce.links(links);
-      simulation.alpha(0.3).restart();
-    }
+    untrack(() => {
+      if (simulation) {
+        simulation.nodes(filteredNodes);
+        const linkForce = simulation.force("link") as any;
+        if (linkForce) linkForce.links(filteredLinks);
+        simulation.alpha(0.3).restart();
+      }
+    });
   }
 
   // Watch filter/orphan changes
@@ -385,25 +387,33 @@
 
   // Watch force parameter changes
   $effect(() => {
-    if (!simulation) return;
+    // Read the reactive values to track them
+    const ld = linkDistance;
+    const ls = linkStrength;
+    const rf = repelForce;
+    const cf = centerForce;
 
-    const linkForce = simulation.force("link") as any;
-    if (linkForce) {
-      linkForce.distance(linkDistance);
-      linkForce.strength(linkStrength / 100);
-    }
+    untrack(() => {
+      if (!simulation) return;
 
-    const chargeForce = simulation.force("charge") as any;
-    if (chargeForce) {
-      chargeForce.strength(-repelForce);
-    }
+      const linkForce = simulation.force("link") as any;
+      if (linkForce) {
+        linkForce.distance(ld);
+        linkForce.strength(ls / 100);
+      }
 
-    const center = simulation.force("center") as any;
-    if (center) {
-      center.strength(centerForce / 100);
-    }
+      const chargeForce = simulation.force("charge") as any;
+      if (chargeForce) {
+        chargeForce.strength(-rf);
+      }
 
-    simulation.alpha(0.3).restart();
+      const center = simulation.force("center") as any;
+      if (center) {
+        center.strength(cf / 100);
+      }
+
+      simulation.alpha(0.3).restart();
+    });
   });
 
   onMount(async () => {
@@ -525,9 +535,12 @@
         .force("charge", forceManyBody().strength(-repelForce))
         .force("center", forceCenter(width / 2, height / 2).strength(centerForce / 100))
         .force("collide", forceCollide<SimNode>().radius((d) => getRadius(d.node_type) + 4))
+        .alphaDecay(0.03)
+        .velocityDecay(0.4)
         .on("tick", () => {
-          nodes = [...nodes];
-          links = [...links];
+          // Only trigger Svelte reactivity update, don't create new arrays
+          nodes = nodes;
+          links = links;
         });
 
       loading = false;

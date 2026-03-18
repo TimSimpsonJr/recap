@@ -36,6 +36,7 @@
   let activeProvider = $derived(providers.find((p) => p.provider === activeModal));
 </script>
 
+<div style="height:100%;overflow-y:auto;background:#1D1D1B;">
 <div style="max-width:700px;margin:0 auto;padding:24px 28px 48px;">
   <div style="display:flex;flex-direction:column;gap:28px;">
     <section>
@@ -80,6 +81,7 @@
       <AboutSection />
     </SettingsSection>
   </div>
+</div>
 </div>
 
 {#if activeModal && activeProvider}

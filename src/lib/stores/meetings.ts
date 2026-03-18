@@ -51,6 +51,9 @@ export const filterOptions = writable<FilterOptions>({
 });
 
 export async function loadFilterOptions(): Promise<void> {
+  // In dummy mode, filter options are set by loadMeetings()
+  if (DUMMY_DATA) return;
+
   const s = get(settings);
   const recordingsDir = s.recordingsFolder;
   if (!recordingsDir) return;
@@ -138,8 +141,62 @@ function getPaths(): { recordingsDir: string; vaultMeetingsDir: string | undefin
   return { recordingsDir, vaultMeetingsDir };
 }
 
+// ── DUMMY DATA (remove before PR) ──────────────────────────────────────────
+const DUMMY_DATA = true; // flip to false to use real IPC
+
+function doneStatus(): import("../tauri").PipelineStatus {
+  const done = { completed: true, timestamp: "2026-03-17T10:00:00", error: null };
+  return { merge: done, frames: done, transcribe: done, diarize: done, analyze: done, export: done };
+}
+function failedStatus(stage: string): import("../tauri").PipelineStatus {
+  const done = { completed: true, timestamp: "2026-03-17T10:00:00", error: null };
+  const fail = { completed: false, timestamp: null, error: `${stage} failed: CUDA out of memory` };
+  const pending = { completed: false, timestamp: null, error: null };
+  const s = { merge: done, frames: done, transcribe: done, diarize: done, analyze: done, export: done };
+  (s as any)[stage] = fail;
+  // Mark subsequent stages as pending
+  const stages = ["merge", "frames", "transcribe", "diarize", "analyze", "export"];
+  const idx = stages.indexOf(stage);
+  for (let i = idx + 1; i < stages.length; i++) (s as any)[stages[i]] = pending;
+  return s;
+}
+function processingStatus(): import("../tauri").PipelineStatus {
+  const done = { completed: true, timestamp: "2026-03-17T10:00:00", error: null };
+  const pending = { completed: false, timestamp: null, error: null };
+  return { merge: done, frames: done, transcribe: pending, diarize: pending, analyze: pending, export: pending };
+}
+const DUMMY_MEETINGS: import("../tauri").MeetingSummary[] = [
+  { id: "2026-03-17-project-kickoff-acme", title: "Project Kickoff with Acme Corp", date: "2026-03-17", platform: "zoom", participants: ["Jane Smith", "Bob Jones", "Alice Chen"], duration_seconds: 2700, pipeline_status: doneStatus(), has_note: true, has_transcript: true, has_video: true, recording_path: null, note_path: null },
+  { id: "2026-03-17-weekly-standup", title: "Weekly Engineering Standup", date: "2026-03-17", platform: "zoom", participants: ["Tim", "Sarah", "Dev Team", "Mike", "Lisa"], duration_seconds: 1800, pipeline_status: processingStatus(), has_note: false, has_transcript: false, has_video: true, recording_path: null, note_path: null },
+  { id: "2026-03-16-quarterly-review", title: "Quarterly Business Review", date: "2026-03-16", platform: "zoom", participants: ["Jane Smith", "Bob Jones", "CFO Team", "Tim", "VP Sales", "Director Ops", "Analyst", "Board Rep"], duration_seconds: 3600, pipeline_status: doneStatus(), has_note: true, has_transcript: true, has_video: true, recording_path: null, note_path: null },
+  { id: "2026-03-16-client-feedback", title: "Client Feedback Session", date: "2026-03-16", platform: "teams", participants: ["Dave Wilson", "Tim"], duration_seconds: 1500, pipeline_status: failedStatus("transcribe"), has_note: false, has_transcript: false, has_video: true, recording_path: null, note_path: null },
+  { id: "2026-03-16-design-sprint-retro", title: "Design Sprint Retro", date: "2026-03-16", platform: "google", participants: ["Sarah", "Mike", "Lisa", "Tim"], duration_seconds: 2400, pipeline_status: doneStatus(), has_note: true, has_transcript: true, has_video: true, recording_path: null, note_path: null },
+  { id: "2026-03-15-investor-update", title: "Investor Update Call", date: "2026-03-15", platform: "zoom", participants: ["Tim", "Jane Smith", "Investor A"], duration_seconds: 3000, pipeline_status: doneStatus(), has_note: true, has_transcript: true, has_video: true, recording_path: null, note_path: null },
+  { id: "2026-03-15-1on1-sarah", title: "1:1 with Sarah", date: "2026-03-15", platform: "zoom", participants: ["Tim", "Sarah"], duration_seconds: 1800, pipeline_status: doneStatus(), has_note: true, has_transcript: true, has_video: false, recording_path: null, note_path: null },
+  { id: "2026-03-14-product-planning", title: "Product Planning Session", date: "2026-03-14", platform: "zoho", participants: ["Tim", "Mike", "Lisa", "Product Team"], duration_seconds: 5400, pipeline_status: doneStatus(), has_note: true, has_transcript: true, has_video: true, recording_path: null, note_path: null },
+];
+// ── END DUMMY DATA ─────────────────────────────────────────────────────────
+
 /** Load the first page of meetings, replacing existing state. */
 export async function loadMeetings(): Promise<void> {
+  // ── DUMMY MODE (remove before PR) ──
+  if (DUMMY_DATA) {
+    meetings.set({
+      items: DUMMY_MEETINGS,
+      nextCursor: null,
+      loading: false,
+      error: null,
+      searchQuery: "",
+    });
+    filterOptions.set({
+      companies: ["Acme Corp", "Globex Inc"],
+      participants: [...new Set(DUMMY_MEETINGS.flatMap((m) => m.participants))].sort(),
+      platforms: [...new Set(DUMMY_MEETINGS.map((m) => m.platform))].sort(),
+    });
+    return;
+  }
+  // ── END DUMMY MODE ──
+
   const { recordingsDir, vaultMeetingsDir } = getPaths();
   if (!recordingsDir) {
     meetings.set({ ...initial, error: "No recordings folder configured" });
