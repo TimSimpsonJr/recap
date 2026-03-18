@@ -1,8 +1,11 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
+
+use crate::meetings::MeetingSummary;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -264,4 +267,154 @@ pub async fn sync_calendar(
     // to return the full CalendarCache struct.
     let cp = cache_path(&app);
     read_cache(&cp)
+}
+
+// ---------------------------------------------------------------------------
+// Calendar-recording matching (D2)
+// ---------------------------------------------------------------------------
+
+/// Check whether a calendar event overlaps a recording by at least 5 minutes.
+///
+/// `meeting_date` is the recording start time in ISO 8601 (or date string from
+/// the meeting metadata). `duration_seconds` is the recording duration; if
+/// `None`, we assume a 1-hour recording for matching purposes.
+pub fn match_event_to_recording(
+    event: &CalendarEvent,
+    meeting_date: &str,
+    duration_seconds: Option<f64>,
+) -> bool {
+    let event_start = match DateTime::parse_from_rfc3339(&event.start) {
+        Ok(dt) => dt.with_timezone(&Utc),
+        Err(_) => return false,
+    };
+    let event_end = match DateTime::parse_from_rfc3339(&event.end) {
+        Ok(dt) => dt.with_timezone(&Utc),
+        Err(_) => return false,
+    };
+
+    // Try parsing as full RFC 3339 first, then fall back to date-only.
+    let recording_start = if let Ok(dt) = DateTime::parse_from_rfc3339(meeting_date) {
+        dt.with_timezone(&Utc)
+    } else if let Ok(date) = chrono::NaiveDate::parse_from_str(meeting_date, "%Y-%m-%d") {
+        // Assume midnight UTC for date-only strings.
+        date.and_hms_opt(0, 0, 0)
+            .map(|ndt| DateTime::<Utc>::from_naive_utc_and_offset(ndt, Utc))
+            .unwrap_or(return false)
+    } else {
+        return false;
+    };
+
+    let duration_secs = duration_seconds.unwrap_or(3600.0); // default 1 hour
+    let recording_end = recording_start + Duration::seconds(duration_secs as i64);
+
+    // Compute overlap: max(0, min(end1, end2) - max(start1, start2))
+    let overlap_start = event_start.max(recording_start);
+    let overlap_end = event_end.min(recording_end);
+
+    if overlap_end > overlap_start {
+        let overlap_minutes = (overlap_end - overlap_start).num_minutes();
+        overlap_minutes >= 5
+    } else {
+        false
+    }
+}
+
+/// Scan recordings and match them against cached calendar events.
+///
+/// Returns a map of `{ event_id: meeting_id }` for every match found.
+#[tauri::command]
+pub async fn get_calendar_matches(
+    app: tauri::AppHandle,
+    recordings_dir: String,
+) -> Result<HashMap<String, String>, String> {
+    let cp = cache_path(&app);
+    let cache = read_cache(&cp)?;
+
+    let recordings_path = PathBuf::from(&recordings_dir);
+    if !recordings_path.is_dir() {
+        return Err(format!(
+            "Recordings directory does not exist: {}",
+            recordings_dir
+        ));
+    }
+
+    // Scan for .meeting.json files (same pattern as meetings.rs).
+    let entries = std::fs::read_dir(&recordings_path)
+        .map_err(|e| format!("Failed to read recordings directory: {}", e))?;
+
+    let mut meetings: Vec<MeetingSummary> = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_meeting_json = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| n.ends_with(".meeting.json"))
+            .unwrap_or(false);
+        if !is_meeting_json {
+            continue;
+        }
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        // We only need id, date, and duration_seconds for matching, so parse
+        // just the fields we need from the meeting.json.
+        let meta: serde_json::Value = match serde_json::from_str(&content) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+
+        let stem = match path.file_stem().and_then(|s| s.to_str()) {
+            Some(s) => s,
+            None => continue,
+        };
+        let id = stem
+            .strip_suffix(".meeting")
+            .unwrap_or(stem)
+            .to_string();
+        let date = meta
+            .get("date")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let duration = meta
+            .get("duration_seconds")
+            .and_then(|v| v.as_f64());
+
+        if date.is_empty() {
+            continue;
+        }
+
+        // We only use id, date, and duration_seconds for matching, so build a
+        // lightweight placeholder. Using a default MeetingSummary avoids
+        // exposing parse_meeting_json as pub.
+        meetings.push(MeetingSummary {
+            id,
+            title: String::new(),
+            date,
+            platform: String::new(),
+            participants: Vec::new(),
+            company: None,
+            duration_seconds: duration,
+            pipeline_status: Default::default(),
+            has_note: false,
+            has_transcript: false,
+            has_video: false,
+            recording_path: None,
+            note_path: None,
+        });
+    }
+
+    // Match events to meetings.
+    let mut matches: HashMap<String, String> = HashMap::new();
+    for event in &cache.events {
+        for meeting in &meetings {
+            if match_event_to_recording(event, &meeting.date, meeting.duration_seconds) {
+                matches.insert(event.id.clone(), meeting.id.clone());
+                break; // one match per event
+            }
+        }
+    }
+
+    Ok(matches)
 }
