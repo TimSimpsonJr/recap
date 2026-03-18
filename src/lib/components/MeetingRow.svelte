@@ -25,6 +25,10 @@
     return `${meeting.participants[0]} +${meeting.participants.length - 1}`;
   });
 
+  let needsSpeakerReview = $derived(
+    meeting.pipeline_status.analyze?.waiting === "speaker_review"
+  );
+
   function handleClick(e: MouseEvent) {
     if (onSelect) {
       e.preventDefault();
@@ -100,6 +104,22 @@
         {/if}
       </div>
     </div>
-    <PipelineDots status={meeting.pipeline_status} recordingPath={meeting.recording_path} />
+    <div class="flex items-center gap-2">
+      {#if needsSpeakerReview}
+        <span
+          style="
+            font-family: 'DM Sans', sans-serif;
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--gold);
+            background: rgba(196, 168, 77, 0.12);
+            padding: 2px 8px;
+            border-radius: 4px;
+            white-space: nowrap;
+          "
+        >Review Speakers</span>
+      {/if}
+      <PipelineDots status={meeting.pipeline_status} recordingPath={meeting.recording_path} />
+    </div>
   </div>
 </a>

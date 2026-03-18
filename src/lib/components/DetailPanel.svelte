@@ -10,6 +10,7 @@
   import MeetingTranscript from "./MeetingTranscript.svelte";
   import ScreenshotGallery from "./ScreenshotGallery.svelte";
   import PipelineDots from "./PipelineDots.svelte";
+  import SpeakerReview from "./SpeakerReview.svelte";
 
   interface Props {
     meetingId: string;
@@ -79,6 +80,21 @@
   );
 
   let screenshotCount = $derived(detail?.screenshots.length ?? 0);
+
+  let needsSpeakerReview = $derived(
+    detail?.summary.pipeline_status.analyze?.waiting === "speaker_review"
+  );
+
+  let speakerLabels = $derived.by(() => {
+    if (!detail?.transcript) return {};
+    const counts: Record<string, number> = {};
+    for (const u of detail.transcript) {
+      if (u.speaker.startsWith("SPEAKER_")) {
+        counts[u.speaker] = (counts[u.speaker] ?? 0) + 1;
+      }
+    }
+    return counts;
+  });
 </script>
 
 <div class="detail-panel">
@@ -149,6 +165,14 @@
         {#if activeTab === "notes"}
           <MeetingNotes content={detail.note_content} />
         {:else if activeTab === "transcript"}
+          {#if needsSpeakerReview && detail.summary.recording_path && Object.keys(speakerLabels).length > 0}
+            <SpeakerReview
+              speakerLabels={speakerLabels}
+              calendarParticipants={detail.summary.participants}
+              recordingPath={detail.summary.recording_path}
+              onResumed={loadDetail}
+            />
+          {/if}
           <MeetingTranscript
             utterances={detail.transcript}
             onSeek={handleSeek}
