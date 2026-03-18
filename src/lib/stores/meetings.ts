@@ -28,6 +28,9 @@ const initial: MeetingsState = {
 
 export const meetings = writable<MeetingsState>({ ...initial });
 
+/** Incremented when settings change so GraphView knows to refetch. */
+export const graphDataVersion = writable(0);
+
 // ---------------------------------------------------------------------------
 // Filter state
 // ---------------------------------------------------------------------------
@@ -258,4 +261,14 @@ export function destroyMeetingsListener(): void {
     unlistenPipeline();
     unlistenPipeline = null;
   }
+}
+
+/** Reset meetings state and reload. Called when settings paths change. */
+export async function resetMeetings(): Promise<void> {
+  meetings.set({ ...initial });
+  activeFilters.set({ ...initialFilters });
+  filterOptions.set({ companies: [], participants: [], platforms: [] });
+  graphDataVersion.update(v => v + 1);
+  await loadMeetings();
+  await loadFilterOptions();
 }

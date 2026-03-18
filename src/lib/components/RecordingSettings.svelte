@@ -1,11 +1,13 @@
 <script lang="ts">
   import { settings, saveSetting } from "../stores/settings";
+  import { resetMeetings } from "../stores/meetings";
   import { open } from "@tauri-apps/plugin-dialog";
 
   async function browseRecordingsFolder() {
     const selected = await open({ directory: true, multiple: false });
     if (selected) {
       await saveSetting("recordingsFolder", selected as string);
+      await resetMeetings();
     }
   }
 </script>
@@ -16,7 +18,7 @@
     <input
       type="text"
       value={$settings.recordingsFolder}
-      onblur={(e) => saveSetting("recordingsFolder", e.currentTarget.value)}
+      onblur={async (e) => { const newValue = e.currentTarget.value; if (newValue !== $settings.recordingsFolder) { await saveSetting("recordingsFolder", newValue); await resetMeetings(); } }}
       style="flex:1;background:#282826;border:1px solid #262624;border-radius:6px;padding:6px 12px;font-size:15px;color:#D8D5CE;font-family:'DM Sans',sans-serif;outline:none;"
       placeholder="Path to store recordings"
     />

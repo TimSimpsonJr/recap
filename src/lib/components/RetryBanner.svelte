@@ -24,11 +24,16 @@
 
   let shouldShow = $derived(failedStage !== null || missingOutputs);
 
+  function getRecordingDir(filePath: string): string {
+    const lastSep = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'));
+    return lastSep > 0 ? filePath.substring(0, lastSep) : filePath;
+  }
+
   async function retry(fromStage?: string) {
     if (!meeting.recording_path || retrying) return;
     retrying = true;
     try {
-      await retryProcessing(meeting.recording_path, fromStage);
+      await retryProcessing(getRecordingDir(meeting.recording_path), fromStage);
     } catch (e) {
       console.error("Retry failed:", e);
     } finally {

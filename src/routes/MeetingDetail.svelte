@@ -10,7 +10,7 @@
   import MeetingNotes from "../lib/components/MeetingNotes.svelte";
   import MeetingTranscript from "../lib/components/MeetingTranscript.svelte";
   import ScreenshotGallery from "../lib/components/ScreenshotGallery.svelte";
-  import PipelineStatusBadge from "../lib/components/PipelineStatusBadge.svelte";
+  import PipelineDots from "../lib/components/PipelineDots.svelte";
 
   interface Props {
     meetingId: string;
@@ -115,7 +115,7 @@
       <MeetingHeader meeting={detail.summary} />
 
       <div class="flex items-center gap-3">
-        <PipelineStatusBadge status={detail.summary.pipeline_status} />
+        <PipelineDots status={detail.summary.pipeline_status} recordingPath={detail.summary.recording_path} />
       </div>
 
       <RetryBanner meeting={detail.summary} />
