@@ -65,6 +65,7 @@ pub fn run() {
             recorder::recorder::retry_processing,
             diagnostics::check_nvenc,
             diagnostics::check_ffmpeg,
+            meetings::list_meetings,
         ])
         .on_window_event(|window, event| {
             // Closing the window hides it instead of quitting
