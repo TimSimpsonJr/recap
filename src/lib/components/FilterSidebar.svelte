@@ -18,11 +18,8 @@
   let participantsOpen = $state(true);
   let platformsOpen = $state(true);
 
-  let options: FilterOptions = $state({ companies: [], participants: [], platforms: [] });
-  let filters: ActiveFilters = $state({ companies: [], participants: [], platforms: [] });
-
-  filterOptions.subscribe((v) => (options = v));
-  activeFilters.subscribe((v) => (filters = v));
+  let options = $derived($filterOptions);
+  let filters = $derived($activeFilters);
 
   function totalActive(): number {
     return filters.companies.length + filters.participants.length + filters.platforms.length;

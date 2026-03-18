@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { get } from "svelte/store";
   import { settings } from "../stores/settings";
-  import { getMeetingDetail, type MeetingDetail, type MeetingSummary, type Utterance } from "../tauri";
+  import { getMeetingDetail, type MeetingDetail } from "../tauri";
   import MeetingNotes from "./MeetingNotes.svelte";
   import MeetingTranscript from "./MeetingTranscript.svelte";
 
@@ -25,58 +25,6 @@
   let detailError = $state<string | null>(null);
   let activeTab: "notes" | "transcript" = $state("notes");
 
-  // ── DUMMY DATA (remove before PR) ──
-  const DUMMY_DATA = true;
-
-  function doneStatus() {
-    const done = { completed: true, timestamp: "2026-03-17T10:00:00", error: null };
-    return { merge: done, frames: done, transcribe: done, diarize: done, analyze: done, export: done };
-  }
-
-  const DUMMY_NOTE = `## Summary
-
-Brief meeting summary with key discussion points.
-
-## Key Points
-
-- Discussion point one
-- Discussion point two
-
-## Action Items
-
-- [ ] Follow up on discussed items`;
-
-  const DUMMY_TRANSCRIPT: Utterance[] = [
-    { speaker: "Tim", start: 0, end: 15, text: "Let's discuss the key items on the agenda." },
-    { speaker: "Participant", start: 16, end: 35, text: "Sure, let's start with the first topic." },
-  ];
-
-  function getDummyDetail(meetingId: string): MeetingDetail {
-    const meeting = connectedMeetings.find((m) => m.id === meetingId);
-    const title = meeting?.label ?? "Meeting";
-    const date = meetingId.substring(0, 10);
-    return {
-      summary: {
-        id: meetingId,
-        title,
-        date,
-        platform: "zoom",
-        participants: [],
-        duration_seconds: 2700,
-        pipeline_status: doneStatus(),
-        has_note: true,
-        has_transcript: true,
-        has_video: false,
-        recording_path: null,
-        note_path: null,
-      },
-      note_content: DUMMY_NOTE,
-      transcript: DUMMY_TRANSCRIPT,
-      screenshots: [],
-    };
-  }
-  // ── END DUMMY DATA ──
-
   async function openMeetingDetail(meetingId: string) {
     selectedMeetingId = meetingId;
     view = "detail";
@@ -85,12 +33,6 @@ Brief meeting summary with key discussion points.
     activeTab = "notes";
 
     try {
-      if (DUMMY_DATA) {
-        detail = getDummyDetail(meetingId);
-        detailLoading = false;
-        return;
-      }
-
       const s = get(settings);
       const recordingsDir = s.recordingsFolder;
       if (!recordingsDir) {

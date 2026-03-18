@@ -84,10 +84,9 @@
     selectedMeetingId = null;
   }
 
-  let filterCount = $state(0);
-  activeFilters.subscribe((f) => {
-    filterCount = f.companies.length + f.participants.length + f.platforms.length;
-  });
+  let filterCount = $derived(
+    $activeFilters.companies.length + $activeFilters.participants.length + $activeFilters.platforms.length
+  );
 </script>
 
 <div class="flex flex-col h-full" style="background: #1D1D1B;">

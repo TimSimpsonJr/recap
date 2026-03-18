@@ -420,80 +420,22 @@
     updateSize();
     window.addEventListener("resize", updateSize);
 
-    // ── DUMMY DATA (remove before PR) ──
-    const DUMMY_GRAPH = true;
-    const dummyData = DUMMY_GRAPH ? {
-      nodes: [
-        { id: "meeting:2026-03-17-project-kickoff-acme", label: "Project Kickoff", node_type: "meeting" },
-        { id: "meeting:2026-03-17-weekly-standup", label: "Weekly Standup", node_type: "meeting" },
-        { id: "meeting:2026-03-16-quarterly-review", label: "Q1 Review", node_type: "meeting" },
-        { id: "meeting:2026-03-16-design-sprint-retro", label: "Design Retro", node_type: "meeting" },
-        { id: "meeting:2026-03-15-investor-update", label: "Investor Update", node_type: "meeting" },
-        { id: "meeting:2026-03-15-1on1-sarah", label: "1:1 Sarah", node_type: "meeting" },
-        { id: "meeting:2026-03-14-product-planning", label: "Product Planning", node_type: "meeting" },
-        { id: "person:jane-smith", label: "Jane Smith", node_type: "person" },
-        { id: "person:bob-jones", label: "Bob Jones", node_type: "person" },
-        { id: "person:alice-chen", label: "Alice Chen", node_type: "person" },
-        { id: "person:tim", label: "Tim", node_type: "person" },
-        { id: "person:sarah", label: "Sarah", node_type: "person" },
-        { id: "person:mike", label: "Mike", node_type: "person" },
-        { id: "person:lisa", label: "Lisa", node_type: "person" },
-        { id: "person:dave-wilson", label: "Dave Wilson", node_type: "person" },
-        { id: "company:acme", label: "Acme Corp", node_type: "company" },
-        { id: "company:globex", label: "Globex Inc", node_type: "company" },
-        { id: "company:initech", label: "Initech", node_type: "company" },
-      ],
-      edges: [
-        { source: "person:jane-smith", target: "meeting:2026-03-17-project-kickoff-acme", edge_type: "attended" },
-        { source: "person:bob-jones", target: "meeting:2026-03-17-project-kickoff-acme", edge_type: "attended" },
-        { source: "person:alice-chen", target: "meeting:2026-03-17-project-kickoff-acme", edge_type: "attended" },
-        { source: "person:tim", target: "meeting:2026-03-17-weekly-standup", edge_type: "attended" },
-        { source: "person:sarah", target: "meeting:2026-03-17-weekly-standup", edge_type: "attended" },
-        { source: "person:mike", target: "meeting:2026-03-17-weekly-standup", edge_type: "attended" },
-        { source: "person:lisa", target: "meeting:2026-03-17-weekly-standup", edge_type: "attended" },
-        { source: "person:jane-smith", target: "meeting:2026-03-16-quarterly-review", edge_type: "attended" },
-        { source: "person:bob-jones", target: "meeting:2026-03-16-quarterly-review", edge_type: "attended" },
-        { source: "person:tim", target: "meeting:2026-03-16-quarterly-review", edge_type: "attended" },
-        { source: "person:sarah", target: "meeting:2026-03-16-design-sprint-retro", edge_type: "attended" },
-        { source: "person:mike", target: "meeting:2026-03-16-design-sprint-retro", edge_type: "attended" },
-        { source: "person:lisa", target: "meeting:2026-03-16-design-sprint-retro", edge_type: "attended" },
-        { source: "person:tim", target: "meeting:2026-03-16-design-sprint-retro", edge_type: "attended" },
-        { source: "person:tim", target: "meeting:2026-03-15-investor-update", edge_type: "attended" },
-        { source: "person:jane-smith", target: "meeting:2026-03-15-investor-update", edge_type: "attended" },
-        { source: "person:dave-wilson", target: "meeting:2026-03-15-investor-update", edge_type: "attended" },
-        { source: "person:tim", target: "meeting:2026-03-15-1on1-sarah", edge_type: "attended" },
-        { source: "person:sarah", target: "meeting:2026-03-15-1on1-sarah", edge_type: "attended" },
-        { source: "person:tim", target: "meeting:2026-03-14-product-planning", edge_type: "attended" },
-        { source: "person:mike", target: "meeting:2026-03-14-product-planning", edge_type: "attended" },
-        { source: "person:lisa", target: "meeting:2026-03-14-product-planning", edge_type: "attended" },
-        { source: "person:jane-smith", target: "company:acme", edge_type: "works_at" },
-        { source: "person:bob-jones", target: "company:acme", edge_type: "works_at" },
-        { source: "person:alice-chen", target: "company:acme", edge_type: "works_at" },
-        { source: "person:dave-wilson", target: "company:globex", edge_type: "works_at" },
-        { source: "person:mike", target: "company:initech", edge_type: "works_at" },
-      ],
-    } : null;
-    // ── END DUMMY DATA ──
-
     const s = get(settings);
     const recordingsDir = s.recordingsFolder;
 
+    if (!recordingsDir) {
+      error = "No recordings folder configured";
+      loading = false;
+      return;
+    }
+
     let data;
-    if (dummyData) {
-      data = dummyData;
-    } else {
-      if (!recordingsDir) {
-        error = "No recordings folder configured";
-        loading = false;
-        return;
-      }
-      try {
-        data = await getGraphData(recordingsDir);
-      } catch (e) {
-        error = e instanceof Error ? e.message : String(e);
-        loading = false;
-        return;
-      }
+    try {
+      data = await getGraphData(recordingsDir);
+    } catch (e) {
+      error = e instanceof Error ? e.message : String(e);
+      loading = false;
+      return;
     }
 
     try {

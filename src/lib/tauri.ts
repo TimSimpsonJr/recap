@@ -80,6 +80,7 @@ export interface MeetingSummary {
   date: string;
   platform: string;
   participants: string[];
+  company: string | null;
   duration_seconds: number | null;
   pipeline_status: PipelineStatus;
   has_note: boolean;
