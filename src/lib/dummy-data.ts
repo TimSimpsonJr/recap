@@ -12,7 +12,7 @@ import type {
   GraphNode,
   GraphEdge,
   CalendarEvent,
-  BriefingResponse,
+  Briefing,
 } from "./tauri";
 
 export const USE_DUMMY_DATA = import.meta.env.VITE_DUMMY_DATA === "true";
@@ -296,25 +296,18 @@ export const DUMMY_CALENDAR_EVENTS: CalendarEvent[] = [
 // Briefing response
 // ---------------------------------------------------------------------------
 
-export const DUMMY_BRIEFING: BriefingResponse = {
-  content: `## Acme Corp Follow-up
-
-**Participants:** Jane Smith (VP Engineering), Bob Jones (Senior DevOps)
-
-### Context
-- Last meeting on March 17 covered Q2 infrastructure modernization
-- Phase 1 (CI/CD) proposal was sent; awaiting feedback
-- Budget of $45K approved for Phase 1 tooling
-
-### Open Items
-- Jenkins audit with Acme DevOps team (not yet scheduled)
-- AWS account access pending from Acme IT
-- Bob's GitHub Actions proof-of-concept repo (in progress)
-
-### Suggested Talking Points
-- Get feedback on the Phase 1 proposal timeline
-- Confirm Jenkins audit date
-- Discuss AWS account access status`,
-  generated_at: "2026-03-19T13:45:00",
-  event_id: "cal-002",
+export const DUMMY_BRIEFING: Briefing = {
+  topics: [
+    "Phase 1 (CI/CD) proposal feedback and timeline",
+    "Jenkins audit scheduling with Acme DevOps team",
+    "AWS account access status from Acme IT",
+  ],
+  action_items: [
+    { assignee: "Tim", description: "Send Phase 1 proposal with detailed timeline by Friday", from_meeting: "Project Kickoff with Acme Corp" },
+    { assignee: "Jane Smith", description: "Review and share Globex migration runbook", from_meeting: "Project Kickoff with Acme Corp" },
+    { assignee: "Bob Jones", description: "Set up GitHub Actions proof-of-concept repo", from_meeting: "Project Kickoff with Acme Corp" },
+  ],
+  context: "Last meeting on March 17 covered Q2 infrastructure modernization. Budget of $45K approved for Phase 1 tooling. Moving from Jenkins to GitHub Actions, then Kubernetes on EKS for Phase 2.",
+  relationship_summary: "Jane is the key technical decision-maker at Acme. Bob defers to her on architecture choices. Alice is new to the team (joined 2 weeks ago).",
+  first_meeting: false,
 };
