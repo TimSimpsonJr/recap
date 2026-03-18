@@ -1,11 +1,13 @@
 <script lang="ts">
   import { settings, saveSetting } from "../stores/settings";
+  import { resetMeetings } from "../stores/meetings";
   import { open } from "@tauri-apps/plugin-dialog";
 
   async function browseVaultPath() {
     const selected = await open({ directory: true, multiple: false });
     if (selected) {
       await saveSetting("vaultPath", selected as string);
+      await resetMeetings();
     }
   }
 
@@ -20,7 +22,7 @@
       <input
         type="text"
         value={$settings.vaultPath}
-        onblur={(e) => saveSetting("vaultPath", e.currentTarget.value)}
+        onblur={async (e) => { await saveSetting("vaultPath", e.currentTarget.value); await resetMeetings(); }}
         style="flex:1;background:#282826;border:1px solid #262624;border-radius:6px;padding:6px 12px;font-size:15px;color:#D8D5CE;font-family:'DM Sans',sans-serif;outline:none;"
         placeholder="Path to Obsidian vault"
       />
