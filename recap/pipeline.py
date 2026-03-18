@@ -177,6 +177,13 @@ def run_pipeline(
             _save_status(working_dir, status, recording_dest)
     results["frames"] = [f.path for f in frames]
 
+    # Pause for speaker review if no participants are available
+    if not metadata.participants:
+        _mark_waiting(status, "analyze", "speaker_review")
+        _save_status(working_dir, status, recording_dest)
+        logger.info("No participants available — pausing for speaker review")
+        return {"paused": True, "waiting_at": "analyze"}
+
     # Analyze with Claude
     analysis = None
     if _should_run("analyze", status, from_stage, only_stage):
