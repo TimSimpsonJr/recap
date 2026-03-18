@@ -88,6 +88,7 @@ pub struct StageStatus {
     pub completed: bool,
     pub timestamp: Option<String>,
     pub error: Option<String>,
+    pub waiting: Option<String>,
 }
 
 /// Full pipeline status for a recording.
@@ -107,6 +108,7 @@ impl Default for PipelineStatus {
             completed: false,
             timestamp: None,
             error: None,
+            waiting: None,
         };
         Self {
             merge: empty(),
