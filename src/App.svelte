@@ -4,7 +4,6 @@
   import { listen } from "@tauri-apps/api/event";
   import Settings from "./routes/Settings.svelte";
   import Dashboard from "./routes/Dashboard.svelte";
-  import MeetingDetail from "./routes/MeetingDetail.svelte";
   import GraphView from "./routes/GraphView.svelte";
   import { loadCredentials, credentials, saveTokens } from "./lib/stores/credentials";
   import type { ProviderName } from "./lib/stores/credentials";
@@ -32,7 +31,7 @@
       const hash = window.location.hash.slice(1) || "dashboard";
       const meetingMatch = hash.match(/^meeting\/(.+)$/);
       if (meetingMatch) {
-        currentRoute = "meeting";
+        currentRoute = "dashboard";
         meetingId = meetingMatch[1];
       } else {
         currentRoute = hash;
@@ -121,8 +120,8 @@
           font-size: 14.5px;
           text-decoration: none;
           padding: 10px 0;
-          border-bottom: 2px solid {currentRoute === 'dashboard' || currentRoute === 'meeting' ? '#A8A078' : 'transparent'};
-          color: {currentRoute === 'dashboard' || currentRoute === 'meeting' ? '#A8A078' : '#585650'};
+          border-bottom: 2px solid {currentRoute === 'dashboard' ? '#A8A078' : 'transparent'};
+          color: {currentRoute === 'dashboard' ? '#A8A078' : '#585650'};
         "
       >Meetings</a>
       <a
@@ -148,17 +147,13 @@
     </nav>
 
     <!-- Route content -->
-    <div class="flex-1 overflow-y-auto">
+    <div class="flex-1 overflow-hidden">
       {#if currentRoute === "settings"}
         <Settings />
-      {:else if currentRoute === "meeting" && meetingId}
-        {#key meetingId}
-          <MeetingDetail {meetingId} />
-        {/key}
       {:else if currentRoute === "graph"}
         <GraphView />
       {:else}
-        <Dashboard />
+        <Dashboard initialMeetingId={meetingId} />
       {/if}
     </div>
   {/if}

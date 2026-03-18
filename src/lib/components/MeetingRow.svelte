@@ -4,9 +4,11 @@
 
   interface Props {
     meeting: MeetingSummary;
+    isSelected?: boolean;
+    onSelect?: (id: string) => void;
   }
 
-  let { meeting }: Props = $props();
+  let { meeting, isSelected = false, onSelect }: Props = $props();
 
   let durationText = $derived.by(() => {
     if (!meeting.duration_seconds) return null;
@@ -22,27 +24,43 @@
     if (meeting.participants.length <= 2) return meeting.participants.join(", ");
     return `${meeting.participants[0]} +${meeting.participants.length - 1}`;
   });
+
+  function handleClick(e: MouseEvent) {
+    if (onSelect) {
+      e.preventDefault();
+      onSelect(meeting.id);
+    }
+  }
 </script>
 
 <a
   href="#meeting/{meeting.id}"
   class="block"
+  onclick={handleClick}
   style="
     padding: 14px 16px;
     border-radius: 8px;
-    background: #242422;
+    background: {isSelected ? '#2B2B28' : '#242422'};
     text-decoration: none;
     transition: background 120ms ease, box-shadow 120ms ease;
+    {isSelected ? 'box-shadow: inset 2px 0 0 #A8A078;' : ''}
   "
   onmouseenter={(e) => {
-    const el = e.currentTarget as HTMLElement;
-    el.style.background = '#2B2B28';
-    el.style.boxShadow = '0 1px 8px rgba(0,0,0,0.25)';
+    if (!isSelected) {
+      const el = e.currentTarget as HTMLElement;
+      el.style.background = '#2B2B28';
+      el.style.boxShadow = '0 1px 8px rgba(0,0,0,0.25)';
+    }
   }}
   onmouseleave={(e) => {
     const el = e.currentTarget as HTMLElement;
-    el.style.background = '#242422';
-    el.style.boxShadow = 'none';
+    if (isSelected) {
+      el.style.background = '#2B2B28';
+      el.style.boxShadow = 'inset 2px 0 0 #A8A078';
+    } else {
+      el.style.background = '#242422';
+      el.style.boxShadow = 'none';
+    }
   }}
 >
   <div class="flex items-start justify-between gap-3">

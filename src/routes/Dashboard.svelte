@@ -17,8 +17,23 @@
   import SearchBar from "../lib/components/SearchBar.svelte";
   import MeetingList from "../lib/components/MeetingList.svelte";
   import FilterSidebar from "../lib/components/FilterSidebar.svelte";
+  import DetailPanel from "../lib/components/DetailPanel.svelte";
+
+  interface Props {
+    initialMeetingId?: string | null;
+  }
+
+  let { initialMeetingId = null }: Props = $props();
 
   let filtersExpanded = $state(false);
+  let selectedMeetingId = $state<string | null>(null);
+
+  // Set initial meeting ID from deep link
+  $effect(() => {
+    if (initialMeetingId) {
+      selectedMeetingId = initialMeetingId;
+    }
+  });
 
   onMount(async () => {
     await initRecorderListener();
@@ -48,6 +63,14 @@
     filtersExpanded = !filtersExpanded;
   }
 
+  function handleSelectMeeting(id: string) {
+    selectedMeetingId = id;
+  }
+
+  function handleCloseDetail() {
+    selectedMeetingId = null;
+  }
+
   let filterCount = $state(0);
   activeFilters.subscribe((f) => {
     filterCount = f.companies.length + f.participants.length + f.platforms.length;
@@ -60,7 +83,11 @@
   <div class="flex flex-1 overflow-hidden">
     <FilterSidebar expanded={filtersExpanded} />
 
-    <div class="flex-1 overflow-y-auto" style="padding: 0 28px;">
+    <!-- Meeting list panel -->
+    <div
+      class="meeting-list-panel"
+      class:has-detail={selectedMeetingId !== null}
+    >
       <div
         style="
           padding-top: 18px;
@@ -149,8 +176,55 @@
           hasMore={$filteredMeetings.nextCursor !== null}
           isLoading={$filteredMeetings.loading}
           onLoadMore={handleLoadMore}
+          selectedId={selectedMeetingId}
+          onSelect={handleSelectMeeting}
         />
       </div>
     </div>
+
+    <!-- Detail panel -->
+    {#if selectedMeetingId}
+      <div class="detail-panel-wrapper">
+        {#key selectedMeetingId}
+          <DetailPanel
+            meetingId={selectedMeetingId}
+            onClose={handleCloseDetail}
+          />
+        {/key}
+      </div>
+    {/if}
   </div>
 </div>
+
+<style>
+  .meeting-list-panel {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0 28px;
+    transition: flex 200ms ease;
+  }
+
+  .meeting-list-panel.has-detail {
+    flex: 0 0 320px;
+    min-width: 320px;
+    max-width: 320px;
+    padding: 0 16px;
+  }
+
+  .detail-panel-wrapper {
+    flex: 1;
+    overflow: hidden;
+    animation: slide-in 200ms ease;
+  }
+
+  @keyframes slide-in {
+    from {
+      transform: translateX(40px);
+      opacity: 0;
+    }
+    to {
+      transform: translateX(0);
+      opacity: 1;
+    }
+  }
+</style>

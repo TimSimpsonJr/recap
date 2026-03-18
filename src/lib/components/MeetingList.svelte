@@ -7,9 +7,11 @@
     hasMore: boolean;
     isLoading: boolean;
     onLoadMore: () => void;
+    selectedId?: string | null;
+    onSelect?: (id: string) => void;
   }
 
-  let { meetings, hasMore, isLoading, onLoadMore }: Props = $props();
+  let { meetings, hasMore, isLoading, onLoadMore, selectedId = null, onSelect }: Props = $props();
 
   interface DateGroup {
     label: string;
@@ -82,7 +84,11 @@
         {group.label}
       </div>
       {#each group.meetings as meeting (meeting.id)}
-        <MeetingRow {meeting} />
+        <MeetingRow
+          {meeting}
+          isSelected={selectedId === meeting.id}
+          {onSelect}
+        />
       {/each}
     {/each}
   </div>

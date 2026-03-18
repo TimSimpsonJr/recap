@@ -3,9 +3,10 @@
 
   interface Props {
     meeting: MeetingSummary;
+    showBack?: boolean;
   }
 
-  let { meeting }: Props = $props();
+  let { meeting, showBack = true }: Props = $props();
 
   let dateStr = $derived(
     new Date(meeting.date).toLocaleDateString("en-US", {
@@ -27,21 +28,23 @@
 </script>
 
 <div>
-  <a
-    href="#dashboard"
-    style="
-      font-family: 'DM Sans', sans-serif;
-      font-size: 14px;
-      color: #A8A078;
-      text-decoration: none;
-      display: inline-block;
-      margin-bottom: 12px;
-    "
-    onmouseenter={(e) => { (e.currentTarget as HTMLElement).style.color = '#B8B088'; }}
-    onmouseleave={(e) => { (e.currentTarget as HTMLElement).style.color = '#A8A078'; }}
-  >
-    &larr; Back
-  </a>
+  {#if showBack}
+    <a
+      href="#dashboard"
+      style="
+        font-family: 'DM Sans', sans-serif;
+        font-size: 14px;
+        color: #A8A078;
+        text-decoration: none;
+        display: inline-block;
+        margin-bottom: 12px;
+      "
+      onmouseenter={(e) => { (e.currentTarget as HTMLElement).style.color = '#B8B088'; }}
+      onmouseleave={(e) => { (e.currentTarget as HTMLElement).style.color = '#A8A078'; }}
+    >
+      &larr; Back
+    </a>
+  {/if}
 
   <h1
     style="
