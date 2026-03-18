@@ -13,6 +13,7 @@
   import { get } from "svelte/store";
   import { getGraphData, type GraphNode, type GraphEdge } from "../lib/tauri";
   import GraphControls from "../lib/components/GraphControls.svelte";
+  import GraphSidebar from "../lib/components/GraphSidebar.svelte";
 
   interface SimNode extends SimulationNodeDatum {
     id: string;
@@ -46,6 +47,9 @@
   let simulation: ReturnType<typeof forceSimulation<SimNode>> | null = null;
   let loading = $state(true);
   let error = $state<string | null>(null);
+
+  // Sidebar state
+  let sidebarNode: SimNode | null = $state(null);
 
   // Drag state
   let dragNode: SimNode | null = $state(null);
@@ -157,12 +161,55 @@
     connectedIds = new Set();
   }
 
+  // Derive connected meetings for sidebar
+  let sidebarConnectedMeetings = $derived.by(() => {
+    if (!sidebarNode) return [];
+    const nodeId = sidebarNode.id;
+    const meetingIds = new Set<string>();
+
+    for (const l of allLinks) {
+      const src = typeof l.source === "object" ? (l.source as SimNode).id : (l.source as string);
+      const tgt = typeof l.target === "object" ? (l.target as SimNode).id : (l.target as string);
+      if (src === nodeId) {
+        if (tgt.startsWith("meeting:")) meetingIds.add(tgt);
+      }
+      if (tgt === nodeId) {
+        if (src.startsWith("meeting:")) meetingIds.add(src);
+      }
+    }
+
+    // For company nodes, also find meetings via connected people
+    if (sidebarNode.node_type === "company") {
+      const peopleIds = new Set<string>();
+      for (const l of allLinks) {
+        const src = typeof l.source === "object" ? (l.source as SimNode).id : (l.source as string);
+        const tgt = typeof l.target === "object" ? (l.target as SimNode).id : (l.target as string);
+        if (tgt === nodeId && src.startsWith("person:")) peopleIds.add(src);
+        if (src === nodeId && tgt.startsWith("person:")) peopleIds.add(tgt);
+      }
+      for (const personId of peopleIds) {
+        for (const l of allLinks) {
+          const src = typeof l.source === "object" ? (l.source as SimNode).id : (l.source as string);
+          const tgt = typeof l.target === "object" ? (l.target as SimNode).id : (l.target as string);
+          if (src === personId && tgt.startsWith("meeting:")) meetingIds.add(tgt);
+          if (tgt === personId && src.startsWith("meeting:")) meetingIds.add(src);
+        }
+      }
+    }
+
+    return Array.from(meetingIds).map((id) => {
+      const node = allNodes.find((n) => n.id === id);
+      return { id: id.replace("meeting:", ""), label: node?.label ?? id };
+    });
+  });
+
   function handleNodeClick(node: SimNode) {
     if (node.node_type === "meeting") {
       const meetingId = node.id.replace("meeting:", "");
       window.location.hash = `meeting/${meetingId}`;
+    } else if (node.node_type === "person" || node.node_type === "company") {
+      sidebarNode = node;
     }
-    // Person/company clicks handled in Change 3 (graph sidebar)
   }
 
   // ── Node drag handlers (with click-vs-drag distance threshold) ──
@@ -627,6 +674,17 @@
       {linkStrength}
       onLinkStrengthChange={(v) => linkStrength = v}
     />
+
+    <!-- Graph sidebar for person/company nodes -->
+    {#if sidebarNode}
+      <GraphSidebar
+        nodeId={sidebarNode.id}
+        nodeLabel={sidebarNode.label}
+        nodeType={sidebarNode.node_type}
+        connectedMeetings={sidebarConnectedMeetings}
+        onClose={() => sidebarNode = null}
+      />
+    {/if}
 
     <!-- Legend -->
     <div class="graph-legend">
