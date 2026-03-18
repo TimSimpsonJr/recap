@@ -1,0 +1,655 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Theme Comparison — Recap Phase 5c</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #000;
+    color: #ccc;
+    padding: 32px;
+    line-height: 1.5;
+  }
+
+  h1 { font-size: 22px; font-weight: 600; margin-bottom: 4px; }
+  .subtitle { color: #888; font-size: 13px; margin-bottom: 40px; }
+
+  .comparison {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 32px;
+    max-width: 1600px;
+  }
+
+  .theme-column h2 {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+
+  .theme-desc {
+    font-size: 12px;
+    color: #888;
+    margin-bottom: 16px;
+  }
+
+  /* ── Shared component styles ── */
+  .mockup {
+    border-radius: 10px;
+    overflow: hidden;
+    border: 1px solid;
+  }
+
+  .top-nav {
+    height: 48px;
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    gap: 24px;
+    border-bottom: 1px solid;
+  }
+
+  .nav-logo {
+    font-weight: 700;
+    font-size: 14px;
+    letter-spacing: 0.5px;
+  }
+
+  .nav-item {
+    font-size: 13px;
+    cursor: pointer;
+    padding: 4px 0;
+  }
+
+  .nav-item.active {
+    border-bottom: 2px solid;
+    font-weight: 500;
+  }
+
+  .content-area {
+    display: grid;
+    grid-template-columns: 220px 1fr;
+  }
+
+  .sidebar {
+    padding: 16px;
+    border-right: 1px solid;
+  }
+
+  .sidebar-title {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 10px;
+    font-weight: 600;
+  }
+
+  .filter-item {
+    font-size: 13px;
+    padding: 5px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    margin-bottom: 2px;
+  }
+
+  .filter-item.active {
+    font-weight: 500;
+  }
+
+  .main-content {
+    padding: 0;
+  }
+
+  .meeting-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid;
+    cursor: pointer;
+  }
+
+  .meeting-row:hover {
+    transition: background 0.1s;
+  }
+
+  .meeting-title-text {
+    font-size: 14px;
+    font-weight: 500;
+  }
+
+  .meeting-meta {
+    font-size: 12px;
+    margin-top: 2px;
+  }
+
+  .pipeline-dots {
+    display: flex;
+    gap: 5px;
+  }
+
+  .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+  }
+
+  .badge {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-weight: 500;
+  }
+
+  /* Detail panel (right side) */
+  .detail-panel {
+    padding: 16px;
+    border-top: 1px solid;
+  }
+
+  .detail-title {
+    font-size: 16px;
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+
+  .detail-meta {
+    font-size: 12px;
+    margin-bottom: 16px;
+  }
+
+  .tab-bar {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid;
+  }
+
+  .tab {
+    padding: 8px 16px;
+    font-size: 13px;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+  }
+
+  .tab.active {
+    font-weight: 500;
+  }
+
+  .transcript-line {
+    padding: 6px 16px;
+    display: flex;
+    gap: 10px;
+    font-size: 13px;
+    border-bottom: 1px solid;
+  }
+
+  .ts {
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    min-width: 36px;
+  }
+
+  .spk {
+    font-weight: 600;
+    font-size: 12px;
+    min-width: 80px;
+  }
+
+  .btn {
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 500;
+    border: 1px solid;
+    cursor: pointer;
+  }
+
+  .warning-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    font-size: 13px;
+    border-bottom: 1px solid;
+  }
+
+  .speaker-map-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 6px;
+    font-size: 13px;
+  }
+
+  .speaker-select {
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    min-width: 160px;
+  }
+
+  /* Color swatch strip */
+  .swatch-strip {
+    display: flex;
+    gap: 6px;
+    margin-top: 16px;
+    margin-bottom: 8px;
+  }
+
+  .swatch {
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    border: 1px solid rgba(255,255,255,0.1);
+    position: relative;
+  }
+
+  .swatch-label {
+    font-size: 10px;
+    color: #888;
+    text-align: center;
+    margin-top: 2px;
+  }
+
+  .swatch-row {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  /* ═══════════════════════════════════════
+     THEME A: Dark Default
+     ═══════════════════════════════════════ */
+  .theme-a .mockup { border-color: #30363d; background: #0d1117; }
+  .theme-a .top-nav { background: #161b22; border-color: #30363d; }
+  .theme-a .nav-logo { color: #C4A84D; }
+  .theme-a .nav-item { color: #7d8590; }
+  .theme-a .nav-item.active { color: #e6edf3; border-color: #C4A84D; }
+  .theme-a .sidebar { border-color: #30363d; background: #0d1117; }
+  .theme-a .sidebar-title { color: #7d8590; }
+  .theme-a .filter-item { color: #7d8590; }
+  .theme-a .filter-item:hover { background: rgba(110,118,129,0.1); }
+  .theme-a .filter-item.active { background: rgba(196,168,77,0.1); color: #C4A84D; }
+  .theme-a .meeting-row { border-color: #21262d; }
+  .theme-a .meeting-row:hover { background: #161b22; }
+  .theme-a .meeting-title-text { color: #e6edf3; }
+  .theme-a .meeting-meta { color: #7d8590; }
+  .theme-a .dot.done { background: #C4A84D; }
+  .theme-a .dot.pending { background: #30363d; }
+  .theme-a .dot.error { background: #f85149; }
+  .theme-a .dot.waiting { background: #C4A84D; animation: pulse 2s infinite; }
+  .theme-a .badge.warning { background: rgba(196,168,77,0.15); color: #C4A84D; }
+  .theme-a .detail-panel { border-color: #30363d; background: #0d1117; }
+  .theme-a .detail-title { color: #e6edf3; }
+  .theme-a .detail-meta { color: #7d8590; }
+  .theme-a .tab-bar { border-color: #30363d; background: #161b22; }
+  .theme-a .tab { color: #7d8590; }
+  .theme-a .tab.active { color: #e6edf3; border-color: #C4A84D; }
+  .theme-a .warning-bar { background: rgba(196,168,77,0.06); border-color: rgba(196,168,77,0.2); color: #C4A84D; }
+  .theme-a .speaker-map-row .spk-from { color: #C4A84D; }
+  .theme-a .speaker-select { background: #161b22; border: 1px solid #30363d; color: #e6edf3; }
+  .theme-a .speaker-select.assigned { border-color: #58a6ff; color: #58a6ff; }
+  .theme-a .btn-primary { background: #C4A84D; color: #0d1117; border-color: #C4A84D; }
+  .theme-a .btn-secondary { background: transparent; border-color: #30363d; color: #7d8590; }
+  .theme-a .transcript-line { border-color: rgba(48,54,61,0.5); }
+  .theme-a .ts { color: #7d8590; }
+  .theme-a .spk.known { color: #58a6ff; }
+  .theme-a .spk.unknown { color: #C4A84D; }
+  .theme-a .transcript-text { color: #e6edf3; }
+
+  /* ═══════════════════════════════════════
+     THEME B: Dark Dimmed
+     ═══════════════════════════════════════ */
+  .theme-b .mockup { border-color: #444c56; background: #22272e; }
+  .theme-b .top-nav { background: #2d333b; border-color: #444c56; }
+  .theme-b .nav-logo { color: #C4A84D; }
+  .theme-b .nav-item { color: #768390; }
+  .theme-b .nav-item.active { color: #adbac7; border-color: #C4A84D; }
+  .theme-b .sidebar { border-color: #444c56; background: #22272e; }
+  .theme-b .sidebar-title { color: #768390; }
+  .theme-b .filter-item { color: #768390; }
+  .theme-b .filter-item:hover { background: rgba(118,131,144,0.1); }
+  .theme-b .filter-item.active { background: rgba(196,168,77,0.1); color: #C4A84D; }
+  .theme-b .meeting-row { border-color: #373e47; }
+  .theme-b .meeting-row:hover { background: #2d333b; }
+  .theme-b .meeting-title-text { color: #adbac7; }
+  .theme-b .meeting-meta { color: #768390; }
+  .theme-b .dot.done { background: #C4A84D; }
+  .theme-b .dot.pending { background: #444c56; }
+  .theme-b .dot.error { background: #e5534b; }
+  .theme-b .dot.waiting { background: #C4A84D; animation: pulse 2s infinite; }
+  .theme-b .badge.warning { background: rgba(196,168,77,0.15); color: #C4A84D; }
+  .theme-b .detail-panel { border-color: #444c56; background: #22272e; }
+  .theme-b .detail-title { color: #adbac7; }
+  .theme-b .detail-meta { color: #768390; }
+  .theme-b .tab-bar { border-color: #444c56; background: #2d333b; }
+  .theme-b .tab { color: #768390; }
+  .theme-b .tab.active { color: #adbac7; border-color: #C4A84D; }
+  .theme-b .warning-bar { background: rgba(196,168,77,0.06); border-color: rgba(196,168,77,0.2); color: #C4A84D; }
+  .theme-b .speaker-map-row .spk-from { color: #C4A84D; }
+  .theme-b .speaker-select { background: #2d333b; border: 1px solid #444c56; color: #adbac7; }
+  .theme-b .speaker-select.assigned { border-color: #539bf5; color: #539bf5; }
+  .theme-b .btn-primary { background: #C4A84D; color: #22272e; border-color: #C4A84D; }
+  .theme-b .btn-secondary { background: transparent; border-color: #444c56; color: #768390; }
+  .theme-b .transcript-line { border-color: rgba(68,76,86,0.5); }
+  .theme-b .ts { color: #768390; }
+  .theme-b .spk.known { color: #539bf5; }
+  .theme-b .spk.unknown { color: #C4A84D; }
+  .theme-b .transcript-text { color: #adbac7; }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  .section-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #555;
+    margin-top: 24px;
+    margin-bottom: 8px;
+  }
+</style>
+</head>
+<body>
+
+<h1>Theme Comparison: Dark Default vs Dark Dimmed</h1>
+<p class="subtitle">Both use blue (#58a6ff / #539bf5) and gold (#C4A84D) accents. Compare the base backgrounds and text contrast.</p>
+
+<div class="comparison">
+
+  <!-- ═══ THEME A: Dark Default ═══ -->
+  <div class="theme-column theme-a">
+    <h2 style="color: #e6edf3;">Dark Default</h2>
+    <p class="theme-desc">Higher contrast, cool blue-black. Background #0d1117.</p>
+
+    <div class="swatch-strip">
+      <div class="swatch-row"><div class="swatch" style="background:#0d1117;"></div><div class="swatch-label">bg</div></div>
+      <div class="swatch-row"><div class="swatch" style="background:#161b22;"></div><div class="swatch-label">surface</div></div>
+      <div class="swatch-row"><div class="swatch" style="background:#21262d;"></div><div class="swatch-label">raised</div></div>
+      <div class="swatch-row"><div class="swatch" style="background:#30363d;"></div><div class="swatch-label">border</div></div>
+      <div class="swatch-row"><div class="swatch" style="background:#58a6ff;"></div><div class="swatch-label">blue</div></div>
+      <div class="swatch-row"><div class="swatch" style="background:#C4A84D;"></div><div class="swatch-label">gold</div></div>
+      <div class="swatch-row"><div class="swatch" style="background:#3fb950;"></div><div class="swatch-label">green</div></div>
+      <div class="swatch-row"><div class="swatch" style="background:#f85149;"></div><div class="swatch-label">red</div></div>
+    </div>
+
+    <!-- Dashboard mockup -->
+    <div class="section-label">Dashboard View</div>
+    <div class="mockup">
+      <div class="top-nav">
+        <span class="nav-logo">RECAP</span>
+        <span class="nav-item active">Dashboard</span>
+        <span class="nav-item">Graph</span>
+        <span class="nav-item">Settings</span>
+      </div>
+      <div class="content-area">
+        <div class="sidebar">
+          <div class="sidebar-title">Filters</div>
+          <div class="filter-item active">All Meetings</div>
+          <div class="filter-item">Acme Corp</div>
+          <div class="filter-item">Initech</div>
+          <div class="filter-item">Globex</div>
+          <div style="height: 16px;"></div>
+          <div class="sidebar-title">Platform</div>
+          <div class="filter-item">Zoom</div>
+          <div class="filter-item">Teams</div>
+        </div>
+        <div class="main-content">
+          <div class="meeting-row">
+            <div>
+              <div class="meeting-title-text">Q1 Planning Review</div>
+              <div class="meeting-meta">Mar 17 &middot; 45 min &middot; Zoom</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span class="badge warning">&#9888; Review</span>
+              <div class="pipeline-dots">
+                <div class="dot done"></div><div class="dot done"></div><div class="dot done"></div>
+                <div class="dot done"></div><div class="dot waiting"></div><div class="dot pending"></div>
+              </div>
+            </div>
+          </div>
+          <div class="meeting-row">
+            <div>
+              <div class="meeting-title-text">Design Sprint Kickoff</div>
+              <div class="meeting-meta">Mar 16 &middot; 32 min &middot; Teams</div>
+            </div>
+            <div class="pipeline-dots">
+              <div class="dot done"></div><div class="dot done"></div><div class="dot done"></div>
+              <div class="dot done"></div><div class="dot done"></div><div class="dot done"></div>
+            </div>
+          </div>
+          <div class="meeting-row">
+            <div>
+              <div class="meeting-title-text">Client Onboarding Call</div>
+              <div class="meeting-meta">Mar 15 &middot; 28 min &middot; Zoom</div>
+            </div>
+            <div class="pipeline-dots">
+              <div class="dot done"></div><div class="dot done"></div><div class="dot done"></div>
+              <div class="dot done"></div><div class="dot done"></div><div class="dot done"></div>
+            </div>
+          </div>
+          <div class="meeting-row">
+            <div>
+              <div class="meeting-title-text">Engineering Standup</div>
+              <div class="meeting-meta">Mar 15 &middot; 15 min &middot; Teams</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <div class="pipeline-dots">
+                <div class="dot done"></div><div class="dot done"></div><div class="dot done"></div>
+                <div class="dot done"></div><div class="dot error"></div><div class="dot pending"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Speaker Review mockup -->
+    <div class="section-label">Speaker Review (Option A Inline)</div>
+    <div class="mockup">
+      <div class="top-nav">
+        <span class="nav-logo">RECAP</span>
+        <span class="nav-item">Dashboard</span>
+        <span class="nav-item active">Meeting</span>
+        <span class="nav-item">Graph</span>
+        <span class="nav-item">Settings</span>
+      </div>
+      <div class="tab-bar">
+        <div class="tab">Player</div>
+        <div class="tab">Notes</div>
+        <div class="tab active">Transcript</div>
+        <div class="tab">Frames</div>
+      </div>
+      <div class="warning-bar">
+        <span>&#9888;</span>
+        <span>2 speakers could not be identified. Assign names or skip to continue.</span>
+      </div>
+      <div style="padding: 14px 16px; border-bottom: 1px solid #21262d;">
+        <div class="speaker-map-row">
+          <span class="spk-from" style="color:#C4A84D; font-weight:600; font-size:12px; min-width:90px;">SPEAKER_00</span>
+          <span style="color:#7d8590;">&rarr;</span>
+          <select class="speaker-select assigned"><option>Tim Simpson</option></select>
+          <span style="font-size:11px; color:#7d8590;">68 utt.</span>
+        </div>
+        <div class="speaker-map-row">
+          <span class="spk-from" style="color:#C4A84D; font-weight:600; font-size:12px; min-width:90px;">SPEAKER_01</span>
+          <span style="color:#7d8590;">&rarr;</span>
+          <select class="speaker-select"><option>Select person...</option></select>
+          <span style="font-size:11px; color:#7d8590;">42 utt.</span>
+        </div>
+        <div style="margin-top: 12px; display:flex; gap:8px;">
+          <button class="btn btn-primary">Apply &amp; Resume</button>
+          <button class="btn btn-secondary">Skip &mdash; Generic Labels</button>
+        </div>
+      </div>
+      <div class="transcript-line">
+        <span class="ts">0:00</span>
+        <span class="spk known">Tim Simpson</span>
+        <span class="transcript-text">Welcome everyone, let's get started with the Q1 review.</span>
+      </div>
+      <div class="transcript-line">
+        <span class="ts">0:15</span>
+        <span class="spk unknown">SPEAKER_01</span>
+        <span class="transcript-text">Thanks Tim. Before we start, I wanted to flag something.</span>
+      </div>
+      <div class="transcript-line">
+        <span class="ts">0:32</span>
+        <span class="spk known">Tim Simpson</span>
+        <span class="transcript-text">Sure, go ahead. Let's hear it before we dive in.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ THEME B: Dark Dimmed ═══ -->
+  <div class="theme-column theme-b">
+    <h2 style="color: #adbac7;">Dark Dimmed</h2>
+    <p class="theme-desc">Lower contrast, warmer gray tones. Background #22272e.</p>
+
+    <div class="swatch-strip">
+      <div class="swatch-row"><div class="swatch" style="background:#22272e;"></div><div class="swatch-label">bg</div></div>
+      <div class="swatch-row"><div class="swatch" style="background:#2d333b;"></div><div class="swatch-label">surface</div></div>
+      <div class="swatch-row"><div class="swatch" style="background:#373e47;"></div><div class="swatch-label">raised</div></div>
+      <div class="swatch-row"><div class="swatch" style="background:#444c56;"></div><div class="swatch-label">border</div></div>
+      <div class="swatch-row"><div class="swatch" style="background:#539bf5;"></div><div class="swatch-label">blue</div></div>
+      <div class="swatch-row"><div class="swatch" style="background:#C4A84D;"></div><div class="swatch-label">gold</div></div>
+      <div class="swatch-row"><div class="swatch" style="background:#57ab5a;"></div><div class="swatch-label">green</div></div>
+      <div class="swatch-row"><div class="swatch" style="background:#e5534b;"></div><div class="swatch-label">red</div></div>
+    </div>
+
+    <!-- Dashboard mockup -->
+    <div class="section-label" style="color:#555;">Dashboard View</div>
+    <div class="mockup">
+      <div class="top-nav">
+        <span class="nav-logo">RECAP</span>
+        <span class="nav-item active">Dashboard</span>
+        <span class="nav-item">Graph</span>
+        <span class="nav-item">Settings</span>
+      </div>
+      <div class="content-area">
+        <div class="sidebar">
+          <div class="sidebar-title">Filters</div>
+          <div class="filter-item active">All Meetings</div>
+          <div class="filter-item">Acme Corp</div>
+          <div class="filter-item">Initech</div>
+          <div class="filter-item">Globex</div>
+          <div style="height: 16px;"></div>
+          <div class="sidebar-title">Platform</div>
+          <div class="filter-item">Zoom</div>
+          <div class="filter-item">Teams</div>
+        </div>
+        <div class="main-content">
+          <div class="meeting-row">
+            <div>
+              <div class="meeting-title-text">Q1 Planning Review</div>
+              <div class="meeting-meta">Mar 17 &middot; 45 min &middot; Zoom</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <span class="badge warning">&#9888; Review</span>
+              <div class="pipeline-dots">
+                <div class="dot done"></div><div class="dot done"></div><div class="dot done"></div>
+                <div class="dot done"></div><div class="dot waiting"></div><div class="dot pending"></div>
+              </div>
+            </div>
+          </div>
+          <div class="meeting-row">
+            <div>
+              <div class="meeting-title-text">Design Sprint Kickoff</div>
+              <div class="meeting-meta">Mar 16 &middot; 32 min &middot; Teams</div>
+            </div>
+            <div class="pipeline-dots">
+              <div class="dot done"></div><div class="dot done"></div><div class="dot done"></div>
+              <div class="dot done"></div><div class="dot done"></div><div class="dot done"></div>
+            </div>
+          </div>
+          <div class="meeting-row">
+            <div>
+              <div class="meeting-title-text">Client Onboarding Call</div>
+              <div class="meeting-meta">Mar 15 &middot; 28 min &middot; Zoom</div>
+            </div>
+            <div class="pipeline-dots">
+              <div class="dot done"></div><div class="dot done"></div><div class="dot done"></div>
+              <div class="dot done"></div><div class="dot done"></div><div class="dot done"></div>
+            </div>
+          </div>
+          <div class="meeting-row">
+            <div>
+              <div class="meeting-title-text">Engineering Standup</div>
+              <div class="meeting-meta">Mar 15 &middot; 15 min &middot; Teams</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:10px;">
+              <div class="pipeline-dots">
+                <div class="dot done"></div><div class="dot done"></div><div class="dot done"></div>
+                <div class="dot done"></div><div class="dot error"></div><div class="dot pending"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Speaker Review mockup -->
+    <div class="section-label" style="color:#555;">Speaker Review (Option A Inline)</div>
+    <div class="mockup">
+      <div class="top-nav">
+        <span class="nav-logo">RECAP</span>
+        <span class="nav-item">Dashboard</span>
+        <span class="nav-item active">Meeting</span>
+        <span class="nav-item">Graph</span>
+        <span class="nav-item">Settings</span>
+      </div>
+      <div class="tab-bar">
+        <div class="tab">Player</div>
+        <div class="tab">Notes</div>
+        <div class="tab active">Transcript</div>
+        <div class="tab">Frames</div>
+      </div>
+      <div class="warning-bar">
+        <span>&#9888;</span>
+        <span>2 speakers could not be identified. Assign names or skip to continue.</span>
+      </div>
+      <div style="padding: 14px 16px; border-bottom: 1px solid #373e47;">
+        <div class="speaker-map-row">
+          <span class="spk-from" style="color:#C4A84D; font-weight:600; font-size:12px; min-width:90px;">SPEAKER_00</span>
+          <span style="color:#768390;">&rarr;</span>
+          <select class="speaker-select assigned"><option>Tim Simpson</option></select>
+          <span style="font-size:11px; color:#768390;">68 utt.</span>
+        </div>
+        <div class="speaker-map-row">
+          <span class="spk-from" style="color:#C4A84D; font-weight:600; font-size:12px; min-width:90px;">SPEAKER_01</span>
+          <span style="color:#768390;">&rarr;</span>
+          <select class="speaker-select"><option>Select person...</option></select>
+          <span style="font-size:11px; color:#768390;">42 utt.</span>
+        </div>
+        <div style="margin-top: 12px; display:flex; gap:8px;">
+          <button class="btn btn-primary">Apply &amp; Resume</button>
+          <button class="btn btn-secondary">Skip &mdash; Generic Labels</button>
+        </div>
+      </div>
+      <div class="transcript-line">
+        <span class="ts">0:00</span>
+        <span class="spk known">Tim Simpson</span>
+        <span class="transcript-text">Welcome everyone, let's get started with the Q1 review.</span>
+      </div>
+      <div class="transcript-line">
+        <span class="ts">0:15</span>
+        <span class="spk unknown">SPEAKER_01</span>
+        <span class="transcript-text">Thanks Tim. Before we start, I wanted to flag something.</span>
+      </div>
+      <div class="transcript-line">
+        <span class="ts">0:32</span>
+        <span class="spk known">Tim Simpson</span>
+        <span class="transcript-text">Sure, go ahead. Let's hear it before we dive in.</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>

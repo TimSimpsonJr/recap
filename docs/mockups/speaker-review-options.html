@@ -1,0 +1,943 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Speaker Review UI Options — Recap Phase 5c</title>
+<style>
+  :root {
+    --bg: #1A1A18;
+    --surface: #242422;
+    --surface-raised: #2E2E2B;
+    --border: #3A3A36;
+    --text: #E8E4D9;
+    --text-muted: #A8A498;
+    --accent: #A8A078;
+    --warning: #D4A04A;
+    --error: #D06850;
+    --blue: #5B8CB8;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #111110;
+    color: var(--text);
+    padding: 32px;
+    line-height: 1.5;
+  }
+
+  h1 {
+    font-size: 24px;
+    font-weight: 600;
+    margin-bottom: 8px;
+    color: var(--text);
+  }
+
+  .subtitle {
+    color: var(--text-muted);
+    margin-bottom: 40px;
+    font-size: 14px;
+  }
+
+  .option-section {
+    margin-bottom: 56px;
+  }
+
+  .option-header {
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    margin-bottom: 6px;
+  }
+
+  .option-header h2 {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--accent);
+  }
+
+  .option-tag {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: rgba(168, 160, 120, 0.15);
+    color: var(--accent);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .option-desc {
+    color: var(--text-muted);
+    font-size: 13px;
+    margin-bottom: 20px;
+    max-width: 720px;
+  }
+
+  /* Shared mockup frame */
+  .mockup-frame {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    max-width: 900px;
+  }
+
+  /* Top nav bar (shared) */
+  .top-nav {
+    height: 48px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    padding: 0 16px;
+    gap: 24px;
+  }
+
+  .nav-logo {
+    font-weight: 700;
+    font-size: 15px;
+    color: var(--accent);
+    letter-spacing: 0.5px;
+  }
+
+  .nav-item {
+    font-size: 13px;
+    color: var(--text-muted);
+    cursor: pointer;
+    padding: 4px 0;
+  }
+
+  .nav-item.active {
+    color: var(--text);
+    border-bottom: 2px solid var(--accent);
+  }
+
+  /* Transcript lines */
+  .transcript-line {
+    padding: 8px 16px;
+    display: flex;
+    gap: 12px;
+    font-size: 13px;
+    border-bottom: 1px solid rgba(58, 58, 54, 0.4);
+  }
+
+  .transcript-line:hover {
+    background: rgba(168, 160, 120, 0.04);
+  }
+
+  .ts {
+    color: var(--text-muted);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+    min-width: 40px;
+    padding-top: 1px;
+  }
+
+  .speaker-label {
+    font-weight: 600;
+    font-size: 12px;
+    min-width: 90px;
+    padding-top: 1px;
+  }
+
+  .speaker-label.unknown {
+    color: var(--warning);
+  }
+
+  .speaker-label.known {
+    color: var(--blue);
+  }
+
+  .transcript-text {
+    color: var(--text);
+    flex: 1;
+  }
+
+  /* Warning banner */
+  .warning-banner {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    background: rgba(212, 160, 74, 0.08);
+    border-bottom: 1px solid rgba(212, 160, 74, 0.2);
+    font-size: 13px;
+    color: var(--warning);
+  }
+
+  .warning-icon {
+    font-size: 16px;
+  }
+
+  /* Speaker mapping controls */
+  .speaker-map {
+    padding: 16px;
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+  }
+
+  .speaker-map-title {
+    font-size: 13px;
+    font-weight: 600;
+    margin-bottom: 12px;
+    color: var(--text);
+  }
+
+  .speaker-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 8px;
+    font-size: 13px;
+  }
+
+  .speaker-from {
+    color: var(--warning);
+    font-weight: 600;
+    min-width: 100px;
+    font-size: 12px;
+  }
+
+  .arrow {
+    color: var(--text-muted);
+  }
+
+  .speaker-select {
+    background: var(--surface-raised);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 5px 10px;
+    border-radius: 4px;
+    font-size: 13px;
+    min-width: 180px;
+  }
+
+  .speaker-select.assigned {
+    border-color: var(--blue);
+    color: var(--blue);
+  }
+
+  .btn {
+    padding: 7px 16px;
+    border-radius: 5px;
+    font-size: 13px;
+    font-weight: 500;
+    border: none;
+    cursor: pointer;
+  }
+
+  .btn-primary {
+    background: var(--accent);
+    color: var(--bg);
+  }
+
+  .btn-secondary {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-muted);
+  }
+
+  .btn-sm {
+    padding: 4px 10px;
+    font-size: 12px;
+  }
+
+  /* Tabs */
+  .tab-bar {
+    display: flex;
+    gap: 0;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  .tab {
+    padding: 10px 20px;
+    font-size: 13px;
+    color: var(--text-muted);
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+  }
+
+  .tab.active {
+    color: var(--text);
+    border-bottom-color: var(--accent);
+  }
+
+  /* Meeting card (for option B) */
+  .meeting-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 16px;
+    margin: 16px;
+  }
+
+  .meeting-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+  }
+
+  .meeting-title {
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  .meeting-meta {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  .review-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 10px;
+    border-radius: 4px;
+    background: rgba(212, 160, 74, 0.12);
+    color: var(--warning);
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+
+  /* Modal overlay (for option B) */
+  .modal-overlay {
+    position: relative;
+    background: rgba(0,0,0,0.5);
+    padding: 40px;
+    display: flex;
+    justify-content: center;
+    min-height: 400px;
+  }
+
+  .modal {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    width: 100%;
+    max-width: 640px;
+    overflow: hidden;
+  }
+
+  .modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .modal-header h3 {
+    font-size: 15px;
+    font-weight: 600;
+  }
+
+  .modal-body {
+    padding: 20px;
+  }
+
+  .modal-footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    padding: 16px 20px;
+    border-top: 1px solid var(--border);
+  }
+
+  .modal-transcript-preview {
+    margin-top: 16px;
+    background: var(--bg);
+    border-radius: 6px;
+    padding: 4px 0;
+    max-height: 150px;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .modal-transcript-preview::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 40px;
+    background: linear-gradient(transparent, var(--bg));
+  }
+
+  /* Dedicated page (option C) */
+  .split-layout {
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    min-height: 400px;
+  }
+
+  .split-left {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    padding: 20px;
+  }
+
+  .split-right {
+    padding: 0;
+    overflow: auto;
+  }
+
+  .split-left h3 {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 16px;
+  }
+
+  .context-section {
+    margin-bottom: 20px;
+  }
+
+  .context-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    margin-bottom: 6px;
+  }
+
+  .participant-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    background: var(--surface-raised);
+    font-size: 12px;
+    color: var(--text-muted);
+    margin: 2px 4px 2px 0;
+  }
+
+  .pipeline-dots {
+    display: flex;
+    gap: 6px;
+    margin-top: 4px;
+  }
+
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+
+  .dot.done { background: var(--accent); }
+  .dot.pending { background: #464440; }
+  .dot.waiting { background: var(--warning); animation: pulse 2s infinite; }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  .pros-cons {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-top: 12px;
+    font-size: 12px;
+    max-width: 720px;
+  }
+
+  .pros, .cons {
+    padding: 10px 12px;
+    border-radius: 6px;
+    background: var(--surface);
+  }
+
+  .pros { border-left: 3px solid #6B9B6B; }
+  .cons { border-left: 3px solid var(--error); }
+
+  .pros strong, .cons strong {
+    display: block;
+    margin-bottom: 4px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .pros strong { color: #6B9B6B; }
+  .cons strong { color: var(--error); }
+
+  .pros li, .cons li {
+    color: var(--text-muted);
+    margin-left: 14px;
+    margin-bottom: 2px;
+  }
+
+  .section-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 56px 0;
+    max-width: 900px;
+  }
+</style>
+</head>
+<body>
+
+<h1>Speaker Review UI — Compare Options</h1>
+<p class="subtitle">Phase 5c: When unidentified speakers remain after diarization, the user corrects labels before the pipeline resumes.</p>
+
+<!-- OPTION A: Inline in Detail Panel -->
+<div class="option-section">
+  <div class="option-header">
+    <h2>Option A: Inline in Detail Panel</h2>
+    <span class="option-tag">Recommended</span>
+  </div>
+  <p class="option-desc">Speaker mapping controls appear directly in the Transcript tab, above the transcript. User corrects labels in-context alongside the actual transcript text.</p>
+
+  <div class="mockup-frame">
+    <div class="top-nav">
+      <span class="nav-logo">RECAP</span>
+      <span class="nav-item">Dashboard</span>
+      <span class="nav-item active">Meeting</span>
+      <span class="nav-item">Graph</span>
+      <span class="nav-item">Settings</span>
+    </div>
+
+    <!-- Meeting header area -->
+    <div style="padding: 16px; border-bottom: 1px solid var(--border);">
+      <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div>
+          <div style="font-size: 16px; font-weight: 600;">Q1 Planning Review</div>
+          <div style="font-size: 12px; color: var(--text-muted); margin-top: 2px;">Mar 17, 2026 &middot; 45 min &middot; Zoom &middot; 4 participants</div>
+        </div>
+        <div class="pipeline-dots">
+          <div class="dot done" title="merge"></div>
+          <div class="dot done" title="frames"></div>
+          <div class="dot done" title="transcribe"></div>
+          <div class="dot done" title="diarize"></div>
+          <div class="dot waiting" title="analyze — awaiting review"></div>
+          <div class="dot pending" title="export"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="tab-bar">
+      <div class="tab">Player</div>
+      <div class="tab">Notes</div>
+      <div class="tab active">Transcript</div>
+      <div class="tab">Frames</div>
+    </div>
+
+    <div class="warning-banner">
+      <span class="warning-icon">&#9888;</span>
+      <span>2 speakers could not be identified. Assign names below to continue processing.</span>
+    </div>
+
+    <div class="speaker-map">
+      <div class="speaker-map-title">Speaker Mapping</div>
+      <div class="speaker-row">
+        <span class="speaker-from">SPEAKER_00</span>
+        <span class="arrow">&rarr;</span>
+        <select class="speaker-select assigned">
+          <option>Tim Simpson</option>
+        </select>
+        <span style="font-size: 11px; color: var(--text-muted);">68 utterances</span>
+      </div>
+      <div class="speaker-row">
+        <span class="speaker-from">SPEAKER_01</span>
+        <span class="arrow">&rarr;</span>
+        <select class="speaker-select">
+          <option>Select person...</option>
+          <option>Sarah Chen</option>
+          <option>Mike Russo</option>
+          <option>+ Add new name</option>
+        </select>
+        <span style="font-size: 11px; color: var(--text-muted);">42 utterances</span>
+      </div>
+      <div class="speaker-row">
+        <span class="speaker-from">SPEAKER_02</span>
+        <span class="arrow">&rarr;</span>
+        <select class="speaker-select assigned">
+          <option>Sarah Chen</option>
+        </select>
+        <span style="font-size: 11px; color: var(--text-muted);">31 utterances</span>
+      </div>
+      <div class="speaker-row">
+        <span class="speaker-from">SPEAKER_03</span>
+        <span class="arrow">&rarr;</span>
+        <select class="speaker-select">
+          <option>Select person...</option>
+          <option>Mike Russo</option>
+          <option>+ Add new name</option>
+        </select>
+        <span style="font-size: 11px; color: var(--text-muted);">15 utterances</span>
+      </div>
+      <div style="margin-top: 14px; display: flex; gap: 10px; align-items: center;">
+        <button class="btn btn-primary">Apply &amp; Resume Pipeline</button>
+        <button class="btn btn-secondary">Skip &mdash; Use Generic Labels</button>
+      </div>
+    </div>
+
+    <!-- Transcript preview -->
+    <div class="transcript-line">
+      <span class="ts">0:00</span>
+      <span class="speaker-label known">Tim Simpson</span>
+      <span class="transcript-text">Welcome everyone, let's get started with the Q1 review. I want to cover three main areas today.</span>
+    </div>
+    <div class="transcript-line">
+      <span class="ts">0:15</span>
+      <span class="speaker-label unknown">SPEAKER_01</span>
+      <span class="transcript-text">Thanks Tim. Before we start, I wanted to flag something about the timeline we discussed last week.</span>
+    </div>
+    <div class="transcript-line">
+      <span class="ts">0:32</span>
+      <span class="speaker-label known">Sarah Chen</span>
+      <span class="transcript-text">Yeah, I have the updated numbers. The metrics from January look much better than projected.</span>
+    </div>
+    <div class="transcript-line">
+      <span class="ts">0:48</span>
+      <span class="speaker-label unknown">SPEAKER_03</span>
+      <span class="transcript-text">Can I add some context on the engineering side? We had some capacity changes that affected the timeline.</span>
+    </div>
+    <div class="transcript-line">
+      <span class="ts">1:05</span>
+      <span class="speaker-label known">Tim Simpson</span>
+      <span class="transcript-text">Sure, go ahead. I think that context is important for the planning discussion.</span>
+    </div>
+  </div>
+
+  <div class="pros-cons">
+    <div class="pros">
+      <strong>Strengths</strong>
+      <ul>
+        <li>Full transcript visible for context clues</li>
+        <li>No navigation away from detail view</li>
+        <li>Same UI for initial review and later corrections</li>
+        <li>Minimal new components needed</li>
+      </ul>
+    </div>
+    <div class="cons">
+      <strong>Trade-offs</strong>
+      <ul>
+        <li>Mapping section takes vertical space above transcript</li>
+        <li>For 8+ speakers, the mapping area gets tall</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="section-divider"></div>
+
+<!-- OPTION B: Banner + Modal -->
+<div class="option-section">
+  <div class="option-header">
+    <h2>Option B: Banner + Modal Dialog</h2>
+  </div>
+  <p class="option-desc">Meeting card shows a review badge. Clicking opens a focused modal with speaker controls and a truncated transcript preview.</p>
+
+  <div class="mockup-frame">
+    <div class="top-nav">
+      <span class="nav-logo">RECAP</span>
+      <span class="nav-item active">Dashboard</span>
+      <span class="nav-item">Graph</span>
+      <span class="nav-item">Settings</span>
+    </div>
+
+    <!-- Meeting list with badge -->
+    <div style="padding: 8px;">
+      <div class="meeting-card" style="border-color: rgba(212, 160, 74, 0.3);">
+        <div class="meeting-card-header">
+          <div>
+            <div class="meeting-title">Q1 Planning Review</div>
+            <div class="meeting-meta">Mar 17, 2026 &middot; 45 min &middot; Zoom &middot; 4 participants</div>
+          </div>
+          <div style="display: flex; align-items: center; gap: 12px;">
+            <div class="pipeline-dots">
+              <div class="dot done"></div>
+              <div class="dot done"></div>
+              <div class="dot done"></div>
+              <div class="dot done"></div>
+              <div class="dot waiting"></div>
+              <div class="dot pending"></div>
+            </div>
+            <span class="review-badge">&#9888; Review Speakers</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="meeting-card">
+        <div class="meeting-card-header">
+          <div>
+            <div class="meeting-title">Design Sprint Kickoff</div>
+            <div class="meeting-meta">Mar 16, 2026 &middot; 32 min &middot; Teams &middot; 3 participants</div>
+          </div>
+          <div class="pipeline-dots">
+            <div class="dot done"></div>
+            <div class="dot done"></div>
+            <div class="dot done"></div>
+            <div class="dot done"></div>
+            <div class="dot done"></div>
+            <div class="dot done"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal overlay -->
+    <div class="modal-overlay">
+      <div class="modal">
+        <div class="modal-header">
+          <h3>&#9888; Speaker Review &mdash; Q1 Planning Review</h3>
+          <span style="color: var(--text-muted); cursor: pointer; font-size: 18px;">&times;</span>
+        </div>
+        <div class="modal-body">
+          <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 16px;">2 of 4 speakers need identification. Assign names to resume pipeline processing.</div>
+
+          <div class="speaker-row">
+            <span class="speaker-from">SPEAKER_00</span>
+            <span class="arrow">&rarr;</span>
+            <select class="speaker-select assigned">
+              <option>Tim Simpson</option>
+            </select>
+          </div>
+          <div class="speaker-row">
+            <span class="speaker-from">SPEAKER_01</span>
+            <span class="arrow">&rarr;</span>
+            <select class="speaker-select">
+              <option>Select person...</option>
+            </select>
+          </div>
+          <div class="speaker-row">
+            <span class="speaker-from">SPEAKER_02</span>
+            <span class="arrow">&rarr;</span>
+            <select class="speaker-select assigned">
+              <option>Sarah Chen</option>
+            </select>
+          </div>
+          <div class="speaker-row">
+            <span class="speaker-from">SPEAKER_03</span>
+            <span class="arrow">&rarr;</span>
+            <select class="speaker-select">
+              <option>Select person...</option>
+            </select>
+          </div>
+
+          <div class="modal-transcript-preview">
+            <div class="transcript-line">
+              <span class="ts">0:00</span>
+              <span class="speaker-label known">Tim</span>
+              <span class="transcript-text">Welcome everyone, let's get started...</span>
+            </div>
+            <div class="transcript-line">
+              <span class="ts">0:15</span>
+              <span class="speaker-label unknown">SPK_01</span>
+              <span class="transcript-text">Thanks Tim. Before we start, I wanted...</span>
+            </div>
+            <div class="transcript-line">
+              <span class="ts">0:32</span>
+              <span class="speaker-label known">Sarah</span>
+              <span class="transcript-text">Yeah, I have the updated numbers...</span>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-secondary">Cancel</button>
+          <button class="btn btn-secondary">Skip &mdash; Use Generic Labels</button>
+          <button class="btn btn-primary">Apply &amp; Resume</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="pros-cons">
+    <div class="pros">
+      <strong>Strengths</strong>
+      <ul>
+        <li>Focused, uncluttered interface</li>
+        <li>Accessible from dashboard without opening detail</li>
+        <li>Clear call-to-action on meeting card</li>
+      </ul>
+    </div>
+    <div class="cons">
+      <strong>Trade-offs</strong>
+      <ul>
+        <li>Transcript preview is truncated — less context</li>
+        <li>Can't scroll full transcript while reviewing</li>
+        <li>Separate code path for modal vs later corrections</li>
+        <li>Modal blocks interaction with rest of app</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="section-divider"></div>
+
+<!-- OPTION C: Dedicated Route -->
+<div class="option-section">
+  <div class="option-header">
+    <h2>Option C: Dedicated Review Page</h2>
+  </div>
+  <p class="option-desc">A separate #review/{id} route with speaker controls on the left and full scrollable transcript on the right. Best for complex meetings.</p>
+
+  <div class="mockup-frame">
+    <div class="top-nav">
+      <span class="nav-logo">RECAP</span>
+      <span class="nav-item">Dashboard</span>
+      <span class="nav-item">Graph</span>
+      <span class="nav-item">Settings</span>
+      <span class="nav-item active" style="color: var(--warning);">&#9888; Review</span>
+    </div>
+
+    <div class="split-layout">
+      <div class="split-left">
+        <h3>Speaker Review</h3>
+        <div style="font-size: 12px; color: var(--text-muted); margin-bottom: 16px;">Q1 Planning Review &middot; Mar 17 &middot; 45 min</div>
+
+        <div class="context-section">
+          <div class="context-label">Calendar Participants</div>
+          <div>
+            <span class="participant-chip">Tim Simpson</span>
+            <span class="participant-chip">Sarah Chen</span>
+            <span class="participant-chip">Mike Russo</span>
+            <span class="participant-chip">Alex Wu</span>
+          </div>
+        </div>
+
+        <div class="context-section">
+          <div class="context-label">Speaker Mapping</div>
+          <div style="margin-top: 8px;">
+            <div class="speaker-row" style="flex-direction: column; align-items: flex-start; gap: 4px; margin-bottom: 14px;">
+              <div style="display: flex; align-items: center; gap: 8px; width: 100%;">
+                <span class="speaker-from" style="min-width: auto;">SPEAKER_00</span>
+                <span style="font-size: 11px; color: var(--text-muted);">68 utt.</span>
+              </div>
+              <select class="speaker-select assigned" style="width: 100%;">
+                <option>Tim Simpson</option>
+              </select>
+            </div>
+            <div class="speaker-row" style="flex-direction: column; align-items: flex-start; gap: 4px; margin-bottom: 14px;">
+              <div style="display: flex; align-items: center; gap: 8px; width: 100%;">
+                <span class="speaker-from" style="min-width: auto;">SPEAKER_01</span>
+                <span style="font-size: 11px; color: var(--text-muted);">42 utt.</span>
+              </div>
+              <select class="speaker-select" style="width: 100%;">
+                <option>Select person...</option>
+              </select>
+            </div>
+            <div class="speaker-row" style="flex-direction: column; align-items: flex-start; gap: 4px; margin-bottom: 14px;">
+              <div style="display: flex; align-items: center; gap: 8px; width: 100%;">
+                <span class="speaker-from" style="min-width: auto;">SPEAKER_02</span>
+                <span style="font-size: 11px; color: var(--text-muted);">31 utt.</span>
+              </div>
+              <select class="speaker-select assigned" style="width: 100%;">
+                <option>Sarah Chen</option>
+              </select>
+            </div>
+            <div class="speaker-row" style="flex-direction: column; align-items: flex-start; gap: 4px; margin-bottom: 14px;">
+              <div style="display: flex; align-items: center; gap: 8px; width: 100%;">
+                <span class="speaker-from" style="min-width: auto;">SPEAKER_03</span>
+                <span style="font-size: 11px; color: var(--text-muted);">15 utt.</span>
+              </div>
+              <select class="speaker-select" style="width: 100%;">
+                <option>Select person...</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <div class="context-section">
+          <div class="context-label">Pipeline Status</div>
+          <div class="pipeline-dots" style="margin-top: 4px;">
+            <div class="dot done"></div>
+            <div class="dot done"></div>
+            <div class="dot done"></div>
+            <div class="dot done"></div>
+            <div class="dot waiting"></div>
+            <div class="dot pending"></div>
+          </div>
+          <div style="font-size: 11px; color: var(--text-muted); margin-top: 6px;">Paused at analyze — waiting for speaker review</div>
+        </div>
+
+        <div style="margin-top: 20px; display: flex; flex-direction: column; gap: 8px;">
+          <button class="btn btn-primary" style="width: 100%;">Apply &amp; Resume Pipeline</button>
+          <button class="btn btn-secondary" style="width: 100%;">Skip &mdash; Use Generic Labels</button>
+        </div>
+      </div>
+
+      <div class="split-right">
+        <div style="padding: 12px 16px; background: var(--surface); border-bottom: 1px solid var(--border); font-size: 13px; font-weight: 600;">
+          Full Transcript
+          <span style="font-weight: 400; color: var(--text-muted); font-size: 12px; margin-left: 8px;">Click a speaker label to highlight their utterances</span>
+        </div>
+        <div class="transcript-line">
+          <span class="ts">0:00</span>
+          <span class="speaker-label known">Tim Simpson</span>
+          <span class="transcript-text">Welcome everyone, let's get started with the Q1 review. I want to cover three main areas today.</span>
+        </div>
+        <div class="transcript-line">
+          <span class="ts">0:15</span>
+          <span class="speaker-label unknown">SPEAKER_01</span>
+          <span class="transcript-text">Thanks Tim. Before we start, I wanted to flag something about the timeline we discussed last week.</span>
+        </div>
+        <div class="transcript-line">
+          <span class="ts">0:32</span>
+          <span class="speaker-label known">Sarah Chen</span>
+          <span class="transcript-text">Yeah, I have the updated numbers. The metrics from January look much better than projected.</span>
+        </div>
+        <div class="transcript-line">
+          <span class="ts">0:48</span>
+          <span class="speaker-label unknown">SPEAKER_03</span>
+          <span class="transcript-text">Can I add some context on the engineering side? We had some capacity changes that affected the timeline.</span>
+        </div>
+        <div class="transcript-line">
+          <span class="ts">1:05</span>
+          <span class="speaker-label known">Tim Simpson</span>
+          <span class="transcript-text">Sure, go ahead. I think that context is important for the planning discussion.</span>
+        </div>
+        <div class="transcript-line">
+          <span class="ts">1:22</span>
+          <span class="speaker-label unknown">SPEAKER_03</span>
+          <span class="transcript-text">So we had two engineers move to the infrastructure team in February, which reduced our frontend velocity.</span>
+        </div>
+        <div class="transcript-line">
+          <span class="ts">1:38</span>
+          <span class="speaker-label unknown">SPEAKER_01</span>
+          <span class="transcript-text">That aligns with what I was seeing in the sprint data. The burndown charts show a clear inflection point mid-Feb.</span>
+        </div>
+        <div class="transcript-line">
+          <span class="ts">1:55</span>
+          <span class="speaker-label known">Sarah Chen</span>
+          <span class="transcript-text">Right. And despite that, the overall output is still tracking 15% above Q4. So the efficiency gains from the new tooling are real.</span>
+        </div>
+        <div class="transcript-line">
+          <span class="ts">2:12</span>
+          <span class="speaker-label known">Tim Simpson</span>
+          <span class="transcript-text">Good point. Let's put that in the report. Now, for Q2 targets...</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="pros-cons">
+    <div class="pros">
+      <strong>Strengths</strong>
+      <ul>
+        <li>Maximum transcript visibility alongside controls</li>
+        <li>Room for calendar participant context</li>
+        <li>Best for complex 6-8+ speaker meetings</li>
+        <li>Could show audio playback alongside transcript</li>
+      </ul>
+    </div>
+    <div class="cons">
+      <strong>Trade-offs</strong>
+      <ul>
+        <li>New route adds routing complexity</li>
+        <li>Separate code path from detail panel corrections</li>
+        <li>Over-engineered for typical 2-3 speaker corrections</li>
+        <li>User navigates away from meeting context</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

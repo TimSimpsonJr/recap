@@ -1,0 +1,478 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pipeline Pause Model — Options Comparison</title>
+<style>
+  :root {
+    --bg: #151921;
+    --surface: #1c2128;
+    --raised: #272d35;
+    --border: #363d47;
+    --text: #d4dae3;
+    --text-muted: #7a8493;
+    --blue: #4d9cf5;
+    --gold: #C4A84D;
+    --green: #4baa55;
+    --red: #ef534a;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #0a0c10;
+    color: var(--text);
+    padding: 32px;
+    line-height: 1.6;
+  }
+
+  h1 { font-size: 22px; font-weight: 600; margin-bottom: 4px; }
+  .subtitle { color: var(--text-muted); font-size: 13px; margin-bottom: 40px; }
+
+  .option {
+    margin-bottom: 48px;
+    max-width: 960px;
+  }
+
+  .option-header {
+    display: flex; align-items: baseline; gap: 12px;
+    margin-bottom: 4px;
+  }
+
+  .option-header h2 { font-size: 17px; font-weight: 600; color: var(--gold); }
+
+  .option-tag {
+    font-size: 10px; padding: 2px 8px; border-radius: 4px;
+    background: rgba(196,168,77,0.15); color: var(--gold);
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+
+  .option-desc {
+    color: var(--text-muted); font-size: 13px; margin-bottom: 16px;
+  }
+
+  .flow-container {
+    display: grid;
+    grid-template-columns: 1fr 40px 1fr 40px 1fr;
+    gap: 0;
+    align-items: start;
+  }
+
+  .flow-arrow {
+    display: flex; align-items: center; justify-content: center;
+    color: var(--text-muted); font-size: 20px; padding-top: 32px;
+  }
+
+  .flow-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .flow-label {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
+    color: var(--text-muted); padding: 10px 14px 6px;
+    font-weight: 600; border-bottom: 1px solid var(--border);
+    background: var(--raised);
+  }
+
+  .flow-content {
+    padding: 12px 14px;
+  }
+
+  /* Code blocks */
+  pre {
+    font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+    font-size: 11.5px;
+    line-height: 1.5;
+    color: var(--text);
+    white-space: pre;
+    overflow-x: auto;
+  }
+
+  .key { color: var(--blue); }
+  .str { color: var(--green); }
+  .bool { color: #d2a8ff; }
+  .null { color: var(--text-muted); }
+  .comment { color: #545d68; font-style: italic; }
+
+  /* Pipeline dots (shared) */
+  .dots-row {
+    display: flex; align-items: center; gap: 16px;
+    padding: 8px 0;
+  }
+
+  .dots-visual {
+    display: flex; gap: 5px;
+  }
+
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+  }
+  .dot.done { background: var(--gold); }
+  .dot.pending { background: var(--border); }
+  .dot.error { background: var(--red); }
+  .dot.waiting { background: var(--gold); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1;} 50%{opacity:0.4;} }
+
+  .dots-label {
+    font-size: 12px; color: var(--text-muted);
+  }
+
+  .badge {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 500;
+  }
+  .badge.review { background: rgba(196,168,77,0.15); color: var(--gold); }
+  .badge.failed { background: rgba(239,83,74,0.15); color: var(--red); }
+
+  /* Pros/cons */
+  .eval {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 10px; margin-top: 12px;
+  }
+
+  .eval-box {
+    padding: 10px 12px; border-radius: 6px;
+    background: var(--surface); font-size: 12px;
+  }
+
+  .eval-box.pros { border-left: 3px solid var(--green); }
+  .eval-box.cons { border-left: 3px solid var(--red); }
+
+  .eval-box strong {
+    display: block; margin-bottom: 4px; font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.5px;
+  }
+  .eval-box.pros strong { color: var(--green); }
+  .eval-box.cons strong { color: var(--red); }
+  .eval-box li { color: var(--text-muted); margin-left: 14px; margin-bottom: 2px; }
+
+  .divider {
+    height: 1px; background: var(--border); margin: 48px 0;
+    max-width: 960px;
+  }
+
+  /* Frontend logic box */
+  .logic-box {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 14px;
+    margin-top: 8px;
+  }
+
+  .highlight {
+    background: rgba(196,168,77,0.1);
+    padding: 0 3px;
+    border-radius: 2px;
+    color: var(--gold);
+  }
+</style>
+</head>
+<body>
+
+<h1>Pipeline Pause Model — How Each Option Works</h1>
+<p class="subtitle">All three produce the same UI (pulsing gold dot + "Review Speakers" badge). The difference is how the data flows.</p>
+
+<!-- Shared UI reference -->
+<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px 18px;max-width:600px;margin-bottom:40px;">
+  <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px;">All options render identically:</div>
+  <div style="display:flex;align-items:center;gap:12px;">
+    <div style="font-size:14px;font-weight:500;">Q1 Planning Review</div>
+    <span class="badge review">Review Speakers</span>
+    <div class="dots-visual">
+      <div class="dot done"></div><div class="dot done"></div><div class="dot done"></div>
+      <div class="dot done"></div><div class="dot waiting"></div><div class="dot pending"></div>
+    </div>
+  </div>
+  <div style="font-size:11px;color:var(--text-muted);margin-top:6px;">
+    Dots: merge&#10003; frames&#10003; transcribe&#10003; diarize&#10003; analyze<span style="color:var(--gold);">(pulsing)</span> export(grey)
+  </div>
+</div>
+
+<!-- ════════════════════════════
+     OPTION A: waiting field
+     ════════════════════════════ -->
+<div class="option">
+  <div class="option-header">
+    <h2>Option A: New 'waiting' Field on Stage</h2>
+    <span class="option-tag">Recommended</span>
+  </div>
+  <p class="option-desc">Add an optional <code>waiting</code> string field to PipelineStageStatus. Clean type-level separation from errors.</p>
+
+  <div class="flow-container">
+    <div class="flow-box">
+      <div class="flow-label">Python writes status.json</div>
+      <div class="flow-content">
+<pre>{
+  <span class="key">"transcribe"</span>: { <span class="key">"completed"</span>: <span class="bool">true</span>, ... },
+  <span class="key">"diarize"</span>:    { <span class="key">"completed"</span>: <span class="bool">true</span>, ... },
+  <span class="key">"analyze"</span>:    {
+    <span class="key">"completed"</span>: <span class="bool">false</span>,
+    <span class="key">"waiting"</span>:   <span class="str">"speaker_review"</span>,
+    <span class="key">"timestamp"</span>: <span class="null">null</span>,
+    <span class="key">"error"</span>:     <span class="null">null</span>
+  },
+  <span class="key">"export"</span>:     { <span class="key">"completed"</span>: <span class="bool">false</span>, ... }
+}</pre>
+      </div>
+    </div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-box">
+      <div class="flow-label">Rust reads &amp; passes to frontend</div>
+      <div class="flow-content">
+<pre><span class="comment">// types.rs — add one field</span>
+pub struct PipelineStageStatus {
+    pub completed: bool,
+    pub timestamp: Option&lt;String&gt;,
+    pub error: Option&lt;String&gt;,
+    <span class="highlight">pub waiting: Option&lt;String&gt;,</span>
+}
+
+<span class="comment">// tauri.ts — add to interface</span>
+interface PipelineStageStatus {
+  completed: boolean;
+  timestamp: string | null;
+  error: string | null;
+  <span class="highlight">waiting: string | null;</span>
+}</pre>
+      </div>
+    </div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-box">
+      <div class="flow-label">Svelte renders dot state</div>
+      <div class="flow-content">
+<pre><span class="comment">// PipelineDots.svelte logic</span>
+function dotState(stage) {
+  if (stage.completed) return 'done';
+  <span class="highlight">if (stage.waiting)   return 'waiting';</span>
+  if (stage.error)     return 'error';
+  return 'pending';
+}
+
+<span class="comment">// Badge logic</span>
+const needsReview = Object.values(status)
+  <span class="highlight">.some(s => s.waiting === 'speaker_review');</span></pre>
+      </div>
+    </div>
+  </div>
+
+  <div class="eval">
+    <div class="eval-box pros">
+      <strong>Strengths</strong>
+      <ul>
+        <li>Type-safe: waiting and error are distinct fields</li>
+        <li>Frontend check is simple: <code>stage.waiting != null</code></li>
+        <li>Extensible: other wait reasons in the future</li>
+        <li>No string-parsing conventions to maintain</li>
+      </ul>
+    </div>
+    <div class="eval-box cons">
+      <strong>Trade-offs</strong>
+      <ul>
+        <li>Schema change in Python, Rust, and TypeScript</li>
+        <li>Existing status.json files lack the field (needs default)</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- ════════════════════════════
+     OPTION B: error string
+     ════════════════════════════ -->
+<div class="option">
+  <div class="option-header">
+    <h2>Option B: Special Error String Convention</h2>
+  </div>
+  <p class="option-desc">Use the existing <code>error</code> field with a <code>WAITING:</code> prefix. No schema changes needed.</p>
+
+  <div class="flow-container">
+    <div class="flow-box">
+      <div class="flow-label">Python writes status.json</div>
+      <div class="flow-content">
+<pre>{
+  <span class="key">"transcribe"</span>: { <span class="key">"completed"</span>: <span class="bool">true</span>, ... },
+  <span class="key">"diarize"</span>:    { <span class="key">"completed"</span>: <span class="bool">true</span>, ... },
+  <span class="key">"analyze"</span>:    {
+    <span class="key">"completed"</span>: <span class="bool">false</span>,
+    <span class="key">"timestamp"</span>: <span class="null">null</span>,
+    <span class="key">"error"</span>:     <span class="str">"WAITING:speaker_review"</span>
+  },
+  <span class="key">"export"</span>:     { <span class="key">"completed"</span>: <span class="bool">false</span>, ... }
+}</pre>
+      </div>
+    </div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-box">
+      <div class="flow-label">Rust reads &amp; passes to frontend</div>
+      <div class="flow-content">
+<pre><span class="comment">// No Rust type changes needed</span>
+pub struct PipelineStageStatus {
+    pub completed: bool,
+    pub timestamp: Option&lt;String&gt;,
+    pub error: Option&lt;String&gt;,
+}
+
+<span class="comment">// No TypeScript type changes needed</span>
+interface PipelineStageStatus {
+  completed: boolean;
+  timestamp: string | null;
+  error: string | null;
+}</pre>
+      </div>
+    </div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-box">
+      <div class="flow-label">Svelte renders dot state</div>
+      <div class="flow-content">
+<pre><span class="comment">// PipelineDots.svelte logic</span>
+function dotState(stage) {
+  if (stage.completed) return 'done';
+  if (stage.error) {
+    <span class="highlight">if (stage.error.startsWith('WAITING:'))</span>
+      <span class="highlight">return 'waiting';</span>
+    return 'error';
+  }
+  return 'pending';
+}
+
+<span class="comment">// Badge logic</span>
+const needsReview = Object.values(status)
+  <span class="highlight">.some(s => s.error === 'WAITING:speaker_review');</span></pre>
+      </div>
+    </div>
+  </div>
+
+  <div class="eval">
+    <div class="eval-box pros">
+      <strong>Strengths</strong>
+      <ul>
+        <li>Zero schema changes — works with existing types</li>
+        <li>Backward compatible with old status.json files</li>
+        <li>Quick to implement</li>
+      </ul>
+    </div>
+    <div class="eval-box cons">
+      <strong>Trade-offs</strong>
+      <ul>
+        <li>Conflates waiting with errors — semantically wrong</li>
+        <li>String-prefix parsing is fragile convention</li>
+        <li>PipelineDots error display would show "WAITING:..." if logic missed</li>
+        <li>Retry button logic must also check for the prefix</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<div class="divider"></div>
+
+<!-- ════════════════════════════
+     OPTION C: top-level key
+     ════════════════════════════ -->
+<div class="option">
+  <div class="option-header">
+    <h2>Option C: Separate Top-Level 'paused_at' Key</h2>
+  </div>
+  <p class="option-desc">Add a top-level <code>paused_at</code> object to status.json. Per-stage schema stays untouched.</p>
+
+  <div class="flow-container">
+    <div class="flow-box">
+      <div class="flow-label">Python writes status.json</div>
+      <div class="flow-content">
+<pre>{
+  <span class="highlight"><span class="key">"paused_at"</span>: {
+    <span class="key">"stage"</span>:  <span class="str">"analyze"</span>,
+    <span class="key">"reason"</span>: <span class="str">"speaker_review"</span>
+  },</span>
+  <span class="key">"transcribe"</span>: { <span class="key">"completed"</span>: <span class="bool">true</span>, ... },
+  <span class="key">"diarize"</span>:    { <span class="key">"completed"</span>: <span class="bool">true</span>, ... },
+  <span class="key">"analyze"</span>:    {
+    <span class="key">"completed"</span>: <span class="bool">false</span>,
+    <span class="key">"timestamp"</span>: <span class="null">null</span>,
+    <span class="key">"error"</span>:     <span class="null">null</span>
+  },
+  <span class="key">"export"</span>:     { <span class="key">"completed"</span>: <span class="bool">false</span>, ... }
+}</pre>
+      </div>
+    </div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-box">
+      <div class="flow-label">Rust reads &amp; passes to frontend</div>
+      <div class="flow-content">
+<pre><span class="comment">// types.rs — new struct + field</span>
+<span class="highlight">pub struct PausedAt {
+    pub stage: String,
+    pub reason: String,
+}</span>
+
+pub struct PipelineStatus {
+    <span class="highlight">pub paused_at: Option&lt;PausedAt&gt;,</span>
+    pub merge: PipelineStageStatus,
+    // ...
+}
+
+<span class="comment">// tauri.ts</span>
+interface PipelineStatus {
+  <span class="highlight">paused_at: {stage: string, reason: string} | null;</span>
+  merge: PipelineStageStatus;
+  // ...
+}</pre>
+      </div>
+    </div>
+    <div class="flow-arrow">&rarr;</div>
+    <div class="flow-box">
+      <div class="flow-label">Svelte renders dot state</div>
+      <div class="flow-content">
+<pre><span class="comment">// PipelineDots.svelte logic</span>
+function dotState(stageName, stage) {
+  if (stage.completed) return 'done';
+  <span class="highlight">if (status.paused_at?.stage === stageName)</span>
+    <span class="highlight">return 'waiting';</span>
+  if (stage.error) return 'error';
+  return 'pending';
+}
+
+<span class="comment">// Badge logic</span>
+const needsReview =
+  <span class="highlight">status.paused_at?.reason === 'speaker_review';</span></pre>
+      </div>
+    </div>
+  </div>
+
+  <div class="eval">
+    <div class="eval-box pros">
+      <strong>Strengths</strong>
+      <ul>
+        <li>Per-stage schema completely unchanged</li>
+        <li>Clear separation: pause is a pipeline-level concept</li>
+        <li>Badge check is very clean</li>
+      </ul>
+    </div>
+    <div class="eval-box cons">
+      <strong>Trade-offs</strong>
+      <ul>
+        <li>Two places to check: per-stage fields + top-level paused_at</li>
+        <li>Must clear paused_at when pipeline resumes</li>
+        <li>PipelineStatus type changes in Rust + TypeScript</li>
+        <li>Stage doesn't know it's paused — indirection</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- Summary recommendation -->
+<div style="background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:16px 20px;max-width:960px;margin-top:40px;">
+  <div style="font-size:14px;font-weight:600;color:var(--gold);margin-bottom:8px;">Recommendation: Option A</div>
+  <div style="font-size:13px;color:var(--text-muted);">
+    The <code>waiting</code> field is the cleanest contract. It's one field added to one struct, propagated through three layers. The frontend logic reads naturally (<code>if stage.waiting</code>), and there's no string parsing or cross-referencing. The schema change is minimal — a single optional field that defaults to <code>null</code> for old status.json files.
+  </div>
+</div>
+
+</body>
+</html>

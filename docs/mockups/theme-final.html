@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Recap Theme — Final Candidate</title>
+<style>
+  /*
+   * "Recap Dark" — halfway between GitHub Dark Default and Dark Dimmed
+   * Darker than Dimmed (#22272e) but warmer than Default (#0d1117)
+   *
+   * Token map:
+   *   --bg:         #151921   (dark blue-charcoal — midpoint of 0d1117 and 22272e, nudged warm)
+   *   --surface:    #1c2128   (nav, cards — midpoint of 161b22 and 2d333b)
+   *   --raised:     #272d35   (dropdowns, modals — midpoint of 21262d and 373e47)
+   *   --border:     #363d47   (borders — midpoint of 30363d and 444c56)
+   *   --text:       #d4dae3   (primary text — between e6edf3 and adbac7)
+   *   --text-muted: #7a8493   (secondary — between 7d8590 and 768390)
+   *   --blue:       #4d9cf5   (accent blue — between 58a6ff and 539bf5)
+   *   --gold:       #C4A84D   (accent gold — user-chosen)
+   *   --green:      #4baa55   (success — between 3fb950 and 57ab5a)
+   *   --red:        #ef534a   (error — between f85149 and e5534b)
+   */
+
+  :root {
+    --bg: #151921;
+    --surface: #1c2128;
+    --raised: #272d35;
+    --border: #363d47;
+    --text: #d4dae3;
+    --text-muted: #7a8493;
+    --blue: #4d9cf5;
+    --gold: #C4A84D;
+    --green: #4baa55;
+    --red: #ef534a;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #0a0c10;
+    color: var(--text);
+    padding: 32px;
+    line-height: 1.5;
+  }
+
+  h1 { font-size: 22px; font-weight: 600; margin-bottom: 4px; }
+  .subtitle { color: var(--text-muted); font-size: 13px; margin-bottom: 12px; }
+
+  .swatch-strip {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 32px;
+  }
+  .swatch-col { display: flex; flex-direction: column; align-items: center; }
+  .swatch {
+    width: 40px; height: 40px; border-radius: 6px;
+    border: 1px solid rgba(255,255,255,0.08);
+  }
+  .swatch-hex { font-size: 10px; color: var(--text-muted); margin-top: 3px; font-family: monospace; }
+  .swatch-name { font-size: 9px; color: #555; }
+
+  .section-label {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 1px;
+    color: #555; margin-top: 32px; margin-bottom: 10px;
+  }
+
+  /* ── Mockup frame ── */
+  .mockup {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    overflow: hidden;
+    max-width: 920px;
+  }
+
+  .top-nav {
+    height: 48px; background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    display: flex; align-items: center;
+    padding: 0 16px; gap: 24px;
+  }
+  .nav-logo { font-weight: 700; font-size: 14px; color: var(--gold); letter-spacing: 0.5px; }
+  .nav-item { font-size: 13px; color: var(--text-muted); cursor: pointer; }
+  .nav-item.active { color: var(--text); border-bottom: 2px solid var(--gold); padding-bottom: 2px; }
+
+  .content-area { display: grid; grid-template-columns: 220px 1fr; }
+
+  .sidebar {
+    padding: 16px; border-right: 1px solid var(--border);
+  }
+  .sidebar-title {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;
+    color: var(--text-muted); margin-bottom: 10px; font-weight: 600;
+  }
+  .filter-item {
+    font-size: 13px; padding: 5px 8px; border-radius: 4px;
+    color: var(--text-muted); cursor: pointer; margin-bottom: 2px;
+  }
+  .filter-item:hover { background: rgba(122,132,147,0.08); }
+  .filter-item.active { background: rgba(196,168,77,0.1); color: var(--gold); font-weight: 500; }
+
+  .meeting-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 16px; border-bottom: 1px solid rgba(54,61,71,0.6);
+    cursor: pointer;
+  }
+  .meeting-row:hover { background: var(--surface); }
+  .meeting-row.selected { background: var(--surface); border-left: 3px solid var(--gold); }
+  .meeting-title-text { font-size: 14px; font-weight: 500; color: var(--text); }
+  .meeting-meta { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+
+  .pipeline-dots { display: flex; gap: 5px; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; }
+  .dot.done { background: var(--gold); }
+  .dot.pending { background: var(--border); }
+  .dot.error { background: var(--red); }
+  .dot.waiting { background: var(--gold); animation: pulse 2s infinite; }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.4; } }
+
+  .badge {
+    font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 500;
+  }
+  .badge.warning { background: rgba(196,168,77,0.15); color: var(--gold); }
+  .badge.error { background: rgba(239,83,74,0.15); color: var(--red); }
+
+  .tab-bar {
+    display: flex; border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  .tab {
+    padding: 9px 18px; font-size: 13px; color: var(--text-muted);
+    border-bottom: 2px solid transparent; cursor: pointer;
+  }
+  .tab.active { color: var(--text); border-color: var(--gold); }
+
+  .warning-bar {
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 16px; font-size: 13px;
+    background: rgba(196,168,77,0.06);
+    border-bottom: 1px solid rgba(196,168,77,0.18);
+    color: var(--gold);
+  }
+
+  .speaker-map {
+    padding: 14px 16px;
+    border-bottom: 1px solid rgba(54,61,71,0.6);
+  }
+  .speaker-row {
+    display: flex; align-items: center; gap: 10px;
+    margin-bottom: 7px; font-size: 13px;
+  }
+  .spk-from {
+    color: var(--gold); font-weight: 600; font-size: 12px;
+    min-width: 90px;
+  }
+  .arrow { color: var(--text-muted); }
+  .speaker-select {
+    background: var(--surface); border: 1px solid var(--border);
+    color: var(--text); padding: 4px 8px; border-radius: 4px;
+    font-size: 12px; min-width: 160px;
+  }
+  .speaker-select.assigned { border-color: var(--blue); color: var(--blue); }
+  .utt-count { font-size: 11px; color: var(--text-muted); }
+
+  .btn {
+    padding: 6px 14px; border-radius: 6px; font-size: 12px;
+    font-weight: 500; border: 1px solid; cursor: pointer;
+  }
+  .btn-primary { background: var(--gold); color: var(--bg); border-color: var(--gold); }
+  .btn-secondary { background: transparent; border-color: var(--border); color: var(--text-muted); }
+
+  .transcript-line {
+    padding: 7px 16px; display: flex; gap: 10px; font-size: 13px;
+    border-bottom: 1px solid rgba(54,61,71,0.35);
+  }
+  .transcript-line:hover { background: rgba(122,132,147,0.04); }
+  .ts { color: var(--text-muted); font-size: 12px; font-variant-numeric: tabular-nums; min-width: 36px; }
+  .spk { font-weight: 600; font-size: 12px; min-width: 90px; }
+  .spk.known { color: var(--blue); }
+  .spk.unknown { color: var(--gold); }
+
+  /* ── Detail panel (below meeting list) ── */
+  .detail-header {
+    padding: 16px; border-bottom: 1px solid var(--border);
+  }
+  .detail-title { font-size: 16px; font-weight: 600; color: var(--text); }
+  .detail-meta { font-size: 12px; color: var(--text-muted); margin-top: 2px; }
+
+  /* ── Settings-style section ── */
+  .settings-area { padding: 20px; max-width: 920px; }
+  .settings-group {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; padding: 16px 20px; margin-bottom: 16px;
+  }
+  .settings-group-title { font-size: 14px; font-weight: 600; margin-bottom: 12px; }
+  .settings-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 0; border-bottom: 1px solid rgba(54,61,71,0.4);
+  }
+  .settings-row:last-child { border-bottom: none; }
+  .settings-label { font-size: 13px; }
+  .settings-desc { font-size: 11px; color: var(--text-muted); }
+  .settings-control {
+    background: var(--raised); border: 1px solid var(--border);
+    color: var(--text); padding: 4px 10px; border-radius: 4px;
+    font-size: 12px; min-width: 80px; text-align: center;
+  }
+
+  /* Toggle switch */
+  .toggle {
+    width: 36px; height: 20px; border-radius: 10px;
+    background: var(--border); position: relative;
+    cursor: pointer; transition: background 0.2s;
+  }
+  .toggle.on { background: var(--green); }
+  .toggle::after {
+    content: ''; position: absolute; top: 2px; left: 2px;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: white; transition: transform 0.2s;
+  }
+  .toggle.on::after { transform: translateX(16px); }
+
+  /* Graph node preview */
+  .graph-preview {
+    position: relative; height: 200px;
+    background: var(--bg); overflow: hidden;
+  }
+  .graph-node {
+    position: absolute; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 10px; font-weight: 600; color: var(--bg);
+  }
+  .graph-edge {
+    position: absolute; height: 1px;
+    background: var(--border); transform-origin: left center;
+  }
+
+  .comparison-note {
+    margin-top: 24px; padding: 12px 16px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 8px; font-size: 13px; max-width: 920px;
+  }
+  .comparison-note strong { color: var(--gold); }
+</style>
+</head>
+<body>
+
+<h1>Recap Dark — Final Theme Candidate</h1>
+<p class="subtitle">Darker than GitHub Dimmed, warmer than GitHub Default. Blue + gold accents.</p>
+
+<div class="swatch-strip">
+  <div class="swatch-col"><div class="swatch" style="background:#151921;"></div><div class="swatch-hex">#151921</div><div class="swatch-name">bg</div></div>
+  <div class="swatch-col"><div class="swatch" style="background:#1c2128;"></div><div class="swatch-hex">#1c2128</div><div class="swatch-name">surface</div></div>
+  <div class="swatch-col"><div class="swatch" style="background:#272d35;"></div><div class="swatch-hex">#272d35</div><div class="swatch-name">raised</div></div>
+  <div class="swatch-col"><div class="swatch" style="background:#363d47;"></div><div class="swatch-hex">#363d47</div><div class="swatch-name">border</div></div>
+  <div class="swatch-col"><div class="swatch" style="background:#d4dae3;"></div><div class="swatch-hex">#d4dae3</div><div class="swatch-name">text</div></div>
+  <div class="swatch-col"><div class="swatch" style="background:#7a8493;"></div><div class="swatch-hex">#7a8493</div><div class="swatch-name">muted</div></div>
+  <div class="swatch-col"><div class="swatch" style="background:#4d9cf5;"></div><div class="swatch-hex">#4d9cf5</div><div class="swatch-name">blue</div></div>
+  <div class="swatch-col"><div class="swatch" style="background:#C4A84D;"></div><div class="swatch-hex">#C4A84D</div><div class="swatch-name">gold</div></div>
+  <div class="swatch-col"><div class="swatch" style="background:#4baa55;"></div><div class="swatch-hex">#4baa55</div><div class="swatch-name">green</div></div>
+  <div class="swatch-col"><div class="swatch" style="background:#ef534a;"></div><div class="swatch-hex">#ef534a</div><div class="swatch-name">red</div></div>
+</div>
+
+<!-- ════════════════════════════════════════════
+     VIEW 1: Dashboard with meeting list
+     ════════════════════════════════════════════ -->
+<div class="section-label">Dashboard</div>
+<div class="mockup">
+  <div class="top-nav">
+    <span class="nav-logo">RECAP</span>
+    <span class="nav-item active">Dashboard</span>
+    <span class="nav-item">Graph</span>
+    <span class="nav-item">Settings</span>
+  </div>
+  <div class="content-area">
+    <div class="sidebar">
+      <div class="sidebar-title">Company</div>
+      <div class="filter-item active">All Meetings</div>
+      <div class="filter-item">Acme Corp</div>
+      <div class="filter-item">Initech</div>
+      <div class="filter-item">Globex</div>
+      <div style="height:16px;"></div>
+      <div class="sidebar-title">Platform</div>
+      <div class="filter-item">Zoom</div>
+      <div class="filter-item">Teams</div>
+      <div style="height:16px;"></div>
+      <div class="sidebar-title">Participants</div>
+      <div class="filter-item">Sarah Chen</div>
+      <div class="filter-item">Mike Russo</div>
+    </div>
+    <div class="main-content">
+      <div class="meeting-row selected">
+        <div>
+          <div class="meeting-title-text">Q1 Planning Review</div>
+          <div class="meeting-meta">Mar 17 &middot; 45 min &middot; Zoom &middot; Tim, Sarah, +2</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span class="badge warning">Review Speakers</span>
+          <div class="pipeline-dots">
+            <div class="dot done"></div><div class="dot done"></div><div class="dot done"></div>
+            <div class="dot done"></div><div class="dot waiting"></div><div class="dot pending"></div>
+          </div>
+        </div>
+      </div>
+      <div class="meeting-row">
+        <div>
+          <div class="meeting-title-text">Design Sprint Kickoff</div>
+          <div class="meeting-meta">Mar 16 &middot; 32 min &middot; Teams &middot; Tim, Alex, Sarah</div>
+        </div>
+        <div class="pipeline-dots">
+          <div class="dot done"></div><div class="dot done"></div><div class="dot done"></div>
+          <div class="dot done"></div><div class="dot done"></div><div class="dot done"></div>
+        </div>
+      </div>
+      <div class="meeting-row">
+        <div>
+          <div class="meeting-title-text">Client Onboarding — Globex</div>
+          <div class="meeting-meta">Mar 15 &middot; 28 min &middot; Zoom &middot; Tim, Jane Park</div>
+        </div>
+        <div class="pipeline-dots">
+          <div class="dot done"></div><div class="dot done"></div><div class="dot done"></div>
+          <div class="dot done"></div><div class="dot done"></div><div class="dot done"></div>
+        </div>
+      </div>
+      <div class="meeting-row">
+        <div>
+          <div class="meeting-title-text">Engineering Standup</div>
+          <div class="meeting-meta">Mar 15 &middot; 15 min &middot; Teams &middot; Tim, Mike, Alex</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span class="badge error">Failed</span>
+          <div class="pipeline-dots">
+            <div class="dot done"></div><div class="dot done"></div><div class="dot done"></div>
+            <div class="dot done"></div><div class="dot error"></div><div class="dot pending"></div>
+          </div>
+        </div>
+      </div>
+      <div class="meeting-row">
+        <div>
+          <div class="meeting-title-text">Product Roadmap Sync</div>
+          <div class="meeting-meta">Mar 14 &middot; 52 min &middot; Zoom &middot; Tim, Sarah, Mike</div>
+        </div>
+        <div class="pipeline-dots">
+          <div class="dot done"></div><div class="dot done"></div><div class="dot done"></div>
+          <div class="dot done"></div><div class="dot done"></div><div class="dot done"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════
+     VIEW 2: Speaker Review (Option A inline)
+     ════════════════════════════════════════════ -->
+<div class="section-label">Meeting Detail — Speaker Review</div>
+<div class="mockup">
+  <div class="top-nav">
+    <span class="nav-logo">RECAP</span>
+    <span class="nav-item">Dashboard</span>
+    <span class="nav-item active">Meeting</span>
+    <span class="nav-item">Graph</span>
+    <span class="nav-item">Settings</span>
+  </div>
+  <div class="detail-header">
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <div>
+        <div class="detail-title">Q1 Planning Review</div>
+        <div class="detail-meta">Mar 17, 2026 &middot; 45 min &middot; Zoom &middot; 4 participants</div>
+      </div>
+      <div class="pipeline-dots" style="gap:6px;">
+        <div class="dot done" style="width:8px;height:8px;"></div>
+        <div class="dot done" style="width:8px;height:8px;"></div>
+        <div class="dot done" style="width:8px;height:8px;"></div>
+        <div class="dot done" style="width:8px;height:8px;"></div>
+        <div class="dot waiting" style="width:8px;height:8px;"></div>
+        <div class="dot pending" style="width:8px;height:8px;"></div>
+      </div>
+    </div>
+  </div>
+  <div class="tab-bar">
+    <div class="tab">Player</div>
+    <div class="tab">Notes</div>
+    <div class="tab active">Transcript</div>
+    <div class="tab">Frames</div>
+  </div>
+  <div class="warning-bar">
+    <span style="font-size:15px;">&#9888;</span>
+    <span>2 of 4 speakers could not be identified. Assign names below, or skip to use generic labels.</span>
+  </div>
+  <div class="speaker-map">
+    <div class="speaker-row">
+      <span class="spk-from">SPEAKER_00</span>
+      <span class="arrow">&rarr;</span>
+      <select class="speaker-select assigned"><option>Tim Simpson</option></select>
+      <span class="utt-count">68 utterances</span>
+    </div>
+    <div class="speaker-row">
+      <span class="spk-from">SPEAKER_01</span>
+      <span class="arrow">&rarr;</span>
+      <select class="speaker-select"><option>Select person...</option></select>
+      <span class="utt-count">42 utterances</span>
+    </div>
+    <div class="speaker-row">
+      <span class="spk-from">SPEAKER_02</span>
+      <span class="arrow">&rarr;</span>
+      <select class="speaker-select assigned"><option>Sarah Chen</option></select>
+      <span class="utt-count">31 utterances</span>
+    </div>
+    <div class="speaker-row">
+      <span class="spk-from">SPEAKER_03</span>
+      <span class="arrow">&rarr;</span>
+      <select class="speaker-select"><option>Select person...</option></select>
+      <span class="utt-count">15 utterances</span>
+    </div>
+    <div style="margin-top:12px;display:flex;gap:8px;">
+      <button class="btn btn-primary">Apply &amp; Resume Pipeline</button>
+      <button class="btn btn-secondary">Skip — Use Generic Labels</button>
+    </div>
+  </div>
+  <div class="transcript-line">
+    <span class="ts">0:00</span>
+    <span class="spk known">Tim Simpson</span>
+    <span style="color:var(--text);flex:1;">Welcome everyone, let's get started with the Q1 review. I want to cover three main areas today.</span>
+  </div>
+  <div class="transcript-line">
+    <span class="ts">0:15</span>
+    <span class="spk unknown">SPEAKER_01</span>
+    <span style="color:var(--text);flex:1;">Thanks Tim. Before we start, I wanted to flag something about the timeline we discussed last week.</span>
+  </div>
+  <div class="transcript-line">
+    <span class="ts">0:32</span>
+    <span class="spk known">Sarah Chen</span>
+    <span style="color:var(--text);flex:1;">Yeah, I have the updated numbers. The metrics from January look much better than projected.</span>
+  </div>
+  <div class="transcript-line">
+    <span class="ts">0:48</span>
+    <span class="spk unknown">SPEAKER_03</span>
+    <span style="color:var(--text);flex:1;">Can I add some context on the engineering side? We had some capacity changes that affected the timeline.</span>
+  </div>
+  <div class="transcript-line">
+    <span class="ts">1:05</span>
+    <span class="spk known">Tim Simpson</span>
+    <span style="color:var(--text);flex:1;">Sure, go ahead. I think that context is important for the planning discussion.</span>
+  </div>
+  <div class="transcript-line">
+    <span class="ts">1:22</span>
+    <span class="spk unknown">SPEAKER_03</span>
+    <span style="color:var(--text);flex:1;">So we had two engineers move to the infrastructure team in February, which reduced our frontend velocity.</span>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════
+     VIEW 3: Graph View
+     ════════════════════════════════════════════ -->
+<div class="section-label">Graph View</div>
+<div class="mockup">
+  <div class="top-nav">
+    <span class="nav-logo">RECAP</span>
+    <span class="nav-item">Dashboard</span>
+    <span class="nav-item active">Graph</span>
+    <span class="nav-item">Settings</span>
+  </div>
+  <div style="display:grid;grid-template-columns:1fr 240px;">
+    <div class="graph-preview" style="height:240px;">
+      <!-- Simulated graph nodes -->
+      <div class="graph-node" style="left:180px;top:90px;width:50px;height:50px;background:var(--gold);font-size:11px;">Tim</div>
+      <div class="graph-node" style="left:320px;top:50px;width:40px;height:40px;background:var(--blue);font-size:10px;">Sarah</div>
+      <div class="graph-node" style="left:350px;top:140px;width:36px;height:36px;background:var(--blue);font-size:9px;">Mike</div>
+      <div class="graph-node" style="left:100px;top:160px;width:34px;height:34px;background:var(--blue);font-size:9px;">Alex</div>
+      <div class="graph-node" style="left:470px;top:80px;width:44px;height:44px;background:rgba(196,168,77,0.5);font-size:9px;">Acme</div>
+      <div class="graph-node" style="left:500px;top:170px;width:38px;height:38px;background:rgba(196,168,77,0.5);font-size:9px;">Globex</div>
+      <!-- Simulated edges -->
+      <svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;">
+        <line x1="205" y1="115" x2="320" y2="70" stroke="#363d47" stroke-width="1.5"/>
+        <line x1="205" y1="115" x2="350" y2="158" stroke="#363d47" stroke-width="1.5"/>
+        <line x1="205" y1="115" x2="117" y2="177" stroke="#363d47" stroke-width="1"/>
+        <line x1="340" y1="70" x2="470" y2="100" stroke="#363d47" stroke-width="1"/>
+        <line x1="368" y1="158" x2="500" y2="189" stroke="#363d47" stroke-width="1"/>
+        <line x1="205" y1="115" x2="470" y2="100" stroke="rgba(196,168,77,0.3)" stroke-width="1"/>
+      </svg>
+    </div>
+    <div style="background:var(--surface);border-left:1px solid var(--border);padding:16px;">
+      <div class="sidebar-title">Graph Controls</div>
+      <div style="font-size:12px;color:var(--text-muted);margin-bottom:12px;">
+        <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
+          <span>Link Distance</span>
+          <span style="color:var(--text);">120</span>
+        </div>
+        <div style="height:4px;background:var(--border);border-radius:2px;margin-bottom:12px;">
+          <div style="height:100%;width:60%;background:var(--gold);border-radius:2px;"></div>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
+          <span>Charge</span>
+          <span style="color:var(--text);">-300</span>
+        </div>
+        <div style="height:4px;background:var(--border);border-radius:2px;margin-bottom:12px;">
+          <div style="height:100%;width:40%;background:var(--gold);border-radius:2px;"></div>
+        </div>
+      </div>
+      <div style="height:1px;background:var(--border);margin:12px 0;"></div>
+      <div class="sidebar-title" style="margin-top:12px;">Selected</div>
+      <div style="font-size:13px;color:var(--text);">Tim Simpson</div>
+      <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">12 meetings &middot; 5 companies</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════
+     VIEW 4: Settings
+     ════════════════════════════════════════════ -->
+<div class="section-label">Settings</div>
+<div class="mockup">
+  <div class="top-nav">
+    <span class="nav-logo">RECAP</span>
+    <span class="nav-item">Dashboard</span>
+    <span class="nav-item">Graph</span>
+    <span class="nav-item active">Settings</span>
+  </div>
+  <div class="settings-area">
+    <div class="settings-group">
+      <div class="settings-group-title">Recording</div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Auto-detect meetings</div>
+          <div class="settings-desc">Detect when Zoom or Teams is running</div>
+        </div>
+        <div class="toggle on"></div>
+      </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Detection action</div>
+          <div class="settings-desc">What to do when a meeting is detected</div>
+        </div>
+        <select class="settings-control"><option>Ask each time</option></select>
+      </div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Notification timeout</div>
+          <div class="settings-desc">Seconds before auto-action</div>
+        </div>
+        <span class="settings-control">60s</span>
+      </div>
+    </div>
+    <div class="settings-group">
+      <div class="settings-group-title">Notifications</div>
+      <div class="settings-row">
+        <div>
+          <div class="settings-label">Pipeline completion</div>
+          <div class="settings-desc">Notify when processing finishes</div>
+        </div>
+        <div class="toggle on"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="comparison-note">
+  <strong>Theme token summary:</strong> All colors are defined as CSS custom properties (--bg, --surface, --raised, --border, --text, --text-muted, --blue, --gold, --green, --red). Migration involves replacing hardcoded hex values across ~30 component files with these tokens. Additionally, <strong>Ctrl+Scroll</strong> and <strong>Ctrl++/-</strong> will control UI zoom via Tauri's webview zoom API.
+</div>
+
+</body>
+</html>
