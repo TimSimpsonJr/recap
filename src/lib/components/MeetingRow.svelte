@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { MeetingSummary } from "../tauri";
-  import PipelineStatusBadge from "./PipelineStatusBadge.svelte";
+  import PipelineDots from "./PipelineDots.svelte";
 
   interface Props {
     meeting: MeetingSummary;
@@ -100,6 +100,6 @@
         {/if}
       </div>
     </div>
-    <PipelineStatusBadge status={meeting.pipeline_status} />
+    <PipelineDots status={meeting.pipeline_status} recordingPath={meeting.recording_path} />
   </div>
 </a>
