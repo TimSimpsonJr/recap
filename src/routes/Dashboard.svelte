@@ -58,14 +58,20 @@
   onDestroy(() => {
     destroyRecorderListener();
     destroyMeetingsListener();
+    if (searchTimer) clearTimeout(searchTimer);
   });
 
+  let searchTimer: ReturnType<typeof setTimeout> | null = null;
+
   function handleSearch(query: string) {
-    if (query.trim()) {
-      search(query.trim());
-    } else {
+    if (searchTimer) clearTimeout(searchTimer);
+    if (!query.trim()) {
       clearSearch();
+      return;
     }
+    searchTimer = setTimeout(() => {
+      search(query.trim());
+    }, 300);
   }
 
   function handleLoadMore() {
