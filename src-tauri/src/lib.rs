@@ -1,6 +1,7 @@
 use tauri::Manager;
 use tauri_plugin_window_state::{AppHandleExt, StateFlags, WindowExt};
 
+mod calendar;
 mod credentials;
 mod deep_link;
 mod diagnostics;
@@ -77,6 +78,12 @@ pub fn run() {
             meetings::search_meetings,
             meetings::get_filter_options,
             meetings::get_graph_data,
+            meetings::get_known_participants,
+            meetings::update_speaker_labels,
+            calendar::fetch_calendar_events,
+            calendar::get_upcoming_meetings,
+            calendar::sync_calendar,
+            calendar::get_calendar_matches,
         ])
         .on_window_event(|window, event| {
             // Closing the window hides it instead of quitting
