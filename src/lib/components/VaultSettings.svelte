@@ -8,37 +8,45 @@
       await saveSetting("vaultPath", selected as string);
     }
   }
+
+  const inputStyle = "width:100%;background:#282826;border:1px solid #262624;border-radius:6px;padding:6px 12px;font-size:15px;color:#D8D5CE;font-family:'DM Sans',sans-serif;outline:none;";
+  const labelStyle = "display:block;font-size:14px;color:#78756E;margin-bottom:4px;font-family:'DM Sans',sans-serif;";
 </script>
 
-<div class="space-y-3">
-  <label class="block">
-    <span class="block text-sm text-gray-600 mb-1">Vault Path</span>
-    <div class="flex gap-2">
+<div style="display:flex;flex-direction:column;gap:12px;">
+  <label style="display:block;">
+    <span style={labelStyle}>Vault Path</span>
+    <div style="display:flex;gap:8px;">
       <input
         type="text"
         value={$settings.vaultPath}
         onblur={(e) => saveSetting("vaultPath", e.currentTarget.value)}
-        class="flex-1 border border-gray-300 rounded px-3 py-1.5 text-sm"
+        style="flex:1;background:#282826;border:1px solid #262624;border-radius:6px;padding:6px 12px;font-size:15px;color:#D8D5CE;font-family:'DM Sans',sans-serif;outline:none;"
         placeholder="Path to Obsidian vault"
       />
-      <button onclick={browseVaultPath} class="text-sm bg-gray-100 px-3 py-1.5 rounded border border-gray-300 hover:bg-gray-200">
+      <button
+        onclick={browseVaultPath}
+        style="font-size:14.5px;background:#282826;border:1px solid #262624;border-radius:6px;padding:6px 12px;color:#B0ADA5;cursor:pointer;font-family:'DM Sans',sans-serif;"
+        onmouseenter={(e) => { e.currentTarget.style.background = '#2B2B28'; }}
+        onmouseleave={(e) => { e.currentTarget.style.background = '#282826'; }}
+      >
         Browse
       </button>
     </div>
   </label>
 
-  <div class="grid grid-cols-3 gap-3">
-    <label class="block">
-      <span class="block text-sm text-gray-600 mb-1">Meetings Folder</span>
-      <input type="text" value={$settings.meetingsFolder} onblur={(e) => saveSetting("meetingsFolder", e.currentTarget.value)} class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm" />
+  <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;">
+    <label style="display:block;">
+      <span style={labelStyle}>Meetings Folder</span>
+      <input type="text" value={$settings.meetingsFolder} onblur={(e) => saveSetting("meetingsFolder", e.currentTarget.value)} style={inputStyle} />
     </label>
-    <label class="block">
-      <span class="block text-sm text-gray-600 mb-1">People Folder</span>
-      <input type="text" value={$settings.peopleFolder} onblur={(e) => saveSetting("peopleFolder", e.currentTarget.value)} class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm" />
+    <label style="display:block;">
+      <span style={labelStyle}>People Folder</span>
+      <input type="text" value={$settings.peopleFolder} onblur={(e) => saveSetting("peopleFolder", e.currentTarget.value)} style={inputStyle} />
     </label>
-    <label class="block">
-      <span class="block text-sm text-gray-600 mb-1">Companies Folder</span>
-      <input type="text" value={$settings.companiesFolder} onblur={(e) => saveSetting("companiesFolder", e.currentTarget.value)} class="w-full border border-gray-300 rounded px-3 py-1.5 text-sm" />
+    <label style="display:block;">
+      <span style={labelStyle}>Companies Folder</span>
+      <input type="text" value={$settings.companiesFolder} onblur={(e) => saveSetting("companiesFolder", e.currentTarget.value)} style={inputStyle} />
     </label>
   </div>
 </div>

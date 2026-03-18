@@ -10,8 +10,10 @@
 </script>
 
 <section>
-  <h2 class="text-lg font-semibold text-gray-800 mb-4">{title}</h2>
-  <div class="border border-gray-200 rounded-lg p-4 bg-white space-y-4">
+  <h2 style="font-family:'Source Serif 4',serif;font-size:18px;font-weight:600;color:#D8D5CE;margin-bottom:12px;">
+    {title}
+  </h2>
+  <div style="background:#242422;border-radius:8px;padding:16px;display:flex;flex-direction:column;gap:16px;">
     {@render children()}
   </div>
 </section>

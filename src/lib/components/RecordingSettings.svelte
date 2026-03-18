@@ -10,10 +10,23 @@
   }
 </script>
 
-<label class="block">
-  <span class="block text-sm text-gray-600 mb-1">Recordings Folder</span>
-  <div class="flex gap-2">
-    <input type="text" value={$settings.recordingsFolder} onblur={(e) => saveSetting("recordingsFolder", e.currentTarget.value)} class="flex-1 border border-gray-300 rounded px-3 py-1.5 text-sm" placeholder="Path to store recordings" />
-    <button onclick={browseRecordingsFolder} class="text-sm bg-gray-100 px-3 py-1.5 rounded border border-gray-300 hover:bg-gray-200">Browse</button>
+<label style="display:block;">
+  <span style="display:block;font-size:14px;color:#78756E;margin-bottom:4px;font-family:'DM Sans',sans-serif;">Recordings Folder</span>
+  <div style="display:flex;gap:8px;">
+    <input
+      type="text"
+      value={$settings.recordingsFolder}
+      onblur={(e) => saveSetting("recordingsFolder", e.currentTarget.value)}
+      style="flex:1;background:#282826;border:1px solid #262624;border-radius:6px;padding:6px 12px;font-size:15px;color:#D8D5CE;font-family:'DM Sans',sans-serif;outline:none;"
+      placeholder="Path to store recordings"
+    />
+    <button
+      onclick={browseRecordingsFolder}
+      style="font-size:14.5px;background:#282826;border:1px solid #262624;border-radius:6px;padding:6px 12px;color:#B0ADA5;cursor:pointer;font-family:'DM Sans',sans-serif;"
+      onmouseenter={(e) => { e.currentTarget.style.background = '#2B2B28'; }}
+      onmouseleave={(e) => { e.currentTarget.style.background = '#282826'; }}
+    >
+      Browse
+    </button>
   </div>
 </label>

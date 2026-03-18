@@ -14,13 +14,18 @@
       {
         "label": "main",
         "title": "Recap",
-        "width": 900,
-        "height": 700,
-        "visible": false
+        "width": 1400,
+        "height": 900,
+        "visible": false,
+        "backgroundColor": "#1D1D1B"
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**/*"]
+      }
     }
   },
   "bundle": {

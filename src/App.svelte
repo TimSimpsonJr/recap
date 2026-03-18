@@ -4,12 +4,15 @@
   import { listen } from "@tauri-apps/api/event";
   import Settings from "./routes/Settings.svelte";
   import Dashboard from "./routes/Dashboard.svelte";
+  import GraphView from "./routes/GraphView.svelte";
   import { loadCredentials, credentials, saveTokens } from "./lib/stores/credentials";
   import type { ProviderName } from "./lib/stores/credentials";
   import { loadSettings, settings } from "./lib/stores/settings";
   import { exchangeOAuthCode } from "./lib/tauri";
 
   let currentRoute = $state("dashboard");
+  let meetingId = $state<string | null>(null);
+  let filterParticipant = $state<string | null>(null);
   let initialized = $state(false);
 
   onMount(async () => {
@@ -27,7 +30,21 @@
 
     const updateRoute = () => {
       const hash = window.location.hash.slice(1) || "dashboard";
-      currentRoute = hash;
+      const meetingMatch = hash.match(/^meeting\/(.+)$/);
+      const filterMatch = hash.match(/^filter\/participant\/(.+)$/);
+      if (meetingMatch) {
+        currentRoute = "dashboard";
+        meetingId = meetingMatch[1];
+        filterParticipant = null;
+      } else if (filterMatch) {
+        currentRoute = "dashboard";
+        meetingId = null;
+        filterParticipant = decodeURIComponent(filterMatch[1]);
+      } else {
+        currentRoute = hash;
+        meetingId = null;
+        filterParticipant = null;
+      }
     };
     window.addEventListener("hashchange", updateRoute);
     updateRoute();
@@ -73,14 +90,79 @@
   });
 </script>
 
-<main class="min-h-screen bg-gray-50">
+<div class="flex flex-col h-screen" style="background: #1D1D1B;">
   {#if !initialized}
-    <div class="flex items-center justify-center h-screen">
-      <p class="text-gray-400">Loading...</p>
+    <div
+      class="flex items-center justify-center h-screen"
+      style="font-family: 'DM Sans', sans-serif; color: #585650;"
+    >
+      Loading...
     </div>
-  {:else if currentRoute === "settings"}
-    <Settings />
   {:else}
-    <Dashboard />
+    <!-- Nav bar -->
+    <nav
+      class="flex items-center shrink-0"
+      style="
+        height: 48px;
+        padding: 0 28px;
+        background: #1A1A18;
+        border-bottom: 1px solid #262624;
+        font-family: 'DM Sans', sans-serif;
+        gap: 24px;
+      "
+    >
+      <span
+        style="
+          font-family: 'Source Serif 4', serif;
+          font-size: 18px;
+          font-weight: 700;
+          color: #D8D5CE;
+          margin-right: 12px;
+        "
+      >
+        Recap
+      </span>
+      <a
+        href="#dashboard"
+        style="
+          font-size: 14.5px;
+          text-decoration: none;
+          padding: 10px 0;
+          border-bottom: 2px solid {currentRoute === 'dashboard' ? '#A8A078' : 'transparent'};
+          color: {currentRoute === 'dashboard' ? '#A8A078' : '#585650'};
+        "
+      >Meetings</a>
+      <a
+        href="#graph"
+        style="
+          font-size: 14.5px;
+          text-decoration: none;
+          padding: 10px 0;
+          border-bottom: 2px solid {currentRoute === 'graph' ? '#A8A078' : 'transparent'};
+          color: {currentRoute === 'graph' ? '#A8A078' : '#585650'};
+        "
+      >Graph</a>
+      <a
+        href="#settings"
+        style="
+          font-size: 14.5px;
+          text-decoration: none;
+          padding: 10px 0;
+          border-bottom: 2px solid {currentRoute === 'settings' ? '#A8A078' : 'transparent'};
+          color: {currentRoute === 'settings' ? '#A8A078' : '#585650'};
+        "
+      >Settings</a>
+    </nav>
+
+    <!-- Route content -->
+    <div class="flex-1 overflow-hidden">
+      {#if currentRoute === "settings"}
+        <Settings />
+      {:else if currentRoute === "graph"}
+        <GraphView />
+      {:else}
+        <Dashboard initialMeetingId={meetingId} initialFilterParticipant={filterParticipant} />
+      {/if}
+    </div>
   {/if}
-</main>
+</div>

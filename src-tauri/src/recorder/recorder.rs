@@ -476,6 +476,9 @@ pub async fn stop_recording(
                                 .title("Meeting Note Ready")
                                 .body("Your meeting has been processed. Check your vault.")
                                 .show();
+                            let _ = app_clone.emit("pipeline-completed", json!({
+                                "success": true,
+                            }));
                         }
                         Ok(result) => {
                             let _ = app_clone
@@ -485,6 +488,9 @@ pub async fn stop_recording(
                                 .body(&format!("Processing error. Check logs for details."))
                                 .show();
                             log::error!("Pipeline failed: {}", result.stderr);
+                            let _ = app_clone.emit("pipeline-completed", json!({
+                                "success": false,
+                            }));
                         }
                         Err(e) => {
                             let _ = app_clone
@@ -494,6 +500,9 @@ pub async fn stop_recording(
                                 .body("Failed to run processing pipeline.")
                                 .show();
                             log::error!("Pipeline error: {}", e);
+                            let _ = app_clone.emit("pipeline-completed", json!({
+                                "success": false,
+                            }));
                         }
                     }
                 });

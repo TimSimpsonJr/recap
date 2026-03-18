@@ -1,1 +1,41 @@
 @import "tailwindcss";
+
+/* ── Global dark scrollbar ── */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #464440 transparent;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #464440;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #585650;
+}
+
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ── Dark number input spinners ── */
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  appearance: none;
+  margin: 0;
+}
+
+input[type="number"] {
+  -moz-appearance: textfield;
+}

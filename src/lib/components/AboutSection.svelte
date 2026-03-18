@@ -18,26 +18,26 @@
   });
 </script>
 
-<div class="space-y-2 text-sm">
-  <div class="flex justify-between">
-    <span class="text-gray-600">Version</span>
-    <span class="text-gray-900">{version}</span>
+<div style="display:flex;flex-direction:column;gap:8px;font-size:15px;font-family:'DM Sans',sans-serif;">
+  <div style="display:flex;justify-content:space-between;">
+    <span style="color:#78756E;">Version</span>
+    <span style="color:#D8D5CE;">{version}</span>
   </div>
-  <div class="flex justify-between">
-    <span class="text-gray-600">Pipeline Sidecar</span>
-    <span class={sidecarFound ? "text-green-600" : "text-red-600"}>
+  <div style="display:flex;justify-content:space-between;">
+    <span style="color:#78756E;">Pipeline Sidecar</span>
+    <span style="color:{sidecarFound ? '#4ade80' : '#D06850'};">
       {sidecarFound === null ? "Checking..." : sidecarFound ? "Found" : "Not found"}
     </span>
   </div>
-  <div class="flex justify-between">
-    <span class="text-gray-600">ffmpeg</span>
-    <span class={ffmpegFound ? "text-green-600" : "text-red-600"}>
+  <div style="display:flex;justify-content:space-between;">
+    <span style="color:#78756E;">ffmpeg</span>
+    <span style="color:{ffmpegFound ? '#4ade80' : '#D06850'};">
       {ffmpegFound === null ? "Checking..." : ffmpegFound ? "Found" : "Not found"}
     </span>
   </div>
-  <div class="flex justify-between">
-    <span class="text-gray-600">NVENC (H.265)</span>
-    <span class={nvencStatus === "Available" ? "text-green-600" : "text-yellow-600"}>
+  <div style="display:flex;justify-content:space-between;">
+    <span style="color:#78756E;">NVENC (H.265)</span>
+    <span style="color:{nvencStatus === 'Available' ? '#4ade80' : '#f59e0b'};">
       {ffmpegFound === false ? "Requires ffmpeg" : nvencStatus ?? "Checking..."}
     </span>
   </div>
