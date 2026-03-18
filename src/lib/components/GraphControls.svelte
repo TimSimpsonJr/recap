@@ -235,20 +235,20 @@
     height: 32px;
     border-radius: 8px;
     border: none;
-    background: #242422;
-    color: #78756E;
+    background: var(--surface);
+    color: var(--text-muted);
     cursor: pointer;
     transition: background 120ms ease, color 120ms ease;
   }
 
   .toggle-btn:hover {
-    background: #2B2B28;
-    color: #D8D5CE;
+    background: var(--raised);
+    color: var(--text);
   }
 
   .graph-controls-panel {
     width: 320px;
-    background: #242422;
+    background: var(--surface);
     border-radius: 10px;
     padding: 8px 0;
     box-shadow: 0 4px 20px rgba(0,0,0,0.4);
@@ -258,7 +258,7 @@
   }
 
   .section {
-    border-bottom: 1px solid #2B2B28;
+    border-bottom: 1px solid var(--raised);
   }
 
   .section:last-child {
@@ -277,13 +277,13 @@
     font-family: 'DM Sans', sans-serif;
     font-size: 12px;
     font-weight: 600;
-    color: #78756E;
+    color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.6px;
   }
 
   .section-header:hover {
-    color: #B0ADA5;
+    color: var(--text-secondary);
   }
 
   .section-arrow {
@@ -300,15 +300,15 @@
     padding: 6px 10px;
     border-radius: 6px;
     border: none;
-    background: #1D1D1B;
-    color: #D8D5CE;
+    background: var(--bg);
+    color: var(--text);
     font-family: 'DM Sans', sans-serif;
     font-size: 13px;
     outline: none;
   }
 
   .filter-input::placeholder {
-    color: #585650;
+    color: var(--text-faint);
   }
 
   .filter-input:focus {
@@ -332,7 +332,7 @@
 
   .group-label {
     font-size: 13px;
-    color: #B0ADA5;
+    color: var(--text-secondary);
   }
 
   .toggle-row {
@@ -342,7 +342,7 @@
     padding: 3px 0;
     cursor: pointer;
     font-size: 13px;
-    color: #B0ADA5;
+    color: var(--text-secondary);
   }
 
   .ctrl-checkbox {
@@ -350,7 +350,7 @@
     -webkit-appearance: none;
     width: 14px;
     height: 14px;
-    border: 1.5px solid #464440;
+    border: 1.5px solid var(--border);
     border-radius: 3px;
     background: transparent;
     cursor: pointer;
@@ -359,8 +359,8 @@
   }
 
   .ctrl-checkbox:checked {
-    background: #A8A078;
-    border-color: #A8A078;
+    background: var(--gold);
+    border-color: var(--gold);
   }
 
   .ctrl-checkbox:checked::after {
@@ -370,7 +370,7 @@
     top: 0px;
     width: 5px;
     height: 8px;
-    border: solid #1A1A18;
+    border: solid var(--bg);
     border-width: 0 2px 2px 0;
     transform: rotate(45deg);
   }
@@ -384,7 +384,7 @@
 
   .slider-label {
     font-size: 12.5px;
-    color: #78756E;
+    color: var(--text-muted);
     white-space: nowrap;
     min-width: 80px;
   }
@@ -395,7 +395,7 @@
     appearance: none;
     height: 4px;
     border-radius: 2px;
-    background: #1D1D1B;
+    background: var(--bg);
     outline: none;
     cursor: pointer;
   }
@@ -406,13 +406,13 @@
     width: 12px;
     height: 12px;
     border-radius: 50%;
-    background: #A8A078;
+    background: var(--gold);
     cursor: pointer;
   }
 
   .slider-value {
     font-size: 11px;
-    color: #585650;
+    color: var(--text-faint);
     min-width: 28px;
     text-align: right;
     font-variant-numeric: tabular-nums;
@@ -428,7 +428,7 @@
   }
 
   .graph-controls-panel::-webkit-scrollbar-thumb {
-    background: #464440;
+    background: var(--border);
     border-radius: 2px;
   }
 </style>
