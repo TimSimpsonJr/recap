@@ -83,7 +83,6 @@ pub fn run() {
             calendar::fetch_calendar_events,
             calendar::get_upcoming_meetings,
             calendar::sync_calendar,
-            calendar::get_calendar_matches,
         ])
         .on_window_event(|window, event| {
             // Closing the window hides it instead of quitting
