@@ -45,7 +45,7 @@
       border-radius: 8px;
       background: {failedStage ? 'rgba(200,80,60,0.10)' : 'rgba(180,165,130,0.10)'};
       font-family: 'DM Sans', sans-serif;
-      font-size: 13px;
+      font-size: 14.5px;
     "
   >
     <span style="color: {failedStage ? '#D06850' : '#B4A882'};">
@@ -68,7 +68,7 @@
             background: rgba(200,80,60,0.15);
             color: #D06850;
             font-family: 'DM Sans', sans-serif;
-            font-size: 12px;
+            font-size: 13.5px;
             font-weight: 600;
             cursor: pointer;
           "
@@ -87,7 +87,7 @@
             background: rgba(180,165,130,0.15);
             color: #B4A882;
             font-family: 'DM Sans', sans-serif;
-            font-size: 12px;
+            font-size: 13.5px;
             font-weight: 600;
             cursor: pointer;
           "
@@ -106,7 +106,7 @@
             background: rgba(180,165,130,0.15);
             color: #B4A882;
             font-family: 'DM Sans', sans-serif;
-            font-size: 12px;
+            font-size: 13.5px;
             font-weight: 600;
             cursor: pointer;
           "

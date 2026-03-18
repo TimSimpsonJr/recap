@@ -31,7 +31,7 @@
     href="#dashboard"
     style="
       font-family: 'DM Sans', sans-serif;
-      font-size: 12.5px;
+      font-size: 14px;
       color: #A8A078;
       text-decoration: none;
       display: inline-block;
@@ -46,7 +46,7 @@
   <h1
     style="
       font-family: 'Source Serif 4', serif;
-      font-size: 21px;
+      font-size: 24px;
       font-weight: 700;
       color: #D8D5CE;
       margin: 0 0 8px 0;
@@ -59,7 +59,7 @@
     class="flex items-center flex-wrap"
     style="
       font-family: 'DM Sans', sans-serif;
-      font-size: 12px;
+      font-size: 13.5px;
       color: #78756E;
       gap: 0;
     "

@@ -60,7 +60,7 @@
       >
         <span
           style="
-            font-size: 12px;
+            font-size: 13.5px;
             font-weight: 600;
             color: #D8D5CE;
             letter-spacing: 0.5px;
@@ -75,7 +75,7 @@
               padding: 0;
               cursor: pointer;
               font-family: 'DM Sans', sans-serif;
-              font-size: 11px;
+              font-size: 14px;
               color: #A8A078;
             "
           >Clear all</button>
@@ -97,7 +97,7 @@
               padding: 4px 0;
               cursor: pointer;
               font-family: 'DM Sans', sans-serif;
-              font-size: 10.5px;
+              font-size: 12px;
               font-weight: 600;
               color: #585650;
               text-transform: uppercase;
@@ -132,7 +132,7 @@
                     gap: 8px;
                     padding: 3px 0;
                     cursor: pointer;
-                    font-size: 12.5px;
+                    font-size: 14px;
                     color: #B0ADA5;
                   "
                 >
@@ -165,7 +165,7 @@
               padding: 4px 0;
               cursor: pointer;
               font-family: 'DM Sans', sans-serif;
-              font-size: 10.5px;
+              font-size: 12px;
               font-weight: 600;
               color: #585650;
               text-transform: uppercase;
@@ -200,7 +200,7 @@
                     gap: 8px;
                     padding: 3px 0;
                     cursor: pointer;
-                    font-size: 12.5px;
+                    font-size: 14px;
                     color: #B0ADA5;
                   "
                 >
@@ -233,7 +233,7 @@
               padding: 4px 0;
               cursor: pointer;
               font-family: 'DM Sans', sans-serif;
-              font-size: 10.5px;
+              font-size: 12px;
               font-weight: 600;
               color: #585650;
               text-transform: uppercase;
@@ -268,7 +268,7 @@
                     gap: 8px;
                     padding: 3px 0;
                     cursor: pointer;
-                    font-size: 12.5px;
+                    font-size: 14px;
                     color: #B0ADA5;
                   "
                 >
@@ -290,7 +290,7 @@
       {#if options.companies.length === 0 && options.platforms.length === 0 && options.participants.length === 0}
         <div
           style="
-            font-size: 12px;
+            font-size: 13.5px;
             color: #585650;
             padding: 8px 0;
           "

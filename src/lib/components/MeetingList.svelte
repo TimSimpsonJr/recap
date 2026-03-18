@@ -60,7 +60,7 @@
     style="
       font-family: 'DM Sans', sans-serif;
       color: #585650;
-      font-size: 13.5px;
+      font-size: 15px;
     "
   >
     <p>No meetings found</p>
@@ -72,7 +72,7 @@
         style="
           padding: 14px 0 6px;
           font-family: 'DM Sans', sans-serif;
-          font-size: 10.5px;
+          font-size: 12px;
           font-weight: 600;
           color: #585650;
           text-transform: uppercase;
@@ -99,7 +99,7 @@
           background: #242422;
           color: #A8A078;
           font-family: 'DM Sans', sans-serif;
-          font-size: 12.5px;
+          font-size: 14px;
           font-weight: 600;
           cursor: pointer;
           transition: background 120ms ease;

@@ -50,7 +50,7 @@
       <h3
         style="
           font-family: 'Source Serif 4', serif;
-          font-size: 14.5px;
+          font-size: 16px;
           font-weight: 600;
           color: #D8D5CE;
           margin: 0 0 4px 0;
@@ -65,7 +65,7 @@
         class="flex items-center gap-0 flex-wrap"
         style="
           font-family: 'DM Sans', sans-serif;
-          font-size: 12px;
+          font-size: 13.5px;
           color: #78756E;
         "
       >

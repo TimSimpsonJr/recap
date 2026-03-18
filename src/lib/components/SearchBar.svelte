@@ -32,7 +32,7 @@
       background: #282826;
       color: #B0ADA5;
       font-family: 'DM Sans', sans-serif;
-      font-size: 13.5px;
+      font-size: 15px;
       font-weight: 400;
     "
     onfocus={(e) => {

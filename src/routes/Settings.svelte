@@ -39,7 +39,7 @@
 <div style="max-width:700px;margin:0 auto;padding:24px 28px 48px;">
   <div style="display:flex;flex-direction:column;gap:28px;">
     <section>
-      <h2 style="font-family:'Source Serif 4',serif;font-size:16px;font-weight:600;color:#D8D5CE;margin-bottom:12px;">
+      <h2 style="font-family:'Source Serif 4',serif;font-size:18px;font-weight:600;color:#D8D5CE;margin-bottom:12px;">
         Platform Connections
       </h2>
       <div style="display:flex;flex-direction:column;gap:4px;">

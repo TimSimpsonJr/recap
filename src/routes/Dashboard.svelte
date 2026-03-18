@@ -86,7 +86,7 @@
             cursor: pointer;
             flex-shrink: 0;
             position: relative;
-            font-size: 16px;
+            font-size: 18px;
           "
         >
           <!-- Filter icon (funnel) using SVG -->
@@ -136,7 +136,7 @@
             background: rgba(200,80,60,0.10);
             color: #D06850;
             font-family: 'DM Sans', sans-serif;
-            font-size: 13px;
+            font-size: 14.5px;
           "
         >
           {$meetings.error}

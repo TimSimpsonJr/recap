@@ -39,7 +39,7 @@
     padding: 2px 8px;
     border-radius: 4px;
     font-family: 'DM Sans', sans-serif;
-    font-size: 10.5px;
+    font-size: 12px;
     font-weight: 600;
     line-height: 1.4;
     background: {variant === 'done' ? 'rgba(160,150,120,0.12)' : variant === 'active' ? 'rgba(180,165,130,0.10)' : 'rgba(200,80,60,0.10)'};

@@ -37,7 +37,7 @@
             style="
               padding: 8px 10px;
               font-family: 'DM Sans', sans-serif;
-              font-size: 12px;
+              font-size: 13.5px;
               color: #78756E;
               line-height: 1.4;
             "
@@ -53,7 +53,7 @@
     class="flex items-center justify-center py-16"
     style="
       font-family: 'DM Sans', sans-serif;
-      font-size: 13.5px;
+      font-size: 15px;
       color: #585650;
     "
   >

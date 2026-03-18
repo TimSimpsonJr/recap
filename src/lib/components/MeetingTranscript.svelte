@@ -36,7 +36,7 @@
     class="flex flex-col gap-1 py-2"
     style="
       font-family: 'DM Sans', sans-serif;
-      font-size: 13.5px;
+      font-size: 15px;
     "
   >
     {#each utterances as u}
@@ -52,7 +52,7 @@
             padding: 0;
             cursor: pointer;
             font-family: 'DM Sans', sans-serif;
-            font-size: 11px;
+            font-size: 12.5px;
             color: #585650;
             min-width: 42px;
             text-align: right;
@@ -64,7 +64,7 @@
         <div class="flex-1 min-w-0">
           <span
             style="
-              font-size: 11px;
+              font-size: 12.5px;
               font-weight: 600;
               color: {color};
               margin-right: 6px;
@@ -84,7 +84,7 @@
     class="flex items-center justify-center py-16"
     style="
       font-family: 'DM Sans', sans-serif;
-      font-size: 13.5px;
+      font-size: 15px;
       color: #585650;
     "
   >

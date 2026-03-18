@@ -18,7 +18,7 @@
   });
 </script>
 
-<div style="display:flex;flex-direction:column;gap:8px;font-size:13.5px;font-family:'DM Sans',sans-serif;">
+<div style="display:flex;flex-direction:column;gap:8px;font-size:15px;font-family:'DM Sans',sans-serif;">
   <div style="display:flex;justify-content:space-between;">
     <span style="color:#78756E;">Version</span>
     <span style="color:#D8D5CE;">{version}</span>

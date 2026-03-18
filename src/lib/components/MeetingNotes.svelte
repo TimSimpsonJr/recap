@@ -13,7 +13,7 @@
 {#if html}
   <div class="meeting-notes" style="
     font-family: 'DM Sans', sans-serif;
-    font-size: 13.5px;
+    font-size: 15px;
     color: #B0ADA5;
     line-height: 1.65;
     padding: 16px 0;
@@ -25,7 +25,7 @@
     class="flex items-center justify-center py-16"
     style="
       font-family: 'DM Sans', sans-serif;
-      font-size: 13.5px;
+      font-size: 15px;
       color: #585650;
     "
   >
@@ -43,9 +43,9 @@
     margin: 1.2em 0 0.4em;
   }
 
-  .meeting-notes :global(h1) { font-size: 18px; font-weight: 700; }
-  .meeting-notes :global(h2) { font-size: 16px; font-weight: 600; }
-  .meeting-notes :global(h3) { font-size: 14px; font-weight: 600; }
+  .meeting-notes :global(h1) { font-size: 20px; font-weight: 700; }
+  .meeting-notes :global(h2) { font-size: 18px; font-weight: 600; }
+  .meeting-notes :global(h3) { font-size: 15.5px; font-weight: 600; }
 
   .meeting-notes :global(p) {
     margin: 0.5em 0;
@@ -65,7 +65,7 @@
     background: #282826;
     padding: 2px 6px;
     border-radius: 4px;
-    font-size: 12px;
+    font-size: 13.5px;
   }
 
   .meeting-notes :global(pre) {
@@ -73,7 +73,7 @@
     padding: 12px;
     border-radius: 8px;
     overflow-x: auto;
-    font-size: 12px;
+    font-size: 13.5px;
   }
 
   .meeting-notes :global(blockquote) {

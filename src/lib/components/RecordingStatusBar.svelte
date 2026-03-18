@@ -16,7 +16,7 @@
       background: #1A1A18;
       border-bottom: 1px solid #262624;
       font-family: 'DM Sans', sans-serif;
-      font-size: 13.5px;
+      font-size: 15px;
     "
   >
     <div class="flex items-center gap-3">
@@ -48,7 +48,7 @@
             background: #A8A078;
             color: #1D1D1B;
             font-family: 'DM Sans', sans-serif;
-            font-size: 12px;
+            font-size: 13.5px;
             font-weight: 600;
             cursor: pointer;
           "
@@ -65,7 +65,7 @@
             background: #A8A078;
             color: #1D1D1B;
             font-family: 'DM Sans', sans-serif;
-            font-size: 12px;
+            font-size: 13.5px;
             font-weight: 600;
             cursor: pointer;
           "

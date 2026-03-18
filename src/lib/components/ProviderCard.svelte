@@ -64,8 +64,8 @@
     await disconnect(provider);
   }
 
-  const inputStyle = "width:100%;background:#282826;border:1px solid #262624;border-radius:6px;padding:6px 12px;font-size:13.5px;color:#D8D5CE;font-family:'DM Sans',sans-serif;outline:none;";
-  const labelStyle = "display:block;font-size:12.5px;color:#78756E;margin-bottom:4px;font-family:'DM Sans',sans-serif;";
+  const inputStyle = "width:100%;background:#282826;border:1px solid #262624;border-radius:6px;padding:6px 12px;font-size:15px;color:#D8D5CE;font-family:'DM Sans',sans-serif;outline:none;";
+  const labelStyle = "display:block;font-size:14px;color:#78756E;margin-bottom:4px;font-family:'DM Sans',sans-serif;";
 </script>
 
 <div style="display:flex;flex-direction:column;gap:12px;">
@@ -110,7 +110,7 @@
   {/if}
 
   <div style="display:flex;align-items:center;justify-content:space-between;padding-top:8px;">
-    <div style="font-size:13px;">
+    <div style="font-size:14.5px;">
       {#if providerState.status === "connected"}
         <span style="color:#4ade80;">Connected{providerState.displayName ? ` as ${providerState.displayName}` : ""}</span>
       {:else if providerState.status === "reconnect_required"}
@@ -124,7 +124,7 @@
       {#if providerState.status === "connected"}
         <button
           onclick={handleDisconnect}
-          style="font-size:13px;color:#D06850;background:none;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;"
+          style="font-size:14.5px;color:#D06850;background:none;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;"
           onmouseenter={(e) => { e.currentTarget.style.textDecoration = 'underline'; }}
           onmouseleave={(e) => { e.currentTarget.style.textDecoration = 'none'; }}
         >
@@ -134,7 +134,7 @@
         <button
           onclick={connect}
           disabled={!hasCredentials || connecting}
-          style="font-size:13px;background:#A8A078;color:#1D1D1B;padding:6px 16px;border-radius:6px;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:500;opacity:{!hasCredentials || connecting ? '0.5' : '1'};"
+          style="font-size:14.5px;background:#A8A078;color:#1D1D1B;padding:6px 16px;border-radius:6px;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:500;opacity:{!hasCredentials || connecting ? '0.5' : '1'};"
         >
           {connecting ? "Connecting..." : "Connect"}
         </button>
@@ -143,7 +143,7 @@
   </div>
 
   {#if provider === "microsoft" && providerState.status === "connected"}
-    <p style="font-size:12px;color:#f59e0b;margin-top:4px;">
+    <p style="font-size:13.5px;color:#f59e0b;margin-top:4px;">
       Note: Personal accounts have limited recording API access. Recording will require manual start.
     </p>
   {/if}

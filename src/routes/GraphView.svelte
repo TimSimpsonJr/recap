@@ -495,7 +495,7 @@
 <style>
   .graph-container {
     width: 100%;
-    height: calc(100vh - 44px);
+    height: calc(100vh - 48px);
     background: #1D1D1B;
     overflow: hidden;
     position: relative;
@@ -507,7 +507,7 @@
     justify-content: center;
     height: 100%;
     font-family: 'DM Sans', sans-serif;
-    font-size: 13.5px;
+    font-size: 15px;
     color: #585650;
   }
 
@@ -558,7 +558,7 @@
     display: flex;
     gap: 16px;
     font-family: 'DM Sans', sans-serif;
-    font-size: 11px;
+    font-size: 12.5px;
     color: #585650;
   }
 

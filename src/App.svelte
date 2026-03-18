@@ -96,7 +96,7 @@
     <nav
       class="flex items-center shrink-0"
       style="
-        height: 44px;
+        height: 48px;
         padding: 0 28px;
         background: #1A1A18;
         border-bottom: 1px solid #262624;
@@ -107,7 +107,7 @@
       <span
         style="
           font-family: 'Source Serif 4', serif;
-          font-size: 16px;
+          font-size: 18px;
           font-weight: 700;
           color: #D8D5CE;
           margin-right: 12px;
@@ -118,7 +118,7 @@
       <a
         href="#dashboard"
         style="
-          font-size: 13px;
+          font-size: 14.5px;
           text-decoration: none;
           padding: 10px 0;
           border-bottom: 2px solid {currentRoute === 'dashboard' || currentRoute === 'meeting' ? '#A8A078' : 'transparent'};
@@ -128,7 +128,7 @@
       <a
         href="#graph"
         style="
-          font-size: 13px;
+          font-size: 14.5px;
           text-decoration: none;
           padding: 10px 0;
           border-bottom: 2px solid {currentRoute === 'graph' ? '#A8A078' : 'transparent'};
@@ -138,7 +138,7 @@
       <a
         href="#settings"
         style="
-          font-size: 13px;
+          font-size: 14.5px;
           text-decoration: none;
           padding: 10px 0;
           border-bottom: 2px solid {currentRoute === 'settings' ? '#A8A078' : 'transparent'};
