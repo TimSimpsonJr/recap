@@ -34,7 +34,7 @@
     const st = status[stage];
     if (st.error) return "#ef534a";
     if (st.completed) return "#C4A84D";
-    return "#464440";
+    return "#363d47";
   }
 
   function stageIcon(stage: Stage): string {
@@ -48,7 +48,7 @@
     const st = status[stage];
     if (st.error) return "#ef534a";
     if (st.completed) return "#C4A84D";
-    return "#585650";
+    return "#545d6a";
   }
 
   function formatTimestamp(ts: string | null): string | null {
