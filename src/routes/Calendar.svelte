@@ -10,6 +10,7 @@
     type CalendarEvent,
     type CalendarCache,
   } from "../lib/tauri";
+  import BriefingPanel from "../lib/components/BriefingPanel.svelte";
 
   let upcoming: CalendarEvent[] = $state([]);
   let past: CalendarEvent[] = $state([]);
@@ -20,6 +21,11 @@
   let error: string | null = $state(null);
 
   let zohoConnected = $state(false);
+  let expandedEventId: string | null = $state(null);
+
+  function toggleBriefing(eventId: string) {
+    expandedEventId = expandedEventId === eventId ? null : eventId;
+  }
 
   // Relative time formatting
   function relativeTime(iso: string): string {
@@ -251,44 +257,78 @@
         <div style="display: flex; flex-direction: column; gap: 6px;">
           {#each upcoming as event}
             {@const matchedId = matches[event.id]}
+            {@const isExpanded = expandedEventId === event.id}
             <div
               style="
                 background: var(--surface);
-                border: 1px solid var(--border);
+                border: 1px solid {isExpanded ? 'var(--gold)' : 'var(--border)'};
                 border-radius: 8px;
-                padding: 14px 18px;
-                display: flex;
-                align-items: center;
-                gap: 14px;
+                overflow: hidden;
               "
             >
-              <div style="flex: 1; min-width: 0;">
-                <div style="display: flex; align-items: center; gap: 8px;">
-                  <span style="font-size: 14.5px; font-weight: 500; color: var(--text);">
-                    {event.title}
-                  </span>
-                  {#if matchedId}
-                    <a
-                      href="#meeting/{matchedId}"
-                      title="View recording"
-                      style="
-                        color: var(--gold);
-                        text-decoration: none;
-                        font-size: 14px;
-                        flex-shrink: 0;
-                      "
-                    >&#x1F517;</a>
+              <button
+                onclick={() => toggleBriefing(event.id)}
+                style="
+                  width: 100%;
+                  background: none;
+                  border: none;
+                  padding: 14px 18px;
+                  display: flex;
+                  align-items: center;
+                  gap: 14px;
+                  cursor: pointer;
+                  text-align: left;
+                  font-family: 'DM Sans', sans-serif;
+                "
+              >
+                <div style="flex: 1; min-width: 0;">
+                  <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 14.5px; font-weight: 500; color: var(--text);">
+                      {event.title}
+                    </span>
+                    {#if matchedId}
+                      <a
+                        href="#meeting/{matchedId}"
+                        title="View recording"
+                        onclick={(e) => e.stopPropagation()}
+                        style="
+                          color: var(--gold);
+                          text-decoration: none;
+                          font-size: 14px;
+                          flex-shrink: 0;
+                        "
+                      >&#x1F517;</a>
+                    {/if}
+                  </div>
+                  <div style="font-size: 13px; color: var(--text-muted); margin-top: 3px;">
+                    {formatDate(event.start)} &middot; {formatTimeRange(event.start, event.end)}
+                  </div>
+                  {#if event.participants.length > 0}
+                    <div style="font-size: 12.5px; color: var(--text-faint); margin-top: 3px;">
+                      {event.participants.map(p => p.name).join(", ")}
+                    </div>
                   {/if}
                 </div>
-                <div style="font-size: 13px; color: var(--text-muted); margin-top: 3px;">
-                  {formatDate(event.start)} &middot; {formatTimeRange(event.start, event.end)}
-                </div>
-                {#if event.participants.length > 0}
-                  <div style="font-size: 12.5px; color: var(--text-faint); margin-top: 3px;">
-                    {event.participants.map(p => p.name).join(", ")}
-                  </div>
-                {/if}
-              </div>
+                <span
+                  style="
+                    color: var(--text-faint);
+                    font-size: 12px;
+                    flex-shrink: 0;
+                    transform: rotate({isExpanded ? '180deg' : '0deg'});
+                    transition: transform 0.15s ease;
+                  "
+                >&#9660;</span>
+              </button>
+
+              {#if isExpanded}
+                <BriefingPanel
+                  eventId={event.id}
+                  title={event.title}
+                  participants={event.participants.map(p => p.name)}
+                  time={event.start}
+                  eventDescription={event.description ?? undefined}
+                />
+              {/if}
             </div>
           {/each}
         </div>
