@@ -90,11 +90,11 @@
   });
 </script>
 
-<div class="flex flex-col h-screen" style="background: #1D1D1B;">
+<div class="flex flex-col h-screen" style="background: var(--bg);">
   {#if !initialized}
     <div
       class="flex items-center justify-center h-screen"
-      style="font-family: 'DM Sans', sans-serif; color: #585650;"
+      style="font-family: 'DM Sans', sans-serif; color: var(--text-faint);"
     >
       Loading...
     </div>
@@ -105,8 +105,8 @@
       style="
         height: 48px;
         padding: 0 28px;
-        background: #1A1A18;
-        border-bottom: 1px solid #262624;
+        background: var(--bg);
+        border-bottom: 1px solid var(--border);
         font-family: 'DM Sans', sans-serif;
         gap: 24px;
       "
@@ -116,7 +116,7 @@
           font-family: 'Source Serif 4', serif;
           font-size: 18px;
           font-weight: 700;
-          color: #D8D5CE;
+          color: var(--text);
           margin-right: 12px;
         "
       >
@@ -128,8 +128,8 @@
           font-size: 14.5px;
           text-decoration: none;
           padding: 10px 0;
-          border-bottom: 2px solid {currentRoute === 'dashboard' ? '#A8A078' : 'transparent'};
-          color: {currentRoute === 'dashboard' ? '#A8A078' : '#585650'};
+          border-bottom: 2px solid {currentRoute === 'dashboard' ? 'var(--gold)' : 'transparent'};
+          color: {currentRoute === 'dashboard' ? 'var(--gold)' : 'var(--text-faint)'};
         "
       >Meetings</a>
       <a
@@ -138,8 +138,8 @@
           font-size: 14.5px;
           text-decoration: none;
           padding: 10px 0;
-          border-bottom: 2px solid {currentRoute === 'graph' ? '#A8A078' : 'transparent'};
-          color: {currentRoute === 'graph' ? '#A8A078' : '#585650'};
+          border-bottom: 2px solid {currentRoute === 'graph' ? 'var(--gold)' : 'transparent'};
+          color: {currentRoute === 'graph' ? 'var(--gold)' : 'var(--text-faint)'};
         "
       >Graph</a>
       <a
@@ -148,8 +148,8 @@
           font-size: 14.5px;
           text-decoration: none;
           padding: 10px 0;
-          border-bottom: 2px solid {currentRoute === 'settings' ? '#A8A078' : 'transparent'};
-          color: {currentRoute === 'settings' ? '#A8A078' : '#585650'};
+          border-bottom: 2px solid {currentRoute === 'settings' ? 'var(--gold)' : 'transparent'};
+          color: {currentRoute === 'settings' ? 'var(--gold)' : 'var(--text-faint)'};
         "
       >Settings</a>
     </nav>
