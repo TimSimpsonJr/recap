@@ -96,7 +96,7 @@
   );
 </script>
 
-<div class="flex flex-col h-full" style="background: #1D1D1B;">
+<div class="flex flex-col h-full" style="background: var(--bg);">
   <RecordingStatusBar />
 
   <div class="flex flex-1 overflow-hidden">
@@ -127,8 +127,8 @@
             height: 36px;
             border-radius: 8px;
             border: none;
-            background: {filtersExpanded ? 'rgba(168,160,120,0.12)' : '#282826'};
-            color: {filtersExpanded ? '#A8A078' : '#585650'};
+            background: {filtersExpanded ? 'rgba(168,160,120,0.12)' : 'var(--surface)'};
+            color: {filtersExpanded ? 'var(--gold)' : 'var(--text-faint)'};
             cursor: pointer;
             flex-shrink: 0;
             position: relative;
@@ -154,8 +154,8 @@
                 position: absolute;
                 top: -4px;
                 right: -4px;
-                background: #A8A078;
-                color: #1A1A18;
+                background: var(--gold);
+                color: var(--bg);
                 font-size: 9px;
                 font-weight: 700;
                 font-family: 'DM Sans', sans-serif;
@@ -180,7 +180,7 @@
           class="mt-4 p-3 rounded-lg"
           style="
             background: rgba(200,80,60,0.10);
-            color: #D06850;
+            color: var(--red);
             font-family: 'DM Sans', sans-serif;
             font-size: 14.5px;
           "
@@ -196,7 +196,7 @@
             background: rgba(180,165,130,0.08);
             font-family: 'DM Sans', sans-serif;
             font-size: 14.5px;
-            color: #B4A882;
+            color: var(--gold-muted);
             text-align: center;
           "
         >
@@ -204,7 +204,7 @@
           <a
             href="#settings"
             style="
-              color: #A8A078;
+              color: var(--gold);
               text-decoration: underline;
               font-weight: 600;
             "

@@ -29,12 +29,13 @@
 
   // ── Company color palette (configurable) ──
   const COMPANY_PALETTE = [
-    "#B4A882",
-    "#82A8B4",
-    "#B48282",
-    "#82B498",
-    "#A882B4",
-    "#B4A068",
+    "#5e9e96",
+    "#8e6e9e",
+    "#9e826e",
+    "#6e829e",
+    "#9e6e7e",
+    "#7e9e6e",
+    "#9e9e6e",
   ];
 
   let svgEl: SVGSVGElement | undefined = $state(undefined);
@@ -87,12 +88,12 @@
   };
 
   function getColor(node: SimNode): string {
-    if (node.node_type === "meeting") return "#A8A078";
-    if (node.node_type === "person") return "#78756E";
+    if (node.node_type === "meeting") return "#C4A84D";
+    if (node.node_type === "person") return "#7a8493";
     if (node.node_type === "company") {
-      return companyColorMap.get(node.id) ?? "#B4A882";
+      return companyColorMap.get(node.id) ?? "#b09840";
     }
-    return "#78756E";
+    return "#7a8493";
   }
 
   function getRadius(nodeType: string): number {
@@ -112,8 +113,8 @@
   // Build groups list for controls panel
   let controlGroups = $derived.by(() => {
     const groups = [
-      { label: "Meeting", color: "#A8A078" },
-      { label: "Person", color: "#78756E" },
+      { label: "Meeting", color: "#C4A84D" },
+      { label: "Person", color: "#7a8493" },
     ];
     for (const [id, color] of companyColorMap.entries()) {
       const node = allNodes.find((n) => n.id === id);
@@ -538,7 +539,7 @@
       {error}
       {#if error?.includes("No recordings folder")}
         <br />
-        <a href="#settings" style="color: #A8A078; text-decoration: underline; font-weight: 600; margin-top: 8px; display: inline-block;">
+        <a href="#settings" style="color: var(--gold); text-decoration: underline; font-weight: 600; margin-top: 8px; display: inline-block;">
           Configure in Settings
         </a>
       {/if}
@@ -576,7 +577,7 @@
             markerHeight="6"
             orient="auto"
           >
-            <polygon points="0 0, 10 3.5, 0 7" fill="#464440" />
+            <polygon points="0 0, 10 3.5, 0 7" fill="#363d47" />
           </marker>
           <marker
             id="arrowhead-active"
@@ -587,7 +588,7 @@
             markerHeight="6"
             orient="auto"
           >
-            <polygon points="0 0, 10 3.5, 0 7" fill="#787470" />
+            <polygon points="0 0, 10 3.5, 0 7" fill="#4a5260" />
           </marker>
         {/if}
       </defs>
@@ -602,7 +603,7 @@
             y1={(link.source as SimNode).y ?? 0}
             x2={(link.target as SimNode).x ?? 0}
             y2={(link.target as SimNode).y ?? 0}
-            stroke={isLinkActive(link) ? "#787470" : "#464440"}
+            stroke={isLinkActive(link) ? "#4a5260" : "#363d47"}
             stroke-width={isLinkActive(link) ? 1.5 : 1}
             marker-end={showArrows ? (isLinkActive(link) ? "url(#arrowhead-active)" : "url(#arrowhead)") : "none"}
           />
@@ -635,7 +636,7 @@
                 x={node.x ?? 0}
                 y={(node.y ?? 0) + getRadius(node.node_type) + 12}
                 text-anchor="middle"
-                fill="#78756E"
+                fill="#7a8493"
                 font-family="'DM Sans', sans-serif"
                 font-size="10"
               >
@@ -682,15 +683,15 @@
     <!-- Legend -->
     <div class="graph-legend">
       <div class="graph-legend-item">
-        <span class="graph-legend-dot" style="background: #A8A078;"></span>
+        <span class="graph-legend-dot" style="background: var(--gold);"></span>
         Meetings
       </div>
       <div class="graph-legend-item">
-        <span class="graph-legend-dot" style="background: #78756E;"></span>
+        <span class="graph-legend-dot" style="background: var(--text-muted);"></span>
         People
       </div>
       <div class="graph-legend-item">
-        <span class="graph-legend-dot" style="background: #B4A882;"></span>
+        <span class="graph-legend-dot" style="background: var(--gold-muted);"></span>
         Companies
       </div>
     </div>
@@ -701,7 +702,7 @@
   .graph-container {
     width: 100%;
     height: calc(100vh - 48px);
-    background: #1D1D1B;
+    background: var(--bg);
     overflow: hidden;
     position: relative;
   }
@@ -713,11 +714,11 @@
     height: 100%;
     font-family: 'DM Sans', sans-serif;
     font-size: 15px;
-    color: #585650;
+    color: var(--text-faint);
   }
 
   .graph-error {
-    color: #D06850;
+    color: var(--red);
   }
 
   .graph-svg {
@@ -764,7 +765,7 @@
     gap: 16px;
     font-family: 'DM Sans', sans-serif;
     font-size: 12.5px;
-    color: #585650;
+    color: var(--text-faint);
   }
 
   .graph-legend-item {
