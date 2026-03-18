@@ -25,8 +25,10 @@ function preprocessObsidian(
   // Wikilinks with display text: [[target|display]]
   result = result.replace(
     /\[\[([^|\]]+)\|([^\]]+)\]\]/g,
-    (_match, _target: string, display: string) => {
-      return `<span class="wikilink">${display.trim()}</span>`;
+    (_match, target: string, display: string) => {
+      const name = display.trim();
+      const href = `#filter/participant/${encodeURIComponent(target.trim())}`;
+      return `<a class="wikilink" href="${href}">${name}</a>`;
     }
   );
 
@@ -34,7 +36,9 @@ function preprocessObsidian(
   result = result.replace(
     /\[\[([^\]]+)\]\]/g,
     (_match, target: string) => {
-      return `<span class="wikilink">${target.trim()}</span>`;
+      const name = target.trim();
+      const href = `#filter/participant/${encodeURIComponent(name)}`;
+      return `<a class="wikilink" href="${href}">${name}</a>`;
     }
   );
 

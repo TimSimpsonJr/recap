@@ -9,6 +9,8 @@
     clearSearch,
     loadFilterOptions,
     activeFilters,
+    toggleFilter,
+    clearAllFilters,
     initMeetingsListener,
     destroyMeetingsListener,
   } from "../lib/stores/meetings";
@@ -21,9 +23,10 @@
 
   interface Props {
     initialMeetingId?: string | null;
+    initialFilterParticipant?: string | null;
   }
 
-  let { initialMeetingId = null }: Props = $props();
+  let { initialMeetingId = null, initialFilterParticipant = null }: Props = $props();
 
   let filtersExpanded = $state(false);
   let selectedMeetingId = $state<string | null>(null);
@@ -32,6 +35,16 @@
   $effect(() => {
     if (initialMeetingId) {
       selectedMeetingId = initialMeetingId;
+    }
+  });
+
+  // Apply participant filter from wikilink navigation
+  $effect(() => {
+    if (initialFilterParticipant) {
+      // Clear existing filters and set the participant filter
+      clearAllFilters();
+      toggleFilter("participants", initialFilterParticipant);
+      filtersExpanded = true;
     }
   });
 

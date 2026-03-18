@@ -12,6 +12,7 @@
 
   let currentRoute = $state("dashboard");
   let meetingId = $state<string | null>(null);
+  let filterParticipant = $state<string | null>(null);
   let initialized = $state(false);
 
   onMount(async () => {
@@ -30,12 +31,19 @@
     const updateRoute = () => {
       const hash = window.location.hash.slice(1) || "dashboard";
       const meetingMatch = hash.match(/^meeting\/(.+)$/);
+      const filterMatch = hash.match(/^filter\/participant\/(.+)$/);
       if (meetingMatch) {
         currentRoute = "dashboard";
         meetingId = meetingMatch[1];
+        filterParticipant = null;
+      } else if (filterMatch) {
+        currentRoute = "dashboard";
+        meetingId = null;
+        filterParticipant = decodeURIComponent(filterMatch[1]);
       } else {
         currentRoute = hash;
         meetingId = null;
+        filterParticipant = null;
       }
     };
     window.addEventListener("hashchange", updateRoute);
@@ -153,7 +161,7 @@
       {:else if currentRoute === "graph"}
         <GraphView />
       {:else}
-        <Dashboard initialMeetingId={meetingId} />
+        <Dashboard initialMeetingId={meetingId} initialFilterParticipant={filterParticipant} />
       {/if}
     </div>
   {/if}

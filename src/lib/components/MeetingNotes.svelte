@@ -95,6 +95,13 @@
 
   .meeting-notes :global(.wikilink) {
     color: #A8A078;
+    text-decoration: none;
+    cursor: pointer;
+  }
+
+  .meeting-notes :global(.wikilink:hover) {
+    color: #B8B088;
+    text-decoration: underline;
   }
 
   .meeting-notes :global(img) {
