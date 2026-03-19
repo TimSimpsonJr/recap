@@ -70,6 +70,22 @@
     </label>
   {/if}
 
+  <!-- Auto-record all calendar meetings -->
+  <label style="display:flex;align-items:center;justify-content:space-between;">
+    <div>
+      <span style="font-size:15px;color:var(--text-secondary);font-family:'DM Sans',sans-serif;">Auto-record all calendar meetings</span>
+      <div style="font-size:12px;color:var(--text-faint);font-family:'DM Sans',sans-serif;margin-top:2px;">
+        Arms the recorder for every upcoming calendar event
+      </div>
+    </div>
+    <input
+      type="checkbox"
+      checked={$settings.autoRecordAllCalendar}
+      onchange={(e) => saveSetting("autoRecordAllCalendar", e.currentTarget.checked)}
+      style="accent-color:var(--gold);"
+    />
+  </label>
+
   <!-- Screen share monitor selector -->
   {#if monitors.length > 0}
     <label style="display:block;">

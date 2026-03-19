@@ -8,6 +8,8 @@
     getUpcomingMeetings,
     getCalendarMatches,
     getCalendarLastSynced,
+    setAutoRecord,
+    setSeriesAutoRecord,
     type CalendarEvent,
     type CalendarCache,
   } from "../lib/tauri";
@@ -26,6 +28,45 @@
 
   function toggleBriefing(eventId: string) {
     expandedEventId = expandedEventId === eventId ? null : eventId;
+  }
+
+  async function toggleAutoRecord(event: CalendarEvent) {
+    const newValue = !event.auto_record;
+    try {
+      await setAutoRecord(event.id, newValue);
+      // Update local state
+      upcoming = upcoming.map(e =>
+        e.id === event.id ? { ...e, auto_record: newValue } : e
+      );
+    } catch (err) {
+      console.error("Failed to toggle auto-record:", err);
+    }
+  }
+
+  async function toggleSeriesAutoRecord(event: CalendarEvent) {
+    if (!event.recurring_series_id) return;
+    const newValue = !event.auto_record;
+    try {
+      await setSeriesAutoRecord(event.recurring_series_id, newValue);
+      // Update local state for all events in this series
+      upcoming = upcoming.map(e =>
+        e.recurring_series_id === event.recurring_series_id
+          ? { ...e, auto_record: newValue }
+          : e
+      );
+    } catch (err) {
+      console.error("Failed to toggle series auto-record:", err);
+    }
+  }
+
+  function platformLabel(platform: string): string {
+    switch (platform) {
+      case "zoom": return "Zoom";
+      case "google_meet": return "Meet";
+      case "teams": return "Teams";
+      case "zoho_meet": return "Zoho";
+      default: return platform;
+    }
   }
 
   // Relative time formatting
@@ -274,26 +315,60 @@
                 overflow: hidden;
               "
             >
-              <button
-                onclick={() => toggleBriefing(event.id)}
+              <div
                 style="
-                  width: 100%;
-                  background: none;
-                  border: none;
                   padding: 14px 18px;
                   display: flex;
                   align-items: center;
                   gap: 14px;
-                  cursor: pointer;
-                  text-align: left;
-                  font-family: 'DM Sans', sans-serif;
                 "
               >
-                <div style="flex: 1; min-width: 0;">
+                <!-- Auto-record toggle dot -->
+                <button
+                  onclick={(e) => { e.stopPropagation(); toggleAutoRecord(event); }}
+                  title={event.auto_record ? "Disable auto-record" : "Enable auto-record"}
+                  style="
+                    width: 14px;
+                    height: 14px;
+                    border-radius: 50%;
+                    border: 2px solid {event.auto_record ? 'var(--gold)' : 'var(--text-muted)'};
+                    background: {event.auto_record ? 'var(--gold)' : 'transparent'};
+                    cursor: pointer;
+                    flex-shrink: 0;
+                    padding: 0;
+                    transition: all 0.15s ease;
+                  "
+                ></button>
+
+                <button
+                  onclick={() => toggleBriefing(event.id)}
+                  style="
+                    flex: 1;
+                    min-width: 0;
+                    background: none;
+                    border: none;
+                    padding: 0;
+                    cursor: pointer;
+                    text-align: left;
+                    font-family: 'DM Sans', sans-serif;
+                  "
+                >
                   <div style="display: flex; align-items: center; gap: 8px;">
                     <span style="font-size: 14.5px; font-weight: 500; color: var(--text);">
                       {event.title}
                     </span>
+                    {#if event.detected_platform}
+                      <span
+                        style="
+                          font-size: 11px;
+                          padding: 1px 6px;
+                          border-radius: 4px;
+                          background: var(--surface-hover, rgba(255,255,255,0.06));
+                          color: var(--text-muted);
+                          flex-shrink: 0;
+                        "
+                      >{platformLabel(event.detected_platform)}</span>
+                    {/if}
                     {#if matchedId}
                       <a
                         href="#meeting/{matchedId}"
@@ -310,23 +385,46 @@
                   </div>
                   <div style="font-size: 13px; color: var(--text-muted); margin-top: 3px;">
                     {formatDate(event.start)} &middot; {formatTimeRange(event.start, event.end)}
+                    {#if event.recurring_series_id}
+                      <button
+                        onclick={(e) => { e.stopPropagation(); toggleSeriesAutoRecord(event); }}
+                        style="
+                          background: none;
+                          border: none;
+                          color: var(--gold);
+                          font-size: 12px;
+                          cursor: pointer;
+                          padding: 0;
+                          margin-left: 8px;
+                          font-family: 'DM Sans', sans-serif;
+                          text-decoration: underline;
+                          text-underline-offset: 2px;
+                        "
+                      >{event.auto_record ? "Disable all in series" : "Enable all in series"}</button>
+                    {/if}
                   </div>
                   {#if event.participants.length > 0}
                     <div style="font-size: 12.5px; color: var(--text-faint); margin-top: 3px;">
                       {event.participants.map(p => p.name).join(", ")}
                     </div>
                   {/if}
-                </div>
+                </button>
+
                 <span
+                  onclick={() => toggleBriefing(event.id)}
+                  role="button"
+                  tabindex="0"
+                  onkeydown={(e) => { if (e.key === 'Enter') toggleBriefing(event.id); }}
                   style="
                     color: var(--text-faint);
                     font-size: 12px;
                     flex-shrink: 0;
                     transform: rotate({isExpanded ? '180deg' : '0deg'});
                     transition: transform 0.15s ease;
+                    cursor: pointer;
                   "
                 >&#9660;</span>
-              </button>
+              </div>
 
               {#if isExpanded}
                 <BriefingPanel
