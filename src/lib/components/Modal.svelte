@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { fade, scale } from "svelte/transition";
   import type { Snippet } from "svelte";
 
   interface Props {
@@ -25,10 +26,12 @@
 <div
   class="modal-overlay"
   onclick={onOverlayClick}
+  transition:fade={{ duration: 150 }}
   style="position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.6);"
 >
   <div
     class="modal-card"
+    transition:scale={{ start: 0.95, duration: 200 }}
     style="background:var(--surface);border-radius:12px;max-width:480px;width:90%;max-height:85vh;overflow-y:auto;padding:24px;position:relative;box-shadow:0 4px 24px rgba(0,0,0,0.5);"
   >
     <button

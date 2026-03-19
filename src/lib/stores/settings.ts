@@ -30,6 +30,7 @@ export interface AppSettings {
   claudeCommand: string;
   todoistProjectMap: Record<string, string>;
   extensionInstalled: boolean;
+  setupChecklistDismissed: boolean;
 }
 
 const defaults: AppSettings = {
@@ -61,6 +62,7 @@ const defaults: AppSettings = {
   claudeCommand: "claude",
   todoistProjectMap: {},
   extensionInstalled: false,
+  setupChecklistDismissed: false,
 };
 
 export const settings = writable<AppSettings>({ ...defaults });

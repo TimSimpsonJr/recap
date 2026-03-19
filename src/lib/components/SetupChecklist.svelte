@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { fly } from "svelte/transition";
   import { credentials } from "../stores/credentials";
   import type { ProviderName } from "../stores/credentials";
   import { settings, saveSetting } from "../stores/settings";
@@ -23,7 +24,6 @@
     actionLabel: string;
   }
 
-  let dismissed = $state(false);
   let activeModal = $state<ProviderName | null>(null);
 
   function openModal(provider: ProviderName) {
@@ -94,7 +94,8 @@
 
   let allComplete = $derived(items.every((item) => item.completed));
   let completedCount = $derived(items.filter((item) => item.completed).length);
-  let visible = $derived($settings.onboardingComplete && !allComplete && !dismissed);
+  let incompleteItems = $derived(items.filter((item) => !item.completed));
+  let visible = $derived($settings.onboardingComplete && !allComplete && !$settings.setupChecklistDismissed);
 </script>
 
 {#if visible}
@@ -129,7 +130,7 @@
         </span>
       </span>
       <button
-        onclick={() => { dismissed = true; }}
+        onclick={() => { saveSetting('setupChecklistDismissed', true); }}
         style="
           background: none;
           border: none;
@@ -146,8 +147,9 @@
     </div>
 
     <div style="display: flex; flex-direction: column; gap: 6px;">
-      {#each items as item}
+      {#each incompleteItems as item (item.id)}
         <div
+          transition:fly={{ x: -20, duration: 300 }}
           style="
             display: flex;
             align-items: center;
@@ -155,44 +157,34 @@
             padding: 6px 0;
           "
         >
-          {#if item.completed}
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style="flex-shrink: 0;">
-              <circle cx="8" cy="8" r="7" fill="var(--gold)" opacity="0.15" />
-              <path d="M5 8l2 2 4-4" stroke="var(--gold)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" />
-            </svg>
-          {:else}
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style="flex-shrink: 0;">
-              <circle cx="8" cy="8" r="7" stroke="var(--border)" stroke-width="1" />
-            </svg>
-          {/if}
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style="flex-shrink: 0;">
+            <circle cx="8" cy="8" r="7" stroke="var(--border)" stroke-width="1" />
+          </svg>
           <span
             style="
               flex: 1;
               font-size: 13.5px;
-              color: {item.completed ? 'var(--text-muted)' : 'var(--text)'};
-              {item.completed ? 'text-decoration: line-through;' : ''}
+              color: var(--text);
             "
           >
             {item.label}
           </span>
-          {#if !item.completed}
-            <button
-              onclick={item.action}
-              style="
-                font-size: 12.5px;
-                background: none;
-                border: 1px solid var(--border);
-                border-radius: 5px;
-                color: var(--gold);
-                padding: 3px 10px;
-                cursor: pointer;
-                font-family: 'DM Sans', sans-serif;
-                font-weight: 500;
-              "
-            >
-              {item.actionLabel}
-            </button>
-          {/if}
+          <button
+            onclick={item.action}
+            style="
+              font-size: 12.5px;
+              background: none;
+              border: 1px solid var(--border);
+              border-radius: 5px;
+              color: var(--gold);
+              padding: 3px 10px;
+              cursor: pointer;
+              font-family: 'DM Sans', sans-serif;
+              font-weight: 500;
+            "
+          >
+            {item.actionLabel}
+          </button>
         </div>
       {/each}
     </div>
