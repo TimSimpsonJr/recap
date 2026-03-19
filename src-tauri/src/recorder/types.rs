@@ -49,6 +49,28 @@ impl MeetingPlatform {
     }
 }
 
+/// Unified meeting metadata from any platform's API.
+/// Written to meeting.json alongside the recording.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MeetingMetadata {
+    pub title: String,
+    pub platform: MeetingPlatform,
+    pub participants: Vec<Participant>,
+    pub user_name: String,
+    pub user_email: String,
+    pub start_time: String,
+    pub end_time: String,
+}
+
+/// A meeting participant from any platform.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Participant {
+    pub name: String,
+    pub email: Option<String>,
+    pub join_time: Option<String>,
+    pub leave_time: Option<String>,
+}
+
 /// Source for video capture — either a specific window or a display monitor.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
