@@ -107,6 +107,40 @@ pub fn run() {
                 }
             });
 
+            // Start periodic auto-record check (every 60 seconds)
+            {
+                let auto_record_handle = app.handle().clone();
+                let auto_record_recorder = app
+                    .state::<recorder::recorder::RecorderHandle<tauri::Wry>>()
+                    .handle()
+                    .clone();
+
+                // Immediate check on startup (for late-start scenarios)
+                let startup_handle = auto_record_handle.clone();
+                let startup_recorder = auto_record_recorder.clone();
+                tokio::spawn(async move {
+                    recorder::recorder::check_auto_record_events(
+                        &startup_handle,
+                        &startup_recorder,
+                    )
+                    .await;
+                });
+
+                // Periodic check
+                tokio::spawn(async move {
+                    let mut interval =
+                        tokio::time::interval(std::time::Duration::from_secs(60));
+                    loop {
+                        interval.tick().await;
+                        recorder::recorder::check_auto_record_events(
+                            &auto_record_handle,
+                            &auto_record_recorder,
+                        )
+                        .await;
+                    }
+                });
+            }
+
             // Show the main window on launch.
             // TODO: When auto-start-with-Windows is implemented, check if launched
             // via startup and hide instead (start in tray).

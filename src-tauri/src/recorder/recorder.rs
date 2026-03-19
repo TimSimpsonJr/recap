@@ -849,6 +849,96 @@ async fn enrich_metadata(
     }
 }
 
+// ── Auto-record periodic check ───────────────────────────────────────────────
+
+/// Check upcoming calendar events and arm/disarm the recorder accordingly.
+///
+/// Called periodically (every 60s) from the setup loop in lib.rs.
+/// Reads the calendar cache and settings store directly rather than going
+/// through IPC commands.
+pub async fn check_auto_record_events(
+    app: &AppHandle<tauri::Wry>,
+    recorder: &Arc<Mutex<RecorderInner<tauri::Wry>>>,
+) {
+    // Read settings from the store
+    let store_path = match app.path().app_data_dir() {
+        Ok(p) => p.join("settings.json"),
+        Err(_) => return,
+    };
+    let content = match std::fs::read_to_string(&store_path) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    let store: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    let lead_time_minutes = store
+        .get("meetingLeadTimeMinutes")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(10.0);
+    let auto_record_all = store
+        .get("autoRecordAllCalendar")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    // Read calendar cache directly
+    let cache_path = match app.path().app_data_dir() {
+        Ok(p) => p.join("calendar_cache.json"),
+        Err(_) => return,
+    };
+    let cache_content = match std::fs::read_to_string(&cache_path) {
+        Ok(c) => c,
+        Err(_) => return, // No cache yet
+    };
+    let cache: calendar::CalendarCache = match serde_json::from_str(&cache_content) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    let now = chrono::Utc::now();
+    let lead_duration = chrono::Duration::seconds((lead_time_minutes * 60.0) as i64);
+    let horizon = now + lead_duration;
+    let grace = chrono::Duration::minutes(5);
+
+    // Find qualifying events: start within lead time, end not yet passed (+ 5 min grace)
+    let qualifying_event = cache.events.iter().find(|event| {
+        // Must be auto_record enabled, OR auto_record_all is on
+        if !event.auto_record && !auto_record_all {
+            return false;
+        }
+
+        let start_ok = chrono::DateTime::parse_from_rfc3339(&event.start)
+            .map(|dt| dt.with_timezone(&chrono::Utc) <= horizon)
+            .unwrap_or(false);
+        let end_ok = chrono::DateTime::parse_from_rfc3339(&event.end)
+            .map(|dt| dt.with_timezone(&chrono::Utc) + grace >= now)
+            .unwrap_or(false);
+
+        start_ok && end_ok
+    });
+
+    let mut inner = recorder.lock().await;
+
+    match (&inner.state, qualifying_event) {
+        (RecorderState::Idle, Some(event)) => {
+            let expected_platform = event
+                .detected_platform
+                .as_deref()
+                .map(MeetingPlatform::from_str);
+            inner.arm_for_event(event.title.clone(), expected_platform);
+        }
+        (RecorderState::Armed { .. }, None) => {
+            // No qualifying events remain — disarm
+            inner.disarm();
+        }
+        _ => {
+            // Either already armed with events remaining, or in a non-idle/armed state
+        }
+    }
+}
+
 // ── IPC Commands ─────────────────────────────────────────────────────────────
 
 #[tauri::command]
