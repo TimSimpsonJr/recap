@@ -1,4 +1,5 @@
 pub mod capture;
+pub mod google_meet;
 pub mod listener;
 pub mod monitor;
 pub mod recorder;
