@@ -115,7 +115,8 @@ class TestPipelinePause:
         assert status["analyze"]["waiting"] == "speaker_review"
 
         # Status should also be copied to recordings dir (<recording>.status.json)
-        recordings_status = config.recordings_path / "meeting.status.json"
+        # The pipeline slugifies the title, so the filename is date-slug.status.json
+        recordings_status = config.recordings_path / "2026-03-17-quick-sync.status.json"
         assert recordings_status.exists(), "status.json was not copied to recordings dir"
         rec_status = json.loads(recordings_status.read_text())
         assert rec_status["analyze"]["waiting"] == "speaker_review"
