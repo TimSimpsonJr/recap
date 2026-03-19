@@ -18,6 +18,7 @@
   let hasPendingEdits = $state(false);
   let saving = $state(false);
   let connecting = $state(false);
+  let connectError = $state("");
   let showGuide = $state(false);
 
   let clientId = $derived(hasPendingEdits ? editingClientId : providerState.clientId);
@@ -49,6 +50,7 @@
 
   async function connect() {
     connecting = true;
+    connectError = "";
     try {
       await saveClientCredentials(provider, clientId, clientSecret);
       let zohoRegion: string | undefined;
@@ -57,6 +59,9 @@
         zohoRegion = s.zohoRegion;
       }
       await startOAuth(provider, clientId, clientSecret, zohoRegion);
+    } catch (err: any) {
+      connectError = String(err);
+      console.error(`OAuth connect failed for ${provider}:`, err);
     } finally {
       connecting = false;
     }
@@ -278,6 +283,12 @@
       {/if}
     </div>
   </div>
+
+  {#if connectError}
+    <p style="font-size:13px;color:var(--red);margin-top:4px;word-break:break-word;">
+      {connectError}
+    </p>
+  {/if}
 
   {#if provider === "microsoft" && providerState.status === "connected"}
     <p style="font-size:13.5px;color:var(--warning);margin-top:4px;">
