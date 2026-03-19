@@ -1,0 +1,857 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pipeline Progress UI Mockups</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,300;8..60,400;8..60,600;8..60,700&family=DM+Sans:wght@300;400;500;600;700&display=swap');
+
+  :root {
+    --bg-base: #1D1D1B;
+    --bg-surface: #242422;
+    --bg-surface-hover: #2B2B28;
+    --bg-inset: #282826;
+    --bg-overlay: #1A1A18;
+    --text-primary: #D8D5CE;
+    --text-body: #B0ADA5;
+    --text-muted: #78756E;
+    --text-faint: #585650;
+    --accent: #A8A078;
+    --accent-hover: #B8B088;
+    --status-done-bg: rgba(160,150,120,0.12);
+    --status-done-text: #A8A078;
+    --status-active-bg: rgba(180,165,130,0.10);
+    --status-active-text: #B4A882;
+    --status-failed-bg: rgba(200,80,60,0.10);
+    --status-failed-text: #D06850;
+    --border-subtle: #262624;
+    --dot: #464440;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg-base);
+    color: var(--text-body);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 15px;
+    padding: 32px;
+    line-height: 1.5;
+  }
+
+  h1 {
+    font-family: 'Source Serif 4', serif;
+    color: var(--text-primary);
+    font-size: 28px;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+
+  h2 {
+    font-family: 'Source Serif 4', serif;
+    color: var(--text-primary);
+    font-size: 20px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    margin-top: 48px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .subtitle {
+    color: var(--text-muted);
+    font-size: 14px;
+    margin-bottom: 40px;
+  }
+
+  .mockup-section {
+    margin-bottom: 48px;
+  }
+
+  .desc {
+    color: var(--text-muted);
+    font-size: 13.5px;
+    margin-bottom: 16px;
+    max-width: 600px;
+  }
+
+  /* ── Card Base ── */
+  .card {
+    background: var(--bg-surface);
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin-bottom: 4px;
+    transition: background 120ms ease;
+    max-width: 520px;
+  }
+  .card:hover { background: var(--bg-surface-hover); }
+
+  .card-title {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+  }
+
+  .card-meta {
+    font-size: 13.5px;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .meta-dot {
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: var(--dot);
+  }
+
+  /* ── Approach A: Live Badges ── */
+  .stage-badges {
+    display: flex;
+    gap: 6px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+  }
+
+  .stage-badge {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+
+  .stage-badge.done {
+    background: var(--status-done-bg);
+    color: var(--status-done-text);
+  }
+
+  .stage-badge.active {
+    background: var(--status-active-bg);
+    color: var(--status-active-text);
+    animation: pulse-badge 1.5s ease-in-out infinite;
+  }
+
+  .stage-badge.pending {
+    background: rgba(88,86,80,0.1);
+    color: var(--text-faint);
+  }
+
+  .stage-badge.failed {
+    background: var(--status-failed-bg);
+    color: var(--status-failed-text);
+  }
+
+  @keyframes pulse-badge {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+  }
+
+  .badge-icon {
+    font-size: 10px;
+  }
+
+  /* ── Approach B: Dedicated Panel ── */
+  .progress-panel {
+    background: var(--bg-surface);
+    border-radius: 8px;
+    padding: 20px;
+    max-width: 520px;
+  }
+
+  .progress-panel-title {
+    font-family: 'DM Sans', sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 16px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .progress-panel-title .spinner {
+    width: 14px;
+    height: 14px;
+    border: 2px solid var(--text-faint);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .stage-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 0;
+  }
+
+  .stage-icon {
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    flex-shrink: 0;
+  }
+
+  .stage-icon.done {
+    background: var(--status-done-bg);
+    color: var(--status-done-text);
+  }
+
+  .stage-icon.active {
+    background: var(--status-active-bg);
+    color: var(--status-active-text);
+    animation: pulse-badge 1.5s ease-in-out infinite;
+  }
+
+  .stage-icon.pending {
+    background: rgba(88,86,80,0.15);
+    color: var(--text-faint);
+  }
+
+  .stage-name {
+    font-size: 13.5px;
+    color: var(--text-body);
+    width: 120px;
+    flex-shrink: 0;
+  }
+
+  .stage-name.pending { color: var(--text-faint); }
+
+  .stage-time {
+    font-size: 12px;
+    color: var(--text-muted);
+    width: 48px;
+    text-align: right;
+    flex-shrink: 0;
+  }
+
+  .progress-bar-track {
+    flex: 1;
+    height: 4px;
+    background: rgba(88,86,80,0.15);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .progress-bar-fill {
+    height: 100%;
+    border-radius: 2px;
+    transition: width 300ms ease;
+  }
+
+  .progress-bar-fill.done {
+    background: var(--accent);
+    width: 100%;
+  }
+
+  .progress-bar-fill.active {
+    background: var(--accent);
+    animation: progress-pulse 2s ease-in-out infinite;
+  }
+
+  @keyframes progress-pulse {
+    0% { opacity: 0.6; }
+    50% { opacity: 1; }
+    100% { opacity: 0.6; }
+  }
+
+  .log-output {
+    margin-top: 16px;
+    padding: 10px 12px;
+    background: var(--bg-inset);
+    border-radius: 6px;
+    font-family: 'JetBrains Mono', 'Fira Code', monospace;
+    font-size: 11.5px;
+    color: var(--text-muted);
+    line-height: 1.6;
+  }
+
+  .log-output .log-line {
+    display: block;
+  }
+
+  .log-output .log-line::before {
+    content: '>';
+    color: var(--text-faint);
+    margin-right: 8px;
+  }
+
+  .panel-actions {
+    margin-top: 16px;
+    display: flex;
+    gap: 8px;
+  }
+
+  .btn-ghost {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted);
+    background: none;
+    border: 1px solid var(--border-subtle);
+    border-radius: 6px;
+    padding: 6px 14px;
+    cursor: pointer;
+    transition: all 120ms ease;
+  }
+
+  .btn-ghost:hover {
+    color: var(--text-body);
+    border-color: var(--text-faint);
+  }
+
+  /* ── Approach C: Expandable ── */
+  .card-expandable {
+    background: var(--bg-surface);
+    border-radius: 8px;
+    max-width: 520px;
+    overflow: hidden;
+    transition: background 120ms ease;
+  }
+  .card-expandable:hover { background: var(--bg-surface-hover); }
+
+  .card-expandable .card-header {
+    padding: 14px 16px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    cursor: pointer;
+  }
+
+  .card-expandable .card-right {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+  }
+
+  .mini-progress {
+    display: flex;
+    gap: 3px;
+    align-items: center;
+  }
+
+  .mini-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+
+  .mini-dot.done { background: var(--accent); }
+  .mini-dot.active {
+    background: var(--accent);
+    animation: pulse-badge 1.5s ease-in-out infinite;
+  }
+  .mini-dot.pending { background: rgba(88,86,80,0.3); }
+
+  .mini-label {
+    font-size: 12px;
+    color: var(--status-active-text);
+    margin-left: 6px;
+  }
+
+  .expand-arrow {
+    font-size: 10px;
+    color: var(--text-faint);
+  }
+
+  .card-expandable .expanded-detail {
+    padding: 0 16px 16px;
+    border-top: 1px solid var(--border-subtle);
+    margin: 0 0;
+  }
+
+  .expanded-detail .stage-row-compact {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 0;
+  }
+
+  .expanded-detail .stage-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .expanded-detail .stage-dot.done { background: var(--accent); }
+  .expanded-detail .stage-dot.active {
+    background: var(--accent);
+    animation: pulse-badge 1.5s ease-in-out infinite;
+  }
+  .expanded-detail .stage-dot.pending { background: rgba(88,86,80,0.3); }
+
+  .expanded-detail .stage-label {
+    font-size: 13px;
+    color: var(--text-body);
+    flex: 1;
+  }
+  .expanded-detail .stage-label.pending { color: var(--text-faint); }
+
+  .expanded-detail .stage-info {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  /* ── Completed Card for context ── */
+  .card-completed {
+    opacity: 0.85;
+  }
+
+  .card-completed .stage-badges .stage-badge {
+    background: var(--status-done-bg);
+    color: var(--status-done-text);
+  }
+
+  /* ── Failed state ── */
+  .failed-banner {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 8px 10px;
+    background: var(--status-failed-bg);
+    border-radius: 6px;
+    font-size: 12.5px;
+    color: var(--status-failed-text);
+  }
+
+  .retry-btn {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent);
+    background: none;
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    padding: 3px 10px;
+    cursor: pointer;
+    margin-left: auto;
+    transition: all 120ms ease;
+  }
+
+  .retry-btn:hover {
+    background: rgba(168,160,120,0.1);
+  }
+
+  /* ── Columns layout ── */
+  .columns {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 32px;
+    margin-top: 16px;
+  }
+
+  .column-label {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-faint);
+    margin-bottom: 12px;
+  }
+
+  /* Divider */
+  .divider {
+    border: none;
+    border-top: 1px solid var(--border-subtle);
+    margin: 40px 0;
+  }
+</style>
+</head>
+<body>
+
+<h1>Pipeline Progress UI</h1>
+<p class="subtitle">Three approaches for showing real-time pipeline status on meeting cards</p>
+
+<!-- ═══════════════════════════════════════════ -->
+<h2>A: Live Stage Badges</h2>
+<p class="desc">Existing badge slots update in real-time. Completed stages show a check, active stage pulses, pending stages are dimmed. No new UI components needed.</p>
+
+<div style="display: flex; flex-direction: column; gap: 4px; max-width: 520px;">
+  <!-- Processing card -->
+  <div class="card">
+    <div class="card-title">Weekly Engineering Standup</div>
+    <div class="card-meta">
+      <span>Zoom</span>
+      <div class="meta-dot"></div>
+      <span>30m</span>
+      <div class="meta-dot"></div>
+      <span>5 participants</span>
+    </div>
+    <div class="stage-badges">
+      <span class="stage-badge done"><span class="badge-icon">✓</span> merge</span>
+      <span class="stage-badge done"><span class="badge-icon">✓</span> frames</span>
+      <span class="stage-badge active"><span class="badge-icon">◉</span> transcribe</span>
+      <span class="stage-badge pending"><span class="badge-icon">○</span> diarize</span>
+      <span class="stage-badge pending"><span class="badge-icon">○</span> analyze</span>
+      <span class="stage-badge pending"><span class="badge-icon">○</span> export</span>
+    </div>
+  </div>
+
+  <!-- Failed card -->
+  <div class="card">
+    <div class="card-title">Client Feedback Session</div>
+    <div class="card-meta">
+      <span>Teams</span>
+      <div class="meta-dot"></div>
+      <span>25m</span>
+      <div class="meta-dot"></div>
+      <span>2 participants</span>
+    </div>
+    <div class="stage-badges">
+      <span class="stage-badge done"><span class="badge-icon">✓</span> merge</span>
+      <span class="stage-badge done"><span class="badge-icon">✓</span> frames</span>
+      <span class="stage-badge failed"><span class="badge-icon">✕</span> transcribe</span>
+      <span class="stage-badge pending"><span class="badge-icon">○</span> diarize</span>
+      <span class="stage-badge pending"><span class="badge-icon">○</span> analyze</span>
+      <span class="stage-badge pending"><span class="badge-icon">○</span> export</span>
+    </div>
+  </div>
+
+  <!-- Completed card -->
+  <div class="card card-completed">
+    <div class="card-title">Project Kickoff with Acme Corp</div>
+    <div class="card-meta">
+      <span>Zoom</span>
+      <div class="meta-dot"></div>
+      <span>45m</span>
+      <div class="meta-dot"></div>
+      <span>3 participants</span>
+    </div>
+    <div class="stage-badges">
+      <span class="stage-badge done"><span class="badge-icon">✓</span> All complete</span>
+    </div>
+  </div>
+</div>
+
+<hr class="divider">
+
+<!-- ═══════════════════════════════════════════ -->
+<h2>B: Dedicated Progress Panel</h2>
+<p class="desc">Full panel showing each stage with progress bars, elapsed time, and log tail. Opens from the meeting card or in the detail view.</p>
+
+<div class="progress-panel">
+  <div class="progress-panel-title">
+    <div class="spinner"></div>
+    Processing: Weekly Engineering Standup
+  </div>
+
+  <div class="stage-row">
+    <div class="stage-icon done">✓</div>
+    <div class="stage-name">Merge</div>
+    <div class="stage-time">0:04</div>
+    <div class="progress-bar-track"><div class="progress-bar-fill done"></div></div>
+  </div>
+
+  <div class="stage-row">
+    <div class="stage-icon done">✓</div>
+    <div class="stage-name">Frames</div>
+    <div class="stage-time">0:12</div>
+    <div class="progress-bar-track"><div class="progress-bar-fill done"></div></div>
+  </div>
+
+  <div class="stage-row">
+    <div class="stage-icon active">◉</div>
+    <div class="stage-name">Transcribe</div>
+    <div class="stage-time">0:38</div>
+    <div class="progress-bar-track"><div class="progress-bar-fill active" style="width: 65%;"></div></div>
+  </div>
+
+  <div class="stage-row">
+    <div class="stage-icon pending">○</div>
+    <div class="stage-name pending">Diarize</div>
+    <div class="stage-time" style="color: var(--text-faint);">—</div>
+    <div class="progress-bar-track"><div class="progress-bar-fill" style="width: 0%;"></div></div>
+  </div>
+
+  <div class="stage-row">
+    <div class="stage-icon pending">○</div>
+    <div class="stage-name pending">Analyze</div>
+    <div class="stage-time" style="color: var(--text-faint);">—</div>
+    <div class="progress-bar-track"><div class="progress-bar-fill" style="width: 0%;"></div></div>
+  </div>
+
+  <div class="stage-row">
+    <div class="stage-icon pending">○</div>
+    <div class="stage-name pending">Export</div>
+    <div class="stage-time" style="color: var(--text-faint);">—</div>
+    <div class="progress-bar-track"><div class="progress-bar-fill" style="width: 0%;"></div></div>
+  </div>
+
+  <div class="log-output">
+    <span class="log-line">Transcribing with whisper-large-v3...</span>
+    <span class="log-line">Processing chunk 3/5 (38s elapsed)</span>
+  </div>
+
+  <div class="panel-actions">
+    <button class="btn-ghost">Cancel</button>
+  </div>
+</div>
+
+<!-- Failed state -->
+<div style="margin-top: 16px;"></div>
+<p class="desc">Failed state with retry:</p>
+<div class="progress-panel">
+  <div class="progress-panel-title" style="color: var(--status-failed-text);">
+    ✕ Failed: Client Feedback Session
+  </div>
+
+  <div class="stage-row">
+    <div class="stage-icon done">✓</div>
+    <div class="stage-name">Merge</div>
+    <div class="stage-time">0:04</div>
+    <div class="progress-bar-track"><div class="progress-bar-fill done"></div></div>
+  </div>
+
+  <div class="stage-row">
+    <div class="stage-icon done">✓</div>
+    <div class="stage-name">Frames</div>
+    <div class="stage-time">0:08</div>
+    <div class="progress-bar-track"><div class="progress-bar-fill done"></div></div>
+  </div>
+
+  <div class="stage-row">
+    <div class="stage-icon" style="background: var(--status-failed-bg); color: var(--status-failed-text);">✕</div>
+    <div class="stage-name" style="color: var(--status-failed-text);">Transcribe</div>
+    <div class="stage-time" style="color: var(--status-failed-text);">0:42</div>
+    <div class="progress-bar-track"><div class="progress-bar-fill" style="width: 80%; background: var(--status-failed-text);"></div></div>
+  </div>
+
+  <div class="stage-row">
+    <div class="stage-icon pending">○</div>
+    <div class="stage-name pending">Diarize</div>
+    <div class="stage-time" style="color: var(--text-faint);">—</div>
+    <div class="progress-bar-track"><div class="progress-bar-fill" style="width: 0%;"></div></div>
+  </div>
+
+  <div class="stage-row">
+    <div class="stage-icon pending">○</div>
+    <div class="stage-name pending">Analyze</div>
+    <div class="stage-time" style="color: var(--text-faint);">—</div>
+    <div class="progress-bar-track"><div class="progress-bar-fill" style="width: 0%;"></div></div>
+  </div>
+
+  <div class="stage-row">
+    <div class="stage-icon pending">○</div>
+    <div class="stage-name pending">Export</div>
+    <div class="stage-time" style="color: var(--text-faint);">—</div>
+    <div class="progress-bar-track"><div class="progress-bar-fill" style="width: 0%;"></div></div>
+  </div>
+
+  <div class="log-output" style="color: var(--status-failed-text);">
+    <span class="log-line">CUDA out of memory. Required: 4.2 GB, Available: 3.1 GB</span>
+    <span class="log-line">Try reducing batch_size or using a smaller model</span>
+  </div>
+
+  <div class="panel-actions">
+    <button class="retry-btn" style="margin-left: 0;">Retry from Transcribe</button>
+    <button class="btn-ghost">Dismiss</button>
+  </div>
+</div>
+
+<hr class="divider">
+
+<!-- ═══════════════════════════════════════════ -->
+<h2>C: Badges + Expandable Detail</h2>
+<p class="desc">Compact dot indicators on the card with a status label. Click to expand inline for full stage breakdown with timing and details.</p>
+
+<div style="display: flex; flex-direction: column; gap: 4px; max-width: 520px;">
+  <!-- Collapsed: Processing -->
+  <div class="card-expandable">
+    <div class="card-header">
+      <div>
+        <div class="card-title">Weekly Engineering Standup</div>
+        <div class="card-meta">
+          <span>Zoom</span>
+          <div class="meta-dot"></div>
+          <span>30m</span>
+          <div class="meta-dot"></div>
+          <span>5 participants</span>
+        </div>
+      </div>
+      <div class="card-right">
+        <div class="mini-progress">
+          <div class="mini-dot done"></div>
+          <div class="mini-dot done"></div>
+          <div class="mini-dot active"></div>
+          <div class="mini-dot pending"></div>
+          <div class="mini-dot pending"></div>
+          <div class="mini-dot pending"></div>
+          <span class="mini-label">Transcribing...</span>
+        </div>
+        <span class="expand-arrow">▾ expand</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Expanded: Processing -->
+  <div class="card-expandable" style="margin-top: 12px;">
+    <div class="card-header">
+      <div>
+        <div class="card-title">Weekly Engineering Standup</div>
+        <div class="card-meta">
+          <span>Zoom</span>
+          <div class="meta-dot"></div>
+          <span>30m</span>
+          <div class="meta-dot"></div>
+          <span>5 participants</span>
+        </div>
+      </div>
+      <div class="card-right">
+        <div class="mini-progress">
+          <div class="mini-dot done"></div>
+          <div class="mini-dot done"></div>
+          <div class="mini-dot active"></div>
+          <div class="mini-dot pending"></div>
+          <div class="mini-dot pending"></div>
+          <div class="mini-dot pending"></div>
+          <span class="mini-label">Transcribing...</span>
+        </div>
+        <span class="expand-arrow">▴ collapse</span>
+      </div>
+    </div>
+    <div class="expanded-detail" style="padding-top: 12px;">
+      <div class="stage-row-compact">
+        <div class="stage-dot done"></div>
+        <div class="stage-label">Merge audio/video</div>
+        <div class="stage-info">0:04</div>
+      </div>
+      <div class="stage-row-compact">
+        <div class="stage-dot done"></div>
+        <div class="stage-label">Extract frames</div>
+        <div class="stage-info">0:12</div>
+      </div>
+      <div class="stage-row-compact">
+        <div class="stage-dot active"></div>
+        <div class="stage-label">Transcribe</div>
+        <div class="stage-info">chunk 3/5 · 0:38</div>
+      </div>
+      <div class="stage-row-compact">
+        <div class="stage-dot pending"></div>
+        <div class="stage-label pending">Diarize</div>
+        <div class="stage-info" style="color: var(--text-faint);">—</div>
+      </div>
+      <div class="stage-row-compact">
+        <div class="stage-dot pending"></div>
+        <div class="stage-label pending">Analyze</div>
+        <div class="stage-info" style="color: var(--text-faint);">—</div>
+      </div>
+      <div class="stage-row-compact">
+        <div class="stage-dot pending"></div>
+        <div class="stage-label pending">Export to vault</div>
+        <div class="stage-info" style="color: var(--text-faint);">—</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Collapsed: Completed -->
+  <div class="card-expandable" style="margin-top: 12px;">
+    <div class="card-header">
+      <div>
+        <div class="card-title">Project Kickoff with Acme Corp</div>
+        <div class="card-meta">
+          <span>Zoom</span>
+          <div class="meta-dot"></div>
+          <span>45m</span>
+          <div class="meta-dot"></div>
+          <span>3 participants</span>
+        </div>
+      </div>
+      <div class="card-right">
+        <div class="mini-progress">
+          <div class="mini-dot done"></div>
+          <div class="mini-dot done"></div>
+          <div class="mini-dot done"></div>
+          <div class="mini-dot done"></div>
+          <div class="mini-dot done"></div>
+          <div class="mini-dot done"></div>
+          <span class="mini-label" style="color: var(--status-done-text);">Complete</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Collapsed: Failed -->
+  <div class="card-expandable" style="margin-top: 12px;">
+    <div class="card-header">
+      <div>
+        <div class="card-title">Client Feedback Session</div>
+        <div class="card-meta">
+          <span>Teams</span>
+          <div class="meta-dot"></div>
+          <span>25m</span>
+          <div class="meta-dot"></div>
+          <span>2 participants</span>
+        </div>
+      </div>
+      <div class="card-right">
+        <div class="mini-progress">
+          <div class="mini-dot done"></div>
+          <div class="mini-dot done"></div>
+          <div class="mini-dot" style="background: var(--status-failed-text);"></div>
+          <div class="mini-dot pending"></div>
+          <div class="mini-dot pending"></div>
+          <div class="mini-dot pending"></div>
+          <span class="mini-label" style="color: var(--status-failed-text);">Failed</span>
+        </div>
+      </div>
+    </div>
+    <div class="expanded-detail" style="padding-top: 12px;">
+      <div class="stage-row-compact">
+        <div class="stage-dot done"></div>
+        <div class="stage-label">Merge audio/video</div>
+        <div class="stage-info">0:04</div>
+      </div>
+      <div class="stage-row-compact">
+        <div class="stage-dot done"></div>
+        <div class="stage-label">Extract frames</div>
+        <div class="stage-info">0:08</div>
+      </div>
+      <div class="stage-row-compact">
+        <div class="stage-dot" style="background: var(--status-failed-text);"></div>
+        <div class="stage-label" style="color: var(--status-failed-text);">Transcribe</div>
+        <div class="stage-info" style="color: var(--status-failed-text);">CUDA OOM</div>
+      </div>
+      <div class="stage-row-compact">
+        <div class="stage-dot pending"></div>
+        <div class="stage-label pending">Diarize</div>
+        <div class="stage-info" style="color: var(--text-faint);">—</div>
+      </div>
+      <div class="stage-row-compact">
+        <div class="stage-dot pending"></div>
+        <div class="stage-label pending">Analyze</div>
+        <div class="stage-info" style="color: var(--text-faint);">—</div>
+      </div>
+      <div class="stage-row-compact">
+        <div class="stage-dot pending"></div>
+        <div class="stage-label pending">Export to vault</div>
+        <div class="stage-info" style="color: var(--text-faint);">—</div>
+      </div>
+      <div class="failed-banner" style="margin: 10px 0 0;">
+        CUDA out of memory
+        <button class="retry-btn">Retry</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>
