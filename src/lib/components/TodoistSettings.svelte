@@ -1,9 +1,14 @@
 <script lang="ts">
   import { settings, saveSetting } from "../stores/settings";
+  import { triggerTodoistSync } from "../tauri";
   import SettingsTooltip from "./SettingsTooltip.svelte";
 
   let newType = $state("");
   let newProject = $state("");
+  let syncing = $state(false);
+  let lastSyncResult = $state<string | null>(null);
+  let lastSyncTime = $state<string | null>(null);
+  let syncError = $state<string | null>(null);
 
   async function addMapping() {
     if (newType && newProject) {
@@ -18,6 +23,21 @@
     const updated = { ...$settings.todoistProjectMap };
     delete updated[type];
     await saveSetting("todoistProjectMap", updated);
+  }
+
+  async function handleSyncNow() {
+    syncing = true;
+    syncError = null;
+    lastSyncResult = null;
+    try {
+      const result = await triggerTodoistSync();
+      lastSyncResult = result || "Sync completed";
+      lastSyncTime = new Date().toLocaleTimeString();
+    } catch (e: any) {
+      syncError = typeof e === "string" ? e : e.message || "Sync failed";
+    } finally {
+      syncing = false;
+    }
   }
 
   const inputStyle = "width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 12px;font-size:15px;color:var(--text);font-family:'DM Sans',sans-serif;outline:none;";
@@ -42,6 +62,35 @@
     <span style={labelStyle}>Default Labels</span>
     <input type="text" value={$settings.todoistLabels} onblur={(e) => saveSetting("todoistLabels", e.currentTarget.value)} style={inputStyle} placeholder="Comma-separated labels" />
   </label>
+
+  <label style="display:block;">
+    <span style="display:flex;align-items:center;font-size:14px;color:var(--text-muted);margin-bottom:4px;font-family:'DM Sans',sans-serif;">Sync Interval<SettingsTooltip text="How often Recap automatically syncs task completions with Todoist. Runs in the background while the app is open." /></span>
+    <select value={$settings.todoistSyncInterval} onchange={(e) => saveSetting("todoistSyncInterval", Number(e.currentTarget.value))} style={inputStyle}>
+      <option value={5}>Every 5 minutes</option>
+      <option value={10}>Every 10 minutes</option>
+      <option value={15}>Every 15 minutes</option>
+      <option value={30}>Every 30 minutes</option>
+      <option value={60}>Every 60 minutes</option>
+    </select>
+  </label>
+
+  <div>
+    <span style={labelStyle}>Completion Sync</span>
+    <div style="display:flex;align-items:center;gap:12px;">
+      <button onclick={handleSyncNow} disabled={syncing} style="{buttonStyle};opacity:{syncing ? '0.6' : '1'};padding:6px 16px;">
+        {syncing ? "Syncing..." : "Sync Now"}
+      </button>
+      {#if lastSyncTime}
+        <span style="font-size:13px;color:var(--text-muted);font-family:'DM Sans',sans-serif;">Last sync: {lastSyncTime}</span>
+      {/if}
+    </div>
+    {#if syncError}
+      <p style="margin:6px 0 0;font-size:13px;color:var(--red);font-family:'DM Sans',sans-serif;">{syncError}</p>
+    {/if}
+    {#if lastSyncResult && !syncError}
+      <p style="margin:6px 0 0;font-size:13px;color:var(--green);font-family:'DM Sans',sans-serif;">{lastSyncResult}</p>
+    {/if}
+  </div>
 
   <div>
     <span style={labelStyle}>Project Map</span>

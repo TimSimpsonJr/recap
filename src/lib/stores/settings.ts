@@ -30,6 +30,7 @@ export interface AppSettings {
   claudeModel: string;
   claudeCommand: string;
   todoistProjectMap: Record<string, string>;
+  todoistSyncInterval: number;  // minutes, default 15
   extensionInstalled: boolean;
   setupChecklistDismissed: boolean;
 }
@@ -63,6 +64,7 @@ const defaults: AppSettings = {
   claudeModel: "sonnet",
   claudeCommand: "claude",
   todoistProjectMap: {},
+  todoistSyncInterval: 15,
   extensionInstalled: false,
   setupChecklistDismissed: false,
 };
