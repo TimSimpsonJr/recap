@@ -32,18 +32,19 @@
     width: {expanded ? '200px' : '0px'};
     min-width: {expanded ? '200px' : '0px'};
     overflow: hidden;
-    transition: width 200ms ease, min-width 200ms ease;
+    transition: width 300ms cubic-bezier(0.4, 0, 0.2, 1), min-width 300ms cubic-bezier(0.4, 0, 0.2, 1), padding 300ms cubic-bezier(0.4, 0, 0.2, 1);
     background: var(--bg);
     border-right: {expanded ? '1px solid var(--border)' : 'none'};
     height: 100%;
     flex-shrink: 0;
   "
 >
-  {#if expanded}
     <div
       style="
         padding: 14px 14px 8px 14px;
         font-family: 'DM Sans', sans-serif;
+        opacity: {expanded ? '1' : '0'};
+        transition: opacity 200ms ease {expanded ? '100ms' : '0ms'};
       "
     >
       <!-- Header -->
@@ -296,7 +297,6 @@
         </div>
       {/if}
     </div>
-  {/if}
 </div>
 
 <style>
