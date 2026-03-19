@@ -33,10 +33,10 @@ pub fn run() {
             // so Argon2's brute-force resistance just adds 20-30s startup delay)
             app.handle().plugin(
                 tauri_plugin_stronghold::Builder::new(|password| {
-                    use std::hash::{DefaultHasher, Hash, Hasher};
-                    let mut hasher = DefaultHasher::new();
-                    password.hash(&mut hasher);
-                    hasher.finish().to_le_bytes().to_vec()
+                    // SHA-256 produces the 32 bytes Stronghold needs for its key
+                    use sha2::{Sha256, Digest};
+                    let result = Sha256::digest(password.as_bytes());
+                    result.to_vec()
                 })
                 .build(),
             )?;
