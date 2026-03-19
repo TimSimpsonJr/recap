@@ -11,7 +11,7 @@ import typing
 from recap.analyze import analyze
 from recap.config import RecapConfig
 from recap.frames import extract_frames
-from recap.models import MeetingMetadata, TranscriptResult
+from recap.models import MeetingMetadata, Participant, TranscriptResult
 from recap.todoist import create_tasks, save_retry_file
 from recap.transcribe import transcribe
 from recap.vault import find_previous_meeting, write_meeting_note, write_profile_stubs, slugify
@@ -232,6 +232,22 @@ def run_pipeline(
             _mark_stage(status, "frames", False, str(e))
             _save_status(working_dir, status, recording_dest)
     results["frames"] = [f.path for f in frames]
+
+    # If no participants, try screenshot extraction
+    if not metadata.participants:
+        participant_frames = sorted(working_dir.glob("participant_frame_*.png"))
+        if participant_frames:
+            logger.info("No participants in metadata — trying screenshot extraction")
+            extracted_names = extract_participants_from_screenshots(participant_frames)
+            if extracted_names:
+                metadata.participants = [
+                    Participant(name=name) for name in extracted_names
+                ]
+                logger.info(
+                    "Extracted %d participants from screenshots: %s",
+                    len(extracted_names),
+                    extracted_names,
+                )
 
     # Pause for speaker review if no participants are available
     if not metadata.participants:
