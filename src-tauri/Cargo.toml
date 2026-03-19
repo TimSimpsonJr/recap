@@ -20,7 +20,6 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "protocol-asset"] }
 tauri-plugin-opener = "2"
-tauri-plugin-stronghold = "2"
 tauri-plugin-store = "2"
 tauri-plugin-deep-link = "2"
 tauri-plugin-autostart = "2"
@@ -67,3 +66,5 @@ windows = { version = "0.58", features = [
 tauri-plugin-window-state = "2"
 axum = "0.8"
 serde_yaml = "0.9"
+aes-gcm = "0.10"
+rand = "0.8"

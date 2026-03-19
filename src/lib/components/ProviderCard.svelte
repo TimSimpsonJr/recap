@@ -52,13 +52,16 @@
     connecting = true;
     connectError = "";
     try {
+      console.log(`[OAuth] Saving credentials for ${provider}...`);
       await saveClientCredentials(provider, clientId, clientSecret);
+      console.log(`[OAuth] Credentials saved. Starting OAuth...`);
       let zohoRegion: string | undefined;
       if (provider === "zoho") {
         const s = $settings;
         zohoRegion = s.zohoRegion;
       }
       await startOAuth(provider, clientId, clientSecret, zohoRegion);
+      console.log(`[OAuth] startOAuth returned.`);
     } catch (err: any) {
       connectError = String(err);
       console.error(`OAuth connect failed for ${provider}:`, err);
@@ -93,34 +96,34 @@
       steps: [
         'Go to the <a href="https://marketplace.zoom.us/develop/create" target="_blank" rel="noopener noreferrer" style="color:var(--blue);">Zoom App Marketplace</a>',
         'Select <strong>General App</strong> and click "Create"',
-        'Under OAuth redirect URL, add: <code style="background:var(--bg);padding:1px 4px;border-radius:3px;font-size:12px;">http://localhost</code>',
+        'Under OAuth redirect URL, add: <code style="background:var(--bg);padding:1px 4px;border-radius:3px;font-size:12px;">http://localhost:8399</code>',
         'Go to the <strong>Scopes</strong> tab → "Add Scopes" and search for: <strong>meeting:read:meeting</strong>, <strong>recording:read:recording</strong>, <strong>user:read:user</strong> — check each one',
         'Copy the <strong>Client ID</strong> and <strong>Client Secret</strong> from the <strong>App Credentials</strong> section',
       ],
-      redirectUri: "http://localhost",
+      redirectUri: "http://localhost:8399",
     },
     google: {
       url: "https://console.cloud.google.com/apis/credentials",
       steps: [
         'Go to <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer" style="color:var(--blue);">Google Cloud Console → Credentials</a>',
-        'Click "Create Credentials" → <strong>OAuth client ID</strong>',
-        'Application type: <strong>Desktop app</strong>',
-        'Enable the <strong>Google Calendar API</strong> and <strong>Google Meet REST API</strong> in your project',
+        'If you don\'t have a project yet, click <strong>"Create project"</strong> first and give it a name (e.g. "Recap")',
+        'Go to <strong>OAuth consent screen</strong> in the left sidebar → set to <strong>External</strong>, fill in the app name, and add your Google email as a test user',
+        'Go to <strong>Library</strong> in the left sidebar and enable the <strong>Google Calendar API</strong> and <strong>Google Meet REST API</strong>',
+        'Go back to <strong>Credentials</strong> → click "Create Credentials" → <strong>OAuth client ID</strong> → Application type: <strong>Desktop app</strong>',
         "Copy the <strong>Client ID</strong> and <strong>Client Secret</strong> from the created credential",
       ],
-      redirectUri: "http://localhost (auto-assigned)",
-      note: "You may need to configure the OAuth consent screen first. Set it to External and add your Google account as a test user.",
+      redirectUri: "http://localhost:8399",
     },
     microsoft: {
       url: "https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade",
       steps: [
         'Go to <a href="https://portal.azure.com/#view/Microsoft_AAD_RegisteredApps/ApplicationsListBlade" target="_blank" rel="noopener noreferrer" style="color:var(--blue);">Azure Portal → App Registrations</a>',
         'Click "New registration"',
-        'Under Redirect URI, select <strong>Mobile and desktop applications</strong> and add: <code style="background:var(--bg);padding:1px 4px;border-radius:3px;font-size:12px;">http://localhost</code>',
+        'Under Redirect URI, select <strong>Mobile and desktop applications</strong> and add: <code style="background:var(--bg);padding:1px 4px;border-radius:3px;font-size:12px;">http://localhost:8399</code>',
         'Go to "Certificates & secrets" → New client secret → copy the <strong>Value</strong> (this is your Client Secret)',
         'Copy the <strong>Application (client) ID</strong> from the Overview page',
       ],
-      redirectUri: "http://localhost",
+      redirectUri: "http://localhost:8399",
       note: "Personal Microsoft accounts have limited meeting API access. Calendar integration will still work.",
     },
     zoho: {
@@ -128,11 +131,12 @@
       steps: [
         'Go to <a href="https://api-console.zoho.com/" target="_blank" rel="noopener noreferrer" style="color:var(--blue);">Zoho API Console</a>',
         'Click "Add Client" → choose <strong>Server-based Applications</strong>',
-        'Set the Redirect URI to: <code style="background:var(--bg);padding:1px 4px;border-radius:3px;font-size:12px;">recap://oauth/zoho/callback</code>',
-        "Add scopes: <strong>ZohoMeeting.manageOrg.READ</strong>, <strong>ZohoCalendar.calendar.READ</strong>",
+        'For <strong>Homepage URL</strong>, enter <code style="background:var(--bg);padding:1px 4px;border-radius:3px;font-size:12px;">http://localhost</code> (required field, not actually used)',
+        'Set the <strong>Authorized Redirect URI</strong> to: <code style="background:var(--bg);padding:1px 4px;border-radius:3px;font-size:12px;">http://localhost:8399</code>',
+        'Click the <strong>Client Secret</strong> tab to find your credentials',
         "Copy the <strong>Client ID</strong> and <strong>Client Secret</strong>",
       ],
-      redirectUri: "recap://oauth/zoho/callback",
+      redirectUri: "http://localhost:8399",
       note: "Make sure to select the correct region above to match your Zoho account.",
     },
     todoist: {
@@ -140,10 +144,10 @@
       steps: [
         'Go to <a href="https://developer.todoist.com/appconsole.html" target="_blank" rel="noopener noreferrer" style="color:var(--blue);">Todoist App Console</a>',
         'Click "Create a new app"',
-        'Set the OAuth redirect URL to: <code style="background:var(--bg);padding:1px 4px;border-radius:3px;font-size:12px;">recap://oauth/todoist/callback</code>',
+        'Set the OAuth redirect URL to: <code style="background:var(--bg);padding:1px 4px;border-radius:3px;font-size:12px;">http://localhost:8399</code>',
         "Copy the <strong>Client ID</strong> and <strong>Client Secret</strong> from the app settings",
       ],
-      redirectUri: "recap://oauth/todoist/callback",
+      redirectUri: "http://localhost:8399",
     },
   };
 

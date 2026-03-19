@@ -35,6 +35,13 @@
   }
 
   let activeProvider = $derived(providers.find((p) => p.provider === activeModal));
+
+  // Auto-close modal when provider becomes connected
+  $effect(() => {
+    if (activeModal && $credentials[activeModal]?.status === "connected") {
+      activeModal = null;
+    }
+  });
 </script>
 
 <div style="height:100%;overflow-y:auto;background:var(--bg);">

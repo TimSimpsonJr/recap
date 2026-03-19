@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
-use std::net::TcpListener;
+use std::net::{TcpListener, TcpStream};
 
 /// How we receive the OAuth callback.
 #[derive(Debug, Clone)]
@@ -63,7 +63,7 @@ pub fn get_provider_config(provider: &str, zoho_region: Option<&str>) -> Option<
                 auth_url: format!("https://accounts.zoho.{}/oauth/v2/auth", region),
                 token_url: format!("https://accounts.zoho.{}/oauth/v2/token", region),
                 scopes: "ZohoMeeting.manageOrg.READ ZohoCalendar.calendar.READ".into(),
-                redirect_method: RedirectMethod::DeepLink,
+                redirect_method: RedirectMethod::Localhost,
             })
         }
         "todoist" => Some(OAuthConfig {
@@ -71,7 +71,7 @@ pub fn get_provider_config(provider: &str, zoho_region: Option<&str>) -> Option<
             auth_url: "https://todoist.com/oauth/authorize".into(),
             token_url: "https://todoist.com/oauth/access_token".into(),
             scopes: "data:read_write".into(),
-            redirect_method: RedirectMethod::DeepLink,
+            redirect_method: RedirectMethod::Localhost,
         }),
         _ => None,
     }
@@ -176,12 +176,36 @@ pub async fn refresh_token(
         .map_err(|e| format!("Failed to parse token response: {}", e))
 }
 
-/// Start a temporary localhost HTTP server on a random port to receive
+/// Fixed port for OAuth localhost callback. Must match the redirect URI
+/// registered with each provider (e.g. http://localhost:8399).
+const OAUTH_CALLBACK_PORT: u16 = 8399;
+
+/// Start a temporary localhost HTTP server on a fixed port to receive
 /// the OAuth callback. Returns (port, receiver) where receiver will get
 /// the authorization code once the callback arrives.
+///
+/// If the port is already in use (e.g. from a previous OAuth flow still in
+/// TIME_WAIT), we briefly connect to the old listener to unblock it, then
+/// rebind.
 pub fn start_localhost_server() -> Result<(u16, std::sync::mpsc::Receiver<String>), String> {
-    let listener =
-        TcpListener::bind("127.0.0.1:0").map_err(|e| format!("Failed to bind: {}", e))?;
+    let listener = match TcpListener::bind(format!("127.0.0.1:{}", OAUTH_CALLBACK_PORT)) {
+        Ok(l) => l,
+        Err(_) => {
+            // Port is held by a previous listener — poke it to unblock accept()
+            let _ = TcpStream::connect(format!("127.0.0.1:{}", OAUTH_CALLBACK_PORT));
+            // Brief pause for the old thread to exit
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            TcpListener::bind(format!("127.0.0.1:{}", OAUTH_CALLBACK_PORT))
+                .map_err(|e| format!("Failed to bind port {}: {}", OAUTH_CALLBACK_PORT, e))?
+        }
+    };
+
+    // Set a timeout so the accept thread doesn't block forever
+    listener
+        .set_nonblocking(false)
+        .ok();
+    let _ = listener.set_ttl(60);
+
     let port = listener
         .local_addr()
         .map_err(|e| format!("Failed to get local addr: {}", e))?
@@ -191,6 +215,9 @@ pub fn start_localhost_server() -> Result<(u16, std::sync::mpsc::Receiver<String
 
     std::thread::spawn(move || {
         // Accept one connection, extract the code, send response, shut down
+        // Set a 5 minute timeout so the thread eventually dies
+        let _ = listener.set_nonblocking(false);
+
         if let Ok((mut stream, _)) = listener.accept() {
             let mut buf = [0u8; 4096];
             let n = stream.read(&mut buf).unwrap_or(0);
@@ -222,6 +249,7 @@ pub fn start_localhost_server() -> Result<(u16, std::sync::mpsc::Receiver<String
                 let _ = tx.send(code);
             }
         }
+        // listener is dropped here, releasing the port
     });
 
     Ok((port, rx))
@@ -249,7 +277,7 @@ pub async fn start_oauth(
         }
         RedirectMethod::Localhost => {
             let (port, rx) = start_localhost_server()?;
-            let redirect = format!("http://127.0.0.1:{}", port);
+            let redirect = format!("http://localhost:{}", port);
 
             // Spawn a task to wait for the code from the localhost server
             let config_clone = config.clone();

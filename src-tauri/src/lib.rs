@@ -29,17 +29,8 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
-            // Stronghold with fast hash (password is a hardcoded constant, not user input,
-            // so Argon2's brute-force resistance just adds 20-30s startup delay)
-            app.handle().plugin(
-                tauri_plugin_stronghold::Builder::new(|password| {
-                    // SHA-256 produces the 32 bytes Stronghold needs for its key
-                    use sha2::{Sha256, Digest};
-                    let result = Sha256::digest(password.as_bytes());
-                    result.to_vec()
-                })
-                .build(),
-            )?;
+            // Encrypted credential store (AES-256-GCM, key derived from machine identity)
+            credentials::init_secret_store(app)?;
 
             // Deep link plugin
             app.handle().plugin(tauri_plugin_deep_link::init())?;
@@ -158,8 +149,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            credentials::store_credential,
-            credentials::get_provider_status,
+            credentials::save_secret,
+            credentials::get_secret,
+            credentials::delete_secret,
             oauth::start_oauth,
             oauth::exchange_oauth_code,
             sidecar::run_pipeline,

@@ -36,6 +36,13 @@
 
   let activeProvider = $derived(providers.find((p) => p.provider === activeModal));
 
+  // Auto-close modal when provider becomes connected
+  $effect(() => {
+    if (activeModal && $credentials[activeModal]?.status === "connected") {
+      activeModal = null;
+    }
+  });
+
   async function markExtensionInstalled() {
     await saveSetting("extensionInstalled", true);
   }
