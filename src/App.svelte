@@ -57,17 +57,18 @@
   }
 
   onMount(async () => {
-    try {
-      await loadCredentials();
-    } catch (err) {
-      console.error("Failed to load credentials:", err);
-    }
+    // Load settings first (fast, plugin-store) so UI can render immediately
     try {
       await loadSettings();
     } catch (err) {
       console.error("Failed to load settings:", err);
     }
     initialized = true;
+
+    // Load credentials in background (Stronghold + Argon2 is slow)
+    loadCredentials().catch((err) => {
+      console.error("Failed to load credentials:", err);
+    });
 
     // Apply persisted zoom level
     const savedZoom = get(settings).zoomLevel;
