@@ -153,6 +153,8 @@ export type RecorderState =
   | "processing"
   | "declined";
 
+export type MeetingPlatform = "zoom" | "teams" | "google_meet" | "zoho_meet" | "unknown";
+
 // Meetings IPC
 export async function listMeetings(
   recordingsDir: string,

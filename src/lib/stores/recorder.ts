@@ -38,6 +38,7 @@ export async function cancelRec(): Promise<void> {
 // Helper to extract the state tag from the discriminated union
 export function recorderTag(state: RecorderState): string {
   if (typeof state === "string") return state;
+  if ("armed" in state) return "armed";
   if ("detected" in state) return "detected";
   return "unknown";
 }
