@@ -248,7 +248,7 @@
     flex: 1;
     overflow-y: auto;
     padding: 0 28px;
-    transition: flex 200ms ease;
+    transition: flex 400ms cubic-bezier(0.4, 0, 0.2, 1);
   }
 
   .meeting-list-panel.has-detail {
@@ -261,7 +261,7 @@
   .detail-panel-wrapper {
     flex: 1;
     overflow: hidden;
-    animation: slide-in 200ms ease;
+    animation: slide-in 400ms cubic-bezier(0.4, 0, 0.2, 1);
   }
 
   @keyframes slide-in {

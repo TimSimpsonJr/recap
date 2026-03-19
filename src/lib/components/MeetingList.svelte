@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { fly } from "svelte/transition";
   import type { MeetingSummary } from "../tauri";
   import MeetingRow from "./MeetingRow.svelte";
 
@@ -83,12 +84,14 @@
       >
         {group.label}
       </div>
-      {#each group.meetings as meeting (meeting.id)}
-        <MeetingRow
-          {meeting}
-          isSelected={selectedId === meeting.id}
-          {onSelect}
-        />
+      {#each group.meetings as meeting, i (meeting.id)}
+        <div transition:fly={{ y: 10, duration: 200, delay: i * 30 }}>
+          <MeetingRow
+            {meeting}
+            isSelected={selectedId === meeting.id}
+            {onSelect}
+          />
+        </div>
       {/each}
     {/each}
   </div>
