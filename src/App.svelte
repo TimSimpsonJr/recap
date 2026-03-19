@@ -45,6 +45,19 @@
     setZoom(current + (e.deltaY < 0 ? 0.1 : -0.1));
   }
 
+  function handleNavMousedown(e: MouseEvent) {
+    // Only drag on left-click on the nav bar itself or non-interactive children
+    if (e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    // Don't drag if clicking a button, link, or input
+    if (target.closest("button, a, input, [data-no-drag]")) return;
+    if (e.detail === 2) {
+      appWindow.toggleMaximize();
+    } else {
+      appWindow.startDragging();
+    }
+  }
+
   let currentRoute = $state("dashboard");
   let meetingId = $state<string | null>(null);
   let filterParticipant = $state<string | null>(null);
@@ -173,9 +186,10 @@
       <Onboarding />
     {:else}
     <!-- Title bar + Nav -->
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
     <nav
-      data-tauri-drag-region
       class="flex items-center shrink-0"
+      onmousedown={handleNavMousedown}
       style="
         height: 48px;
         padding: 0 16px 0 28px;
@@ -195,7 +209,7 @@
           font-weight: 700;
           color: var(--text);
           margin-right: 12px;
-          -webkit-app-region: no-drag;
+
         "
       >
         <img src={logoSvg} alt="Recap" width="22" height="22" />
@@ -216,7 +230,7 @@
           gap: 6px;
           border-bottom: 2px solid {currentRoute === 'dashboard' ? 'var(--gold)' : 'transparent'};
           color: {currentRoute === 'dashboard' ? 'var(--gold)' : 'var(--text-faint)'};
-          -webkit-app-region: no-drag;
+
         "
       >
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -237,7 +251,7 @@
           gap: 6px;
           border-bottom: 2px solid {currentRoute === 'calendar' ? 'var(--gold)' : 'transparent'};
           color: {currentRoute === 'calendar' ? 'var(--gold)' : 'var(--text-faint)'};
-          -webkit-app-region: no-drag;
+
         "
       >
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -258,7 +272,7 @@
           gap: 6px;
           border-bottom: 2px solid {currentRoute === 'graph' ? 'var(--gold)' : 'transparent'};
           color: {currentRoute === 'graph' ? 'var(--gold)' : 'var(--text-faint)'};
-          -webkit-app-region: no-drag;
+
         "
       >
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -279,7 +293,7 @@
           gap: 6px;
           border-bottom: 2px solid {currentRoute === 'settings' ? 'var(--gold)' : 'transparent'};
           color: {currentRoute === 'settings' ? 'var(--gold)' : 'var(--text-faint)'};
-          -webkit-app-region: no-drag;
+
         "
       >
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -292,7 +306,7 @@
       <div class="flex-1"></div>
 
       <!-- Window controls -->
-      <div class="flex items-center" style="-webkit-app-region: no-drag;">
+      <div class="flex items-center">
         <button
           class="titlebar-btn"
           onclick={() => appWindow.minimize()}

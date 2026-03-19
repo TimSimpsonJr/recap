@@ -270,9 +270,7 @@
       {#if providerState.status === "connected"}
         <button
           onclick={handleDisconnect}
-          style="font-size:14.5px;color:var(--red);background:none;border:none;cursor:pointer;font-family:'DM Sans',sans-serif;"
-          onmouseenter={(e) => { e.currentTarget.style.textDecoration = 'underline'; }}
-          onmouseleave={(e) => { e.currentTarget.style.textDecoration = 'none'; }}
+          style="font-size:14px;color:var(--red);background:none;border:1px solid var(--red);border-radius:6px;padding:6px 16px;cursor:pointer;font-family:'DM Sans',sans-serif;font-weight:500;"
         >
           Disconnect
         </button>

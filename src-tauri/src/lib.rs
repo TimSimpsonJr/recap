@@ -111,11 +111,6 @@ pub fn run() {
                 .build(),
         )
         .setup(|app| {
-            // Ensure decorations are disabled (window-state plugin may restore them)
-            if let Some(window) = app.get_webview_window("main") {
-                let _ = window.set_decorations(false);
-            }
-
             // Encrypted credential store (AES-256-GCM, key derived from machine identity)
             credentials::init_secret_store(app)?;
 
@@ -268,8 +263,16 @@ pub fn run() {
             // TODO: When auto-start-with-Windows is implemented, check if launched
             // via startup and hide instead (start in tray).
             if let Some(window) = app.get_webview_window("main") {
-                // Restore saved window state (size, position) if available
-                let _ = window.restore_state(StateFlags::all());
+                // Restore saved window state (size, position) but NOT decorations
+                let _ = window.restore_state(
+                    StateFlags::POSITION
+                        | StateFlags::SIZE
+                        | StateFlags::MAXIMIZED
+                        | StateFlags::VISIBLE
+                        | StateFlags::FULLSCREEN,
+                );
+                // Force decorations off AFTER restore (plugin may have saved them on)
+                let _ = window.set_decorations(false);
                 let _ = window.show();
                 let _ = window.set_focus();
             }

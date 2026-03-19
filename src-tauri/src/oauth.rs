@@ -62,7 +62,7 @@ pub fn get_provider_config(provider: &str, zoho_region: Option<&str>) -> Option<
                 provider: "zoho".into(),
                 auth_url: format!("https://accounts.zoho.{}/oauth/v2/auth", region),
                 token_url: format!("https://accounts.zoho.{}/oauth/v2/token", region),
-                scopes: "ZohoMeeting.manageOrg.READ ZohoCalendar.calendar.READ".into(),
+                scopes: "ZohoMeeting.manageOrg.READ ZohoCalendar.calendar.READ ZohoCalendar.event.READ".into(),
                 redirect_method: RedirectMethod::Localhost,
             })
         }
@@ -84,14 +84,28 @@ pub fn build_auth_url(
     redirect_uri: &str,
     state: &str,
 ) -> String {
-    format!(
+    let mut url = format!(
         "{}?client_id={}&redirect_uri={}&response_type=code&scope={}&state={}",
         config.auth_url,
         urlencoding::encode(client_id),
         urlencoding::encode(redirect_uri),
         urlencoding::encode(&config.scopes),
         urlencoding::encode(state),
-    )
+    );
+
+    // Zoho and Google require access_type=offline to return a refresh token.
+    // prompt=consent ensures the consent screen is shown (required for re-auth).
+    match config.provider.as_str() {
+        "zoho" | "google" => {
+            url.push_str("&access_type=offline&prompt=consent");
+        }
+        "microsoft" => {
+            url.push_str("&prompt=consent");
+        }
+        _ => {}
+    }
+
+    url
 }
 
 /// Exchange an authorization code for tokens.

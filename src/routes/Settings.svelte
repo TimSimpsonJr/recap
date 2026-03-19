@@ -30,6 +30,7 @@
   let windowWidth = $state(window.innerWidth);
 
   function openModal(provider: ProviderName) {
+    modalOpenStatus = $credentials[provider]?.status ?? "disconnected";
     activeModal = provider;
   }
 
@@ -53,108 +54,140 @@
     return "var(--text-faint)";
   }
 
-  // Auto-close modal when provider becomes connected
+  let modalOpenStatus = $state<string | null>(null);
   $effect(() => {
-    if (activeModal && $credentials[activeModal]?.status === "connected") {
+    if (activeModal && modalOpenStatus !== "connected" && $credentials[activeModal]?.status === "connected") {
       activeModal = null;
+      modalOpenStatus = null;
     }
   });
 
-  function handleResize() {
-    windowWidth = window.innerWidth;
-  }
+  let wide = $derived(windowWidth > 1000);
 </script>
 
-<svelte:window onresize={handleResize} />
+<svelte:window onresize={() => windowWidth = window.innerWidth} />
 
 <div style="height:100%;overflow-y:auto;background:var(--bg);">
 <div style="
-  display: grid;
-  grid-template-columns: {windowWidth > 1000 ? '1fr 1fr' : '1fr'};
-  gap: 24px;
-  max-width: {windowWidth > 1000 ? '1000px' : '700px'};
+  max-width: {wide ? '1000px' : '600px'};
   margin: 0 auto;
   padding: 24px 28px 48px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
 ">
-    <!-- Platform Connections spans both columns -->
-    <div style="grid-column: 1 / -1;">
-      <section>
-        <!-- Collapsible header -->
-        <button
-          onclick={() => platformsExpanded = !platformsExpanded}
-          style="
-            width:100%;display:flex;align-items:center;justify-content:space-between;
-            background:none;border:none;cursor:pointer;padding:0;margin-bottom:{platformsExpanded ? '12px' : '0'};
-          "
-        >
-          <div style="display:flex;align-items:center;gap:12px;">
-            <h2 style="font-family:'Source Serif 4',serif;font-size:18px;font-weight:600;color:var(--text);margin:0;">
-              Platform Connections
-            </h2>
-            <div style="display:flex;align-items:center;gap:6px;">
-              {#each providers as p}
-                <span style="
-                  display:inline-block;width:8px;height:8px;border-radius:50%;
-                  background:{statusColor(p.provider)};
-                "></span>
-              {/each}
-            </div>
-          </div>
-          <svg
-            width="16" height="16" viewBox="0 0 16 16" fill="none"
-            stroke="var(--text-muted)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
-            style="transform:rotate({platformsExpanded ? '180deg' : '0deg'});transition:transform 0.2s ease;"
-          >
-            <path d="M4 6l4 4 4-4"/>
-          </svg>
-        </button>
+  <!-- Platform Connections — full width -->
+  <section>
+    <button
+      onclick={() => platformsExpanded = !platformsExpanded}
+      style="
+        width: 100%; display: flex; align-items: center; justify-content: space-between;
+        background: var(--surface); border: 1px solid var(--border); border-radius: 8px;
+        cursor: pointer; padding: 12px 16px;
+      "
+    >
+      <div style="display:flex;align-items:center;gap:12px;">
+        <h2 style="font-family:'Source Serif 4',serif;font-size:18px;font-weight:600;color:var(--text);margin:0;">
+          Platform Connections
+        </h2>
+        <div style="display:flex;align-items:center;gap:6px;">
+          {#each providers as p}
+            <span style="
+              display:inline-block;width:8px;height:8px;border-radius:50%;
+              background:{statusColor(p.provider)};
+            "></span>
+          {/each}
+        </div>
+      </div>
+      <svg
+        width="16" height="16" viewBox="0 0 16 16" fill="none"
+        stroke="var(--text-muted)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"
+        style="transform:rotate({platformsExpanded ? '180deg' : '0deg'});transition:transform 0.2s ease;"
+      >
+        <path d="M4 6l4 4 4-4"/>
+      </svg>
+    </button>
 
-        {#if platformsExpanded}
-          <div transition:slide={{ duration: 200 }} style="display:flex;flex-direction:column;gap:4px;">
-            {#each providers as p}
-              <ProviderStatusCard
-                label={p.label}
-                providerState={$credentials[p.provider]}
-                onconfigure={() => openModal(p.provider)}
-              />
-            {/each}
-          </div>
-        {/if}
-      </section>
+    {#if platformsExpanded}
+      <div transition:slide={{ duration: 200 }} style="display:flex;flex-direction:column;gap:4px;margin-top:8px;">
+        {#each providers as p}
+          <ProviderStatusCard
+            label={p.label}
+            providerState={$credentials[p.provider]}
+            onconfigure={() => openModal(p.provider)}
+          />
+        {/each}
+      </div>
+    {/if}
+  </section>
+
+  <!-- Two-column row: Vault | Recording -->
+  {#if wide}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start;">
+      <SettingsSection title="Vault">
+        <VaultSettings />
+      </SettingsSection>
+      <SettingsSection title="Recording">
+        <RecordingSettings />
+        <div style="border-top:1px solid var(--border);padding-top:12px;">
+          <RecordingBehaviorSettings />
+        </div>
+      </SettingsSection>
     </div>
-
+  {:else}
     <SettingsSection title="Vault">
       <VaultSettings />
     </SettingsSection>
-
     <SettingsSection title="Recording">
       <RecordingSettings />
       <div style="border-top:1px solid var(--border);padding-top:12px;">
         <RecordingBehaviorSettings />
       </div>
     </SettingsSection>
+  {/if}
 
+  <!-- Two-column row: Claude | WhisperX -->
+  {#if wide}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start;">
+      <SettingsSection title="Claude">
+        <ClaudeSettings />
+      </SettingsSection>
+      <SettingsSection title="WhisperX">
+        <WhisperXSettings />
+      </SettingsSection>
+    </div>
+  {:else}
     <SettingsSection title="Claude">
       <ClaudeSettings />
     </SettingsSection>
-
     <SettingsSection title="WhisperX">
       <WhisperXSettings />
     </SettingsSection>
+  {/if}
 
+  <!-- Two-column row: Todoist | General -->
+  {#if wide}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;align-items:start;">
+      <SettingsSection title="Todoist">
+        <TodoistSettings />
+      </SettingsSection>
+      <SettingsSection title="General">
+        <GeneralSettings />
+      </SettingsSection>
+    </div>
+  {:else}
     <SettingsSection title="Todoist">
       <TodoistSettings />
     </SettingsSection>
-
     <SettingsSection title="General">
       <GeneralSettings />
     </SettingsSection>
+  {/if}
 
-    <div style="grid-column: 1 / -1;">
-      <SettingsSection title="About">
-        <AboutSection />
-      </SettingsSection>
-    </div>
+  <!-- About — full width -->
+  <SettingsSection title="About">
+    <AboutSection />
+  </SettingsSection>
 </div>
 </div>
 

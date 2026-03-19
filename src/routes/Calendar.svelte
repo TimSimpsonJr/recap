@@ -111,23 +111,28 @@
     try {
       const cache: CalendarCache = await syncCalendar();
       lastSynced = cache.last_synced;
-      await loadEvents();
+      error = null;
     } catch (err) {
       error = String(err);
       console.error("Calendar sync failed:", err);
-    } finally {
-      syncing = false;
     }
+    // Always try to load cached events, even if sync failed
+    await loadEvents();
+    syncing = false;
   }
 
   async function loadEvents() {
     const s = get(settings);
-    try {
-      // Upcoming: next 7 days
-      upcoming = await getUpcomingMeetings(168);
 
-      // Past: last 30 days — fetch via getUpcomingMeetings with negative trick won't work,
-      // so we use fetchCalendarEvents for the past range
+    // Load upcoming from cache (doesn't hit API)
+    try {
+      upcoming = await getUpcomingMeetings(168);
+    } catch (err) {
+      console.warn("Failed to load upcoming events from cache:", err);
+    }
+
+    // Load past events (hits API — may fail independently)
+    try {
       const { fetchCalendarEvents } = await import("../lib/tauri");
       const now = new Date();
       const thirtyDaysAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
@@ -135,18 +140,22 @@
         thirtyDaysAgo.toISOString(),
         now.toISOString()
       );
-      // Filter to only past events and sort newest first
       past = allPast
         .filter((e) => new Date(e.start).getTime() < now.getTime())
         .sort((a, b) => new Date(b.start).getTime() - new Date(a.start).getTime());
+    } catch (err) {
+      // Don't overwrite a sync error with a load error
+      if (!error) error = String(err);
+      console.warn("Failed to load past events:", err);
+    }
 
-      // Get recording matches
+    // Get recording matches
+    try {
       if (s.recordingsFolder) {
         matches = await getCalendarMatches(s.recordingsFolder);
       }
     } catch (err) {
-      error = String(err);
-      console.error("Failed to load calendar events:", err);
+      console.warn("Failed to load calendar matches:", err);
     }
   }
 
@@ -265,22 +274,32 @@
     <div style="color: var(--text-faint); font-size: 14px; padding: 40px 0; text-align: center;">
       Loading calendar events...
     </div>
-  {:else if error}
-    <div
-      style="
-        background: var(--surface);
-        border: 1px solid var(--border);
-        border-radius: 8px;
-        padding: 24px;
-        text-align: center;
-      "
-    >
-      <div style="color: var(--text-muted); font-size: 14px; margin-bottom: 8px;">
-        Failed to load calendar
+  {:else}
+    {#if error}
+      <div
+        style="
+          background: var(--surface);
+          border: 1px solid var(--border);
+          border-radius: 8px;
+          padding: 12px 16px;
+          margin-bottom: 20px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+        "
+      >
+        <div style="font-size: 13px; color: var(--text-muted); min-width: 0; overflow: hidden; text-overflow: ellipsis;">
+          <span style="color: var(--red); font-weight: 500;">Sync error:</span> {error}
+        </div>
+        <button
+          onclick={() => error = null}
+          style="background:none;border:none;color:var(--text-faint);cursor:pointer;font-size:16px;padding:0 4px;flex-shrink:0;"
+          aria-label="Dismiss"
+        >&times;</button>
       </div>
-      <div style="color: var(--text-faint); font-size: 13px;">{error}</div>
-    </div>
-  {:else if upcoming.length === 0 && past.length === 0}
+    {/if}
+    {#if upcoming.length === 0 && past.length === 0}
     <!-- Empty state: no events -->
     <div
       style="
@@ -516,5 +535,6 @@
         </div>
       </section>
     {/if}
+  {/if}
   {/if}
 </div>
