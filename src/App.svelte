@@ -12,6 +12,7 @@
   import { loadSettings, settings, saveSetting } from "./lib/stores/settings";
   import { exchangeOAuthCode, syncCalendar } from "./lib/tauri";
   import Onboarding from "./lib/components/Onboarding.svelte";
+  import ToastContainer from "./lib/components/ToastContainer.svelte";
   import logoSvg from "./lib/assets/logo.svg";
 
   const appWindow = getCurrentWindow();
@@ -282,4 +283,5 @@
     </div>
     {/if}
   {/if}
+  <ToastContainer />
 </div>
