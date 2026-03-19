@@ -88,11 +88,11 @@
       steps: [
         'Go to the <a href="https://marketplace.zoom.us/develop/create" target="_blank" rel="noopener noreferrer" style="color:var(--blue);">Zoom App Marketplace</a>',
         'Select <strong>General App</strong> and click "Create"',
-        'Under OAuth redirect URL, add: <code style="background:var(--bg);padding:1px 4px;border-radius:3px;font-size:12px;">recap://oauth/zoom/callback</code>',
+        'Under OAuth redirect URL, add: <code style="background:var(--bg);padding:1px 4px;border-radius:3px;font-size:12px;">http://localhost</code>',
         'Go to the <strong>Scopes</strong> tab and add: <strong>meeting:read</strong>, <strong>recording:read</strong>, <strong>user:read</strong>',
         'Copy the <strong>Client ID</strong> and <strong>Client Secret</strong> from the <strong>App Credentials</strong> section',
       ],
-      redirectUri: "recap://oauth/zoom/callback",
+      redirectUri: "http://localhost",
     },
     google: {
       url: "https://console.cloud.google.com/apis/credentials",

@@ -40,7 +40,7 @@ pub fn get_provider_config(provider: &str, zoho_region: Option<&str>) -> Option<
             auth_url: "https://zoom.us/oauth/authorize".into(),
             token_url: "https://zoom.us/oauth/token".into(),
             scopes: "meeting:read recording:read user:read".into(),
-            redirect_method: RedirectMethod::DeepLink,
+            redirect_method: RedirectMethod::Localhost,
         }),
         "google" => Some(OAuthConfig {
             provider: "google".into(),
