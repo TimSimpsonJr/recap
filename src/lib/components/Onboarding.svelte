@@ -8,6 +8,7 @@
   import type { AppSettings } from "../stores/settings";
 
   let step = $state(0);
+  let showHfHelp = $state(false);
 
   // Step 1: Storage
   let recordingsFolder = $state("");
@@ -309,6 +310,37 @@
             style="width: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; font-size: 15px; color: var(--text); font-family: 'DM Sans', sans-serif; outline: none; box-sizing: border-box;"
             placeholder="hf_..."
           />
+          <button
+            type="button"
+            onclick={() => showHfHelp = !showHfHelp}
+            style="background: none; border: none; color: var(--blue); font-size: 12px; padding: 4px 0; cursor: pointer; font-family: 'DM Sans', sans-serif; text-align: left;"
+          >{showHfHelp ? 'Hide setup guide' : 'How do I get a token?'}</button>
+          {#if showHfHelp}
+            <div style="
+              background: var(--surface);
+              border: 1px solid var(--border);
+              border-radius: 8px;
+              padding: 14px 18px;
+              font-size: 13px;
+              color: var(--text-secondary);
+              line-height: 1.6;
+              margin-top: 4px;
+            ">
+              <p style="margin: 0 0 8px 0; font-weight: 600; color: var(--text);">Step 1: Create a token</p>
+              <ol style="margin: 0 0 12px 0; padding-left: 20px;">
+                <li>Go to <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer" style="color: var(--blue);">huggingface.co/settings/tokens</a></li>
+                <li>Click "Create new token"</li>
+                <li>Name it "Recap", select <strong>Read</strong> access</li>
+                <li>Copy the token (starts with <code style="background: var(--bg); padding: 1px 4px; border-radius: 3px;">hf_...</code>)</li>
+              </ol>
+              <p style="margin: 0 0 8px 0; font-weight: 600; color: var(--text);">Step 2: Accept model licenses</p>
+              <p style="margin: 0 0 6px 0;">Speaker diarization uses Pyannote models which require accepting their free licenses:</p>
+              <ol style="margin: 0; padding-left: 20px;">
+                <li><a href="https://huggingface.co/pyannote/segmentation-3.0" target="_blank" rel="noopener noreferrer" style="color: var(--blue);">pyannote/segmentation-3.0</a> — click "Agree and access repository"</li>
+                <li><a href="https://huggingface.co/pyannote/speaker-diarization-3.1" target="_blank" rel="noopener noreferrer" style="color: var(--blue);">pyannote/speaker-diarization-3.1</a> — click "Agree and access repository"</li>
+              </ol>
+            </div>
+          {/if}
         </label>
 
         <label style="display: block;">
