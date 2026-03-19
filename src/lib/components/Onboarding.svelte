@@ -48,14 +48,14 @@
     if (selected) {
       recordingsFolder = selected as string;
       driveWarning = "";
-      try {
-        const driveType = await checkDriveType(recordingsFolder);
-        if (driveType === "HDD") {
-          driveWarning = "This appears to be a hard disk drive. Multi-stream recording requires an SSD for reliable performance.";
-        }
-      } catch {
-        // checkDriveType not available yet, fail silently
-      }
+      // Fire drive check in background — don't block the UI update
+      checkDriveType(recordingsFolder)
+        .then((driveType) => {
+          if (driveType === "HDD") {
+            driveWarning = "This appears to be a hard disk drive. Multi-stream recording requires an SSD for reliable performance.";
+          }
+        })
+        .catch(() => {});
     }
   }
 
