@@ -1,5 +1,18 @@
 <script lang="ts">
   import { settings, saveSetting } from "../stores/settings";
+  import { saveHuggingFaceToken, getHuggingFaceToken } from "../stores/credentials";
+  import { onMount } from "svelte";
+
+  let hfToken = $state("");
+
+  onMount(async () => {
+    const existing = await getHuggingFaceToken();
+    if (existing) hfToken = existing;
+  });
+
+  async function saveToken() {
+    if (hfToken) await saveHuggingFaceToken(hfToken);
+  }
 
   const inputStyle = "width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 12px;font-size:15px;color:var(--text);font-family:'DM Sans',sans-serif;outline:none;";
   const labelStyle = "display:block;font-size:14px;color:var(--text-muted);margin-bottom:4px;font-family:'DM Sans',sans-serif;";
@@ -34,5 +47,11 @@
   <label style="display:block;">
     <span style={labelStyle}>Language</span>
     <input type="text" value={$settings.whisperxLanguage} onblur={(e) => saveSetting("whisperxLanguage", e.currentTarget.value)} style={inputStyle} placeholder="en" />
+  </label>
+</div>
+<div style="margin-top:12px;">
+  <label style="display:block;">
+    <span style={labelStyle}>HuggingFace Token</span>
+    <input type="password" bind:value={hfToken} onblur={saveToken} style={inputStyle} placeholder="hf_..." />
   </label>
 </div>

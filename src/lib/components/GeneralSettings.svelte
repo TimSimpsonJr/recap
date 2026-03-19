@@ -38,4 +38,12 @@
       </select>
     </div>
   {/if}
+  <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:4px;">
+    <button
+      onclick={() => saveSetting("onboardingComplete", false)}
+      style="background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 12px;color:var(--text-secondary);cursor:pointer;font-family:'DM Sans',sans-serif;font-size:14px;"
+    >
+      Re-run Setup Wizard
+    </button>
+  </div>
 </div>
