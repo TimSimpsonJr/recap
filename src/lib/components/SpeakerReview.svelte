@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { get } from "svelte/store";
   import { settings } from "../stores/settings";
-  import { getKnownParticipants, updateSpeakerLabels, retryProcessing } from "../tauri";
+  import { getKnownParticipants, updateSpeakerLabels, retryProcessing, getRecordingDir } from "../tauri";
 
   interface Props {
     speakerLabels: Record<string, number>;  // SPEAKER_XX -> utterance count
@@ -27,29 +27,8 @@
 
   let speakerCount = $derived(Object.keys(speakerLabels).length);
 
-  // Combined suggestions: calendar first, then known (deduplicated)
-  let allSuggestions = $derived.by(() => {
-    const seen = new Set<string>();
-    const result: { name: string; source: "calendar" | "known" }[] = [];
-    for (const name of calendarParticipants) {
-      if (!seen.has(name.toLowerCase())) {
-        seen.add(name.toLowerCase());
-        result.push({ name, source: "calendar" });
-      }
-    }
-    for (const name of knownParticipants) {
-      if (!seen.has(name.toLowerCase())) {
-        seen.add(name.toLowerCase());
-        result.push({ name, source: "known" });
-      }
-    }
-    return result;
-  });
-
-  function getRecordingDir(filePath: string): string {
-    const lastSep = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'));
-    return lastSep > 0 ? filePath.substring(0, lastSep) : filePath;
-  }
+  // Note: calendarParticipants and knownParticipants are used directly
+  // in the datalist options in the template below.
 
   onMount(async () => {
     try {

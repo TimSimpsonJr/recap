@@ -13,6 +13,7 @@
   import { graphDataVersion } from "../lib/stores/meetings";
   import { get } from "svelte/store";
   import { getGraphData, type GraphNode, type GraphEdge } from "../lib/tauri";
+  import { COMPANY_COLORS } from "../lib/theme";
   import { USE_DUMMY_DATA, DUMMY_GRAPH_DATA } from "../lib/dummy-data";
   import GraphControls from "../lib/components/GraphControls.svelte";
   import GraphSidebar from "../lib/components/GraphSidebar.svelte";
@@ -26,17 +27,6 @@
   interface SimLink extends SimulationLinkDatum<SimNode> {
     edge_type: string;
   }
-
-  // ── Company color palette (configurable) ──
-  const COMPANY_PALETTE = [
-    "#5e9e96",
-    "#8e6e9e",
-    "#9e826e",
-    "#6e829e",
-    "#9e6e7e",
-    "#7e9e6e",
-    "#9e9e6e",
-  ];
 
   let svgEl: SVGSVGElement | undefined = $state(undefined);
   let width = $state(900);
@@ -88,12 +78,12 @@
   };
 
   function getColor(node: SimNode): string {
-    if (node.node_type === "meeting") return "#C4A84D";
-    if (node.node_type === "person") return "#7a8493";
+    if (node.node_type === "meeting") return "var(--gold)";
+    if (node.node_type === "person") return "var(--text-muted)";
     if (node.node_type === "company") {
-      return companyColorMap.get(node.id) ?? "#b09840";
+      return companyColorMap.get(node.id) ?? "var(--gold-muted)";
     }
-    return "#7a8493";
+    return "var(--text-muted)";
   }
 
   function getRadius(nodeType: string): number {
@@ -104,7 +94,7 @@
     let idx = 0;
     for (const n of nodeList) {
       if (n.node_type === "company" && !companyColorMap.has(n.id)) {
-        companyColorMap.set(n.id, COMPANY_PALETTE[idx % COMPANY_PALETTE.length]);
+        companyColorMap.set(n.id, COMPANY_COLORS[idx % COMPANY_COLORS.length]);
         idx++;
       }
     }
@@ -113,8 +103,8 @@
   // Build groups list for controls panel
   let controlGroups = $derived.by(() => {
     const groups = [
-      { label: "Meeting", color: "#C4A84D" },
-      { label: "Person", color: "#7a8493" },
+      { label: "Meeting", color: "var(--gold)" },
+      { label: "Person", color: "var(--text-muted)" },
     ];
     for (const [id, color] of companyColorMap.entries()) {
       const node = allNodes.find((n) => n.id === id);
@@ -577,7 +567,7 @@
             markerHeight="6"
             orient="auto"
           >
-            <polygon points="0 0, 10 3.5, 0 7" fill="#363d47" />
+            <polygon points="0 0, 10 3.5, 0 7" style="fill: var(--border)" />
           </marker>
           <marker
             id="arrowhead-active"
@@ -588,7 +578,7 @@
             markerHeight="6"
             orient="auto"
           >
-            <polygon points="0 0, 10 3.5, 0 7" fill="#4a5260" />
+            <polygon points="0 0, 10 3.5, 0 7" style="fill: var(--text-faint)" />
           </marker>
         {/if}
       </defs>
@@ -603,7 +593,7 @@
             y1={(link.source as SimNode).y ?? 0}
             x2={(link.target as SimNode).x ?? 0}
             y2={(link.target as SimNode).y ?? 0}
-            stroke={isLinkActive(link) ? "#4a5260" : "#363d47"}
+            style="stroke: {isLinkActive(link) ? 'var(--text-faint)' : 'var(--border)'}"
             stroke-width={isLinkActive(link) ? 1.5 : 1}
             marker-end={showArrows ? (isLinkActive(link) ? "url(#arrowhead-active)" : "url(#arrowhead)") : "none"}
           />
@@ -636,7 +626,7 @@
                 x={node.x ?? 0}
                 y={(node.y ?? 0) + getRadius(node.node_type) + 12}
                 text-anchor="middle"
-                fill="#7a8493"
+                style="fill: var(--text-muted)"
                 font-family="'DM Sans', sans-serif"
                 font-size="10"
               >

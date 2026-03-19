@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { PipelineStatus } from "../tauri";
-  import { retryProcessing } from "../tauri";
+  import { retryProcessing, getRecordingDir } from "../tauri";
 
   interface Props {
     status: PipelineStatus;
@@ -15,11 +15,6 @@
   let expanded = $state(false);
   let retrying = $state<string | null>(null);
 
-  function getRecordingDir(filePath: string): string {
-    const lastSep = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'));
-    return lastSep > 0 ? filePath.substring(0, lastSep) : filePath;
-  }
-
   let ariaLabel = $derived.by(() => {
     const parts = stages.map((s) => {
       const st = status[s];
@@ -33,10 +28,10 @@
 
   function dotColor(stage: Stage): string {
     const st = status[stage];
-    if (st.waiting) return "#D4A843";
-    if (st.error) return "#ef534a";
-    if (st.completed) return "#C4A84D";
-    return "#363d47";
+    if (st.waiting) return "var(--warning)";
+    if (st.error) return "var(--red)";
+    if (st.completed) return "var(--gold)";
+    return "var(--border)";
   }
 
   function isDotPulsing(stage: Stage): boolean {
@@ -53,10 +48,10 @@
 
   function stageIconColor(stage: Stage): string {
     const st = status[stage];
-    if (st.waiting) return "#D4A843";
-    if (st.error) return "#ef534a";
-    if (st.completed) return "#C4A84D";
-    return "#545d6a";
+    if (st.waiting) return "var(--warning)";
+    if (st.error) return "var(--red)";
+    if (st.completed) return "var(--gold)";
+    return "var(--text-faint)";
   }
 
   function formatTimestamp(ts: string | null): string | null {
@@ -189,7 +184,7 @@
               {/if}
             </div>
             {#if st.waiting}
-              <div style="color: #D4A843; font-size: 11px; margin-top: 2px; word-break: break-word;">
+              <div style="color: var(--warning); font-size: 11px; margin-top: 2px; word-break: break-word;">
                 {st.waiting}
               </div>
             {:else if st.error}

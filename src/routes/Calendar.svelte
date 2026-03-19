@@ -7,6 +7,7 @@
     syncCalendar,
     getUpcomingMeetings,
     getCalendarMatches,
+    getCalendarLastSynced,
     type CalendarEvent,
     type CalendarCache,
   } from "../lib/tauri";
@@ -65,6 +66,7 @@
       lastSynced = cache.last_synced;
       await loadEvents();
     } catch (err) {
+      error = String(err);
       console.error("Calendar sync failed:", err);
     } finally {
       syncing = false;
@@ -102,7 +104,9 @@
   }
 
   onMount(async () => {
-    // Subscribe to credentials to track Zoho status reactively
+    // Subscribe to credentials to track Zoho status reactively.
+    // Svelte store .subscribe() calls the callback synchronously with the
+    // current value, so zohoConnected is set before the if-check below.
     const unsub = credentials.subscribe((creds) => {
       zohoConnected = creds.zoho.status === "connected";
     });
@@ -113,17 +117,21 @@
     }
 
     try {
-      await loadEvents();
+      // Read cached sync timestamp to decide whether to sync or just load
+      lastSynced = await getCalendarLastSynced();
 
-      // Auto-sync if last sync was >15 min ago
       if (lastSynced) {
         const diff = Date.now() - new Date(lastSynced).getTime();
         if (diff > 15 * 60 * 1000) {
-          doSync();
+          // Stale cache — sync (which loads events after syncing)
+          await doSync();
+        } else {
+          // Fresh cache — just load events from cache
+          await loadEvents();
         }
       } else {
-        // No sync timestamp — sync now
-        doSync();
+        // No cache — sync now (which loads events after syncing)
+        await doSync();
       }
     } catch (err) {
       error = String(err);

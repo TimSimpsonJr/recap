@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Utterance } from "../tauri";
+  import { SPEAKER_COLORS } from "../theme";
 
   interface Props {
     utterances: Utterance[] | null;
@@ -8,14 +9,9 @@
 
   let { utterances, onSeek }: Props = $props();
 
-  const speakerColors = [
-    "#C4A84D", "#5e9e96", "#8e6e9e", "#9e826e",
-    "#6e829e", "#9e6e7e", "#7e9e6e", "#9e9e6e",
-  ];
-
   function getSpeakerColor(speaker: string, allSpeakers: string[]): string {
     const idx = allSpeakers.indexOf(speaker);
-    return speakerColors[idx >= 0 ? idx % speakerColors.length : 0];
+    return SPEAKER_COLORS[idx >= 0 ? idx % SPEAKER_COLORS.length : 0];
   }
 
   function formatTime(seconds: number): string {

@@ -287,6 +287,10 @@ export async function syncCalendar(): Promise<CalendarCache> {
   return invoke("sync_calendar");
 }
 
+export async function getCalendarLastSynced(): Promise<string | null> {
+  return invoke("get_calendar_last_synced");
+}
+
 export async function getCalendarMatches(
   recordingsDir: string
 ): Promise<Record<string, string>> {
@@ -333,4 +337,11 @@ export async function invalidateBriefingCache(
   participantNames: string[]
 ): Promise<void> {
   return invoke("invalidate_briefing_cache", { participantNames });
+}
+
+// Shared utilities
+
+export function getRecordingDir(filePath: string): string {
+  const lastSep = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'));
+  return lastSep > 0 ? filePath.substring(0, lastSep) : filePath;
 }
