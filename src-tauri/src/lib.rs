@@ -99,8 +99,23 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(
+            tauri_plugin_window_state::Builder::default()
+                .with_state_flags(
+                    StateFlags::POSITION
+                        | StateFlags::SIZE
+                        | StateFlags::MAXIMIZED
+                        | StateFlags::VISIBLE
+                        | StateFlags::FULLSCREEN,
+                )
+                .build(),
+        )
         .setup(|app| {
+            // Ensure decorations are disabled (window-state plugin may restore them)
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_decorations(false);
+            }
+
             // Encrypted credential store (AES-256-GCM, key derived from machine identity)
             credentials::init_secret_store(app)?;
 
