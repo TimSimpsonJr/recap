@@ -6,9 +6,19 @@
     meeting: MeetingSummary;
     isSelected?: boolean;
     onSelect?: (id: string) => void;
+    selectMode?: boolean;
+    isChecked?: boolean;
+    onToggleCheck?: (id: string, shiftKey: boolean) => void;
   }
 
-  let { meeting, isSelected = false, onSelect }: Props = $props();
+  let {
+    meeting,
+    isSelected = false,
+    onSelect,
+    selectMode = false,
+    isChecked = false,
+    onToggleCheck,
+  }: Props = $props();
 
   let durationText = $derived.by(() => {
     if (!meeting.duration_seconds) return null;
@@ -30,7 +40,10 @@
   );
 
   function handleClick(e: MouseEvent) {
-    if (onSelect) {
+    if (selectMode && onToggleCheck) {
+      e.preventDefault();
+      onToggleCheck(meeting.id, e.shiftKey);
+    } else if (onSelect) {
       e.preventDefault();
       onSelect(meeting.id);
     }
@@ -47,6 +60,9 @@
     background: {isSelected ? 'var(--raised)' : 'var(--surface)'};
     text-decoration: none;
     transition: background 120ms ease, box-shadow 120ms ease;
+    display: flex;
+    align-items: center;
+    gap: 10px;
     {isSelected ? 'box-shadow: inset 2px 0 0 var(--gold);' : ''}
   "
   onmouseenter={(e) => {
@@ -67,7 +83,30 @@
     }
   }}
 >
-  <div class="flex items-start justify-between gap-3">
+  {#if selectMode}
+    <div
+      style="
+        width: 18px;
+        height: 18px;
+        border-radius: 4px;
+        border: 2px solid {isChecked ? 'var(--gold)' : 'var(--border)'};
+        background: {isChecked ? 'var(--gold)' : 'transparent'};
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 120ms ease;
+      "
+    >
+      {#if isChecked}
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="var(--bg)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M2.5 6L5 8.5L9.5 3.5" />
+        </svg>
+      {/if}
+    </div>
+  {/if}
+
+  <div class="flex items-start justify-between gap-3" style="flex: 1; min-width: 0;">
     <div class="min-w-0 flex-1">
       <h3
         style="

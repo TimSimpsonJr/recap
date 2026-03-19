@@ -16,12 +16,25 @@
   } from "../lib/stores/meetings";
   import { settings } from "../lib/stores/settings";
   import { initRecorderListener, destroyRecorderListener } from "../lib/stores/recorder";
+  import {
+    selectMode,
+    selectedIds,
+    selectedCount,
+    toggleSelect,
+    selectRange,
+    enterSelectMode,
+    exitSelectMode,
+  } from "../lib/stores/selection";
+  import { addToast } from "../lib/stores/toasts";
+  import { deleteMeetings, reprocessMeetings } from "../lib/tauri";
   import RecordingStatusBar from "../lib/components/RecordingStatusBar.svelte";
   import SearchBar from "../lib/components/SearchBar.svelte";
   import MeetingList from "../lib/components/MeetingList.svelte";
   import FilterSidebar from "../lib/components/FilterSidebar.svelte";
   import DetailPanel from "../lib/components/DetailPanel.svelte";
   import SetupChecklist from "../lib/components/SetupChecklist.svelte";
+  import BulkActionBar from "../lib/components/BulkActionBar.svelte";
+  import BulkSpeakerModal from "../lib/components/BulkSpeakerModal.svelte";
 
   interface Props {
     initialMeetingId?: string | null;
@@ -33,6 +46,10 @@
   let filtersExpanded = $state(false);
   let selectedMeetingId = $state<string | null>(null);
   let windowWidth = $state(window.innerWidth);
+  let showSpeakerModal = $state(false);
+
+  // Track last toggled ID for shift-click range selection
+  let lastToggledId = $state<string | null>(null);
 
   // Set initial meeting ID from deep link
   $effect(() => {
@@ -97,6 +114,62 @@
 
   function handleCloseDetail() {
     selectedMeetingId = null;
+  }
+
+  function handleToggleSelectMode() {
+    if ($selectMode) {
+      exitSelectMode();
+      lastToggledId = null;
+    } else {
+      enterSelectMode();
+      selectedMeetingId = null; // Close detail panel when entering select mode
+    }
+  }
+
+  function handleToggleCheck(id: string, shiftKey: boolean) {
+    if (shiftKey && lastToggledId) {
+      const allIds = $filteredMeetings.items.map((m) => m.id);
+      selectRange(allIds, lastToggledId, id);
+    } else {
+      toggleSelect(id);
+    }
+    lastToggledId = id;
+  }
+
+  async function handleBulkDelete() {
+    const count = $selectedCount;
+    const confirmed = window.confirm(
+      `Delete ${count} meeting${count !== 1 ? "s" : ""}? This cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    try {
+      const deleted = await deleteMeetings(Array.from($selectedIds));
+      addToast(`Deleted ${deleted.length} meeting${deleted.length !== 1 ? "s" : ""}`, "success");
+      exitSelectMode();
+      await loadMeetings();
+    } catch (e) {
+      addToast("Failed to delete meetings", "error");
+    }
+  }
+
+  async function handleBulkReprocess() {
+    try {
+      await reprocessMeetings(Array.from($selectedIds));
+      addToast(`Reprocessing ${$selectedCount} meeting${$selectedCount !== 1 ? "s" : ""}`, "success");
+      exitSelectMode();
+      await loadMeetings();
+    } catch (e) {
+      addToast("Failed to start reprocessing", "error");
+    }
+  }
+
+  function handleFixSpeakers() {
+    showSpeakerModal = true;
+  }
+
+  function handleCloseSpeakerModal() {
+    showSpeakerModal = false;
   }
 
   let filterCount = $derived(
@@ -198,6 +271,26 @@
           <div class="flex-1">
             <SearchBar onSearch={handleSearch} />
           </div>
+
+          <!-- Select / Cancel button -->
+          <button
+            onclick={handleToggleSelectMode}
+            style="
+              padding: 7px 14px;
+              border-radius: 8px;
+              border: 1px solid {$selectMode ? 'var(--gold)' : 'var(--border)'};
+              background: {$selectMode ? 'rgba(196, 168, 77, 0.1)' : 'var(--surface)'};
+              color: {$selectMode ? 'var(--gold)' : 'var(--text-muted)'};
+              font-family: 'DM Sans', sans-serif;
+              font-size: 13px;
+              font-weight: 600;
+              cursor: pointer;
+              flex-shrink: 0;
+              transition: all 120ms ease;
+            "
+          >
+            {$selectMode ? "Cancel" : "Select"}
+          </button>
         </div>
 
         <SetupChecklist />
@@ -248,13 +341,23 @@
             isLoading={$filteredMeetings.loading}
             onLoadMore={handleLoadMore}
             selectedId={selectedMeetingId}
-            onSelect={handleSelectMeeting}
+            onSelect={$selectMode ? undefined : handleSelectMeeting}
+            selectMode={$selectMode}
+            onToggleCheck={handleToggleCheck}
           />
         </div>
+
+        {#if $selectMode}
+          <BulkActionBar
+            onDelete={handleBulkDelete}
+            onReprocess={handleBulkReprocess}
+            onFixSpeakers={handleFixSpeakers}
+          />
+        {/if}
       </div>
 
       <!-- Detail panel -->
-      {#if selectedMeetingId}
+      {#if selectedMeetingId && !$selectMode}
         <div class="detail-panel-wrapper">
           {#key selectedMeetingId}
             <DetailPanel
@@ -268,12 +371,20 @@
   {/if}
 </div>
 
+{#if showSpeakerModal}
+  <BulkSpeakerModal
+    selectedIds={$selectedIds}
+    onclose={handleCloseSpeakerModal}
+  />
+{/if}
+
 <style>
   .meeting-list-panel {
     flex: 1;
     overflow-y: auto;
     padding: 0 28px;
     transition: flex 400ms cubic-bezier(0.4, 0, 0.2, 1);
+    position: relative;
   }
 
   .meeting-list-panel.has-detail {
