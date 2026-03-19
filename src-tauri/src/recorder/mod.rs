@@ -4,6 +4,7 @@ pub mod listener;
 pub mod monitor;
 pub mod recorder;
 pub mod share_detect;
+pub mod teams;
 pub mod types;
 pub mod zoho_meet;
 pub mod zoom;
