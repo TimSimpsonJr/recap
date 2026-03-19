@@ -37,7 +37,10 @@ fn cache_dir(app: &tauri::AppHandle) -> PathBuf {
 }
 
 fn cache_path_for(app: &tauri::AppHandle, event_id: &str) -> PathBuf {
-    cache_dir(app).join(format!("{}.json", event_id))
+    let safe_id: String = event_id.chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect();
+    cache_dir(app).join(format!("{}.json", safe_id))
 }
 
 fn read_cached_briefing(path: &Path) -> Option<Briefing> {
@@ -253,27 +256,57 @@ fn build_prompt(
 }
 
 fn call_claude(prompt: &str) -> Result<Briefing, String> {
-    let result = Command::new("claude")
+    use std::io::{Read, Write};
+    use std::time::{Duration, Instant};
+
+    let mut child = Command::new("claude")
         .args(["--print", "--output-format", "json"])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
-        .and_then(|mut child| {
-            use std::io::Write;
-            if let Some(ref mut stdin) = child.stdin {
-                stdin.write_all(prompt.as_bytes())?;
-            }
-            child.wait_with_output()
-        })
         .map_err(|e| format!("Failed to run claude CLI: {}", e))?;
 
-    if !result.status.success() {
-        let stderr = String::from_utf8_lossy(&result.stderr);
-        return Err(format!("Claude CLI returned error: {}", stderr));
+    // Write prompt to stdin and close it
+    if let Some(ref mut stdin) = child.stdin {
+        stdin.write_all(prompt.as_bytes()).ok();
+    }
+    // Drop stdin so the child process sees EOF
+    child.stdin.take();
+
+    // Poll for completion with a 120-second timeout
+    let timeout = Duration::from_secs(120);
+    let start = Instant::now();
+
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {
+                if start.elapsed() > timeout {
+                    child.kill().ok();
+                    return Err("Claude CLI timed out after 120 seconds".to_string());
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            Err(e) => return Err(format!("Failed to wait for Claude CLI: {}", e)),
+        }
+    };
+
+    // Read stdout and stderr from the finished process
+    let mut stdout_buf = String::new();
+    let mut stderr_buf = String::new();
+    if let Some(ref mut out) = child.stdout {
+        out.read_to_string(&mut stdout_buf).ok();
+    }
+    if let Some(ref mut err) = child.stderr {
+        err.read_to_string(&mut stderr_buf).ok();
     }
 
-    let stdout = String::from_utf8_lossy(&result.stdout);
+    if !status.success() {
+        return Err(format!("Claude CLI returned error: {}", stderr_buf));
+    }
+
+    let stdout = std::borrow::Cow::Borrowed(stdout_buf.as_str());
 
     // The --output-format json wraps the response; extract the text content
     let output: serde_json::Value = serde_json::from_str(&stdout)

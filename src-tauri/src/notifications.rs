@@ -11,7 +11,7 @@ use crate::calendar::{CalendarEvent, CalendarCache};
 static NOTIFIED_EVENTS: Mutex<Option<HashSet<String>>> = Mutex::new(None);
 
 fn get_notified_set() -> std::sync::MutexGuard<'static, Option<HashSet<String>>> {
-    NOTIFIED_EVENTS.lock().unwrap()
+    NOTIFIED_EVENTS.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// Read settings from the Tauri plugin-store to get notification preferences.
