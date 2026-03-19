@@ -54,7 +54,7 @@ pub fn run() {
 
                 // Spawn a task that forwards listener events to the recorder.
                 let forward_handle = app.state::<recorder::recorder::RecorderHandle<tauri::Wry>>().handle().clone();
-                tokio::spawn(async move {
+                tauri::async_runtime::spawn(async move {
                     while let Some(event) = rx.recv().await {
                         let mut inner = forward_handle.lock().await;
                         match event {
@@ -84,7 +84,7 @@ pub fn run() {
 
                 tx
             };
-            tokio::spawn(async move {
+            tauri::async_runtime::spawn(async move {
                 match recorder::listener::start_listener(listener_tx).await {
                     Ok(port) => log::info!("Extension listener on port {}", port),
                     Err(e) => log::warn!("Failed to start extension listener: {}", e),
@@ -99,7 +99,7 @@ pub fn run() {
 
             // Start periodic notification check (every 60 seconds)
             let notification_handle = app.handle().clone();
-            tokio::spawn(async move {
+            tauri::async_runtime::spawn(async move {
                 let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
                 loop {
                     interval.tick().await;
@@ -118,7 +118,7 @@ pub fn run() {
                 // Immediate check on startup (for late-start scenarios)
                 let startup_handle = auto_record_handle.clone();
                 let startup_recorder = auto_record_recorder.clone();
-                tokio::spawn(async move {
+                tauri::async_runtime::spawn(async move {
                     recorder::recorder::check_auto_record_events(
                         &startup_handle,
                         &startup_recorder,
@@ -127,7 +127,7 @@ pub fn run() {
                 });
 
                 // Periodic check
-                tokio::spawn(async move {
+                tauri::async_runtime::spawn(async move {
                     let mut interval =
                         tokio::time::interval(std::time::Duration::from_secs(60));
                     loop {

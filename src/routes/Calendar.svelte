@@ -386,8 +386,11 @@
                   <div style="font-size: 13px; color: var(--text-muted); margin-top: 3px;">
                     {formatDate(event.start)} &middot; {formatTimeRange(event.start, event.end)}
                     {#if event.recurring_series_id}
-                      <button
+                      <span
+                        role="button"
+                        tabindex="0"
                         onclick={(e) => { e.stopPropagation(); toggleSeriesAutoRecord(event); }}
+                        onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); toggleSeriesAutoRecord(event); } }}
                         style="
                           background: none;
                           border: none;
@@ -400,7 +403,7 @@
                           text-decoration: underline;
                           text-underline-offset: 2px;
                         "
-                      >{event.auto_record ? "Disable all in series" : "Enable all in series"}</button>
+                      >{event.auto_record ? "Disable all in series" : "Enable all in series"}</span>
                     {/if}
                   </div>
                   {#if event.participants.length > 0}
