@@ -10,6 +10,7 @@ import typing
 
 from recap.analyze import analyze
 from recap.config import RecapConfig
+from recap.errors import map_error
 from recap.frames import extract_frames
 from recap.models import MeetingMetadata, Participant, TranscriptResult
 from recap.todoist import create_tasks, save_retry_file
@@ -205,6 +206,7 @@ def run_pipeline(
                 audio_path=recording_dest,
                 model_name=config.whisperx.model,
                 device=config.whisperx.device,
+                compute_type=config.whisperx.compute_type,
                 hf_token=config.huggingface_token,
                 language=config.whisperx.language,
                 save_transcript=transcript_path,
@@ -212,7 +214,8 @@ def run_pipeline(
             _mark_stage(status, "transcribe", True)
             _save_status(working_dir, status, recording_dest)
         except Exception as e:
-            _mark_stage(status, "transcribe", False, str(e))
+            actionable = map_error("transcribe", e)
+            _mark_stage(status, "transcribe", False, actionable)
             _save_status(working_dir, status, recording_dest)
             raise
     elif transcript_path.exists():
@@ -228,8 +231,9 @@ def run_pipeline(
             _mark_stage(status, "frames", True)
             _save_status(working_dir, status, recording_dest)
         except Exception as e:
+            actionable = map_error("frames", e)
             logger.warning("Frame extraction failed, continuing: %s", e)
-            _mark_stage(status, "frames", False, str(e))
+            _mark_stage(status, "frames", False, actionable)
             _save_status(working_dir, status, recording_dest)
     results["frames"] = [f.path for f in frames]
 
@@ -272,11 +276,13 @@ def run_pipeline(
                 metadata=metadata,
                 prompt_path=prompt_path,
                 claude_command=config.claude.command,
+                claude_model=config.claude.model,
             )
             _mark_stage(status, "analyze", True)
             _save_status(working_dir, status, recording_dest)
         except Exception as e:
-            _mark_stage(status, "analyze", False, str(e))
+            actionable = map_error("analyze", e, command=config.claude.command, last_error=str(e))
+            _mark_stage(status, "analyze", False, actionable)
             _save_status(working_dir, status, recording_dest)
             raise
 
@@ -323,7 +329,8 @@ def run_pipeline(
             _mark_stage(status, "export", True)
             _save_status(working_dir, status, recording_dest)
         except Exception as e:
-            _mark_stage(status, "export", False, str(e))
+            actionable = map_error("export", e, vault_path=str(config.vault_path))
+            _mark_stage(status, "export", False, actionable)
             _save_status(working_dir, status, recording_dest)
             raise
 

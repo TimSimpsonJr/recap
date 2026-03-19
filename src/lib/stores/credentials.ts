@@ -1,9 +1,5 @@
 import { writable } from "svelte/store";
-import { Client, Stronghold } from "@tauri-apps/plugin-stronghold";
-import { appDataDir } from "@tauri-apps/api/path";
-
-const VAULT_PASSWORD = "recap-vault-password";
-const CLIENT_NAME = "recap";
+import { invoke } from "@tauri-apps/api/core";
 
 export type ProviderName = "zoom" | "google" | "microsoft" | "zoho" | "todoist";
 export type ConnectionStatus = "disconnected" | "connected" | "reconnect_required";
@@ -38,49 +34,16 @@ const initialState: CredentialsState = {
 
 export const credentials = writable<CredentialsState>(initialState);
 
-let stronghold: Stronghold | null = null;
-let store: any = null;
-
-async function getStore() {
-  if (store) return store;
-  const dir = await appDataDir();
-  stronghold = await Stronghold.load(`${dir}/vault.hold`, VAULT_PASSWORD);
-  let client: Client;
-  try {
-    client = await stronghold.loadClient(CLIENT_NAME);
-  } catch {
-    client = await stronghold.createClient(CLIENT_NAME);
-  }
-  store = client.getStore();
-  return store;
-}
-
 async function storeValue(key: string, value: string): Promise<void> {
-  const s = await getStore();
-  const data = Array.from(new TextEncoder().encode(value));
-  await s.insert(key, data);
-  await stronghold!.save();
+  await invoke("save_secret", { key, value });
 }
 
 async function getValue(key: string): Promise<string | null> {
-  const s = await getStore();
-  try {
-    const data = await s.get(key);
-    if (!data || data.length === 0) return null;
-    return new TextDecoder().decode(new Uint8Array(data));
-  } catch {
-    return null;
-  }
+  return invoke<string | null>("get_secret", { key });
 }
 
 async function removeValue(key: string): Promise<void> {
-  const s = await getStore();
-  try {
-    await s.remove(key);
-    await stronghold!.save();
-  } catch {
-    // Key might not exist
-  }
+  await invoke("delete_secret", { key });
 }
 
 export async function loadCredentials(): Promise<void> {
@@ -140,4 +103,12 @@ export async function disconnect(provider: ProviderName): Promise<void> {
     ...state,
     [provider]: { ...state[provider], accessToken: null, refreshToken: null, displayName: null, status: "disconnected" },
   }));
+}
+
+export async function saveHuggingFaceToken(token: string): Promise<void> {
+  await storeValue("huggingface.token", token);
+}
+
+export async function getHuggingFaceToken(): Promise<string | null> {
+  return getValue("huggingface.token");
 }

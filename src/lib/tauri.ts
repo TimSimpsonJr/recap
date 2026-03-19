@@ -372,6 +372,11 @@ export async function listMonitors(): Promise<MonitorInfo[]> {
   return invoke("list_monitors");
 }
 
+// Drive type check (for SSD warning during onboarding)
+export async function checkDriveType(path: string): Promise<string> {
+  return invoke<string>("check_drive_type", { path });
+}
+
 // Shared utilities
 
 export function getRecordingDir(filePath: string): string {

@@ -10,6 +10,7 @@
   import type { ProviderName } from "./lib/stores/credentials";
   import { loadSettings, settings, saveSetting } from "./lib/stores/settings";
   import { exchangeOAuthCode, syncCalendar } from "./lib/tauri";
+  import Onboarding from "./lib/components/Onboarding.svelte";
 
   function setZoom(level: number) {
     const clamped = Math.round(Math.min(2.0, Math.max(0.5, level)) * 10) / 10;
@@ -56,17 +57,18 @@
   }
 
   onMount(async () => {
-    try {
-      await loadCredentials();
-    } catch (err) {
-      console.error("Failed to load credentials:", err);
-    }
+    // Load settings first (fast, plugin-store) so UI can render immediately
     try {
       await loadSettings();
     } catch (err) {
       console.error("Failed to load settings:", err);
     }
     initialized = true;
+
+    // Load credentials in background (Stronghold + Argon2 is slow)
+    loadCredentials().catch((err) => {
+      console.error("Failed to load credentials:", err);
+    });
 
     // Apply persisted zoom level
     const savedZoom = get(settings).zoomLevel;
@@ -148,6 +150,9 @@
       Loading...
     </div>
   {:else}
+    {#if !$settings.onboardingComplete}
+      <Onboarding />
+    {:else}
     <!-- Nav bar -->
     <nav
       class="flex items-center shrink-0"
@@ -225,5 +230,6 @@
         <Dashboard initialMeetingId={meetingId} initialFilterParticipant={filterParticipant} />
       {/if}
     </div>
+    {/if}
   {/if}
 </div>

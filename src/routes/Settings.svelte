@@ -7,6 +7,7 @@
   import VaultSettings from "../lib/components/VaultSettings.svelte";
   import RecordingSettings from "../lib/components/RecordingSettings.svelte";
   import RecordingBehaviorSettings from "../lib/components/RecordingBehaviorSettings.svelte";
+  import ClaudeSettings from "../lib/components/ClaudeSettings.svelte";
   import WhisperXSettings from "../lib/components/WhisperXSettings.svelte";
   import TodoistSettings from "../lib/components/TodoistSettings.svelte";
   import GeneralSettings from "../lib/components/GeneralSettings.svelte";
@@ -34,6 +35,13 @@
   }
 
   let activeProvider = $derived(providers.find((p) => p.provider === activeModal));
+
+  // Auto-close modal when provider becomes connected
+  $effect(() => {
+    if (activeModal && $credentials[activeModal]?.status === "connected") {
+      activeModal = null;
+    }
+  });
 </script>
 
 <div style="height:100%;overflow-y:auto;background:var(--bg);">
@@ -63,6 +71,10 @@
       <div style="border-top:1px solid var(--border);padding-top:12px;">
         <RecordingBehaviorSettings />
       </div>
+    </SettingsSection>
+
+    <SettingsSection title="Claude">
+      <ClaudeSettings />
     </SettingsSection>
 
     <SettingsSection title="WhisperX">

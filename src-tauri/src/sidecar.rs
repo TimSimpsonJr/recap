@@ -9,7 +9,12 @@ pub struct SidecarResult {
 }
 
 /// Tauri command: run the recap pipeline sidecar.
-/// Phase 3 scope: infrastructure only. Actual triggering happens in Phase 4.
+///
+/// The optional `huggingface_token` and `todoist_api_token` parameters are
+/// passed as environment variables to the sidecar process. The frontend reads
+/// these from Stronghold and passes them here — reading Stronghold from Rust
+/// would require duplicating the JS plugin's internal vault/client structure
+/// which is fragile and unnecessary.
 #[tauri::command]
 pub async fn run_pipeline(
     app: tauri::AppHandle,
@@ -17,6 +22,8 @@ pub async fn run_pipeline(
     recording_path: String,
     metadata_path: Option<String>,
     from_stage: Option<String>,
+    huggingface_token: Option<String>,
+    todoist_api_token: Option<String>,
 ) -> Result<SidecarResult, String> {
     let mut args = vec![
         "process".to_string(),
@@ -34,11 +41,24 @@ pub async fn run_pipeline(
         args.push(stage);
     }
 
-    let sidecar = app
+    let mut sidecar = app
         .shell()
         .sidecar("recap-pipeline")
         .map_err(|e| format!("Failed to create sidecar command: {}", e))?
         .args(&args);
+
+    // Pass secret tokens as environment variables so they never appear in
+    // process argument lists (visible via task manager / ps).
+    if let Some(token) = huggingface_token {
+        if !token.is_empty() {
+            sidecar = sidecar.env("HUGGINGFACE_TOKEN", token);
+        }
+    }
+    if let Some(token) = todoist_api_token {
+        if !token.is_empty() {
+            sidecar = sidecar.env("TODOIST_API_TOKEN", token);
+        }
+    }
 
     let output = sidecar
         .output()

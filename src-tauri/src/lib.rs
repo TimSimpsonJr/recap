@@ -3,6 +3,7 @@ use tauri_plugin_window_state::{AppHandleExt, StateFlags, WindowExt};
 
 mod briefing;
 mod calendar;
+mod config_gen;
 mod credentials;
 mod deep_link;
 mod diagnostics;
@@ -20,6 +21,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_store::Builder::default().build())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
@@ -27,15 +29,8 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
-            // Stronghold with Argon2 password hashing
-            let salt_path = app
-                .path()
-                .app_local_data_dir()
-                .expect("could not resolve app local data path")
-                .join("salt.txt");
-            app.handle().plugin(
-                tauri_plugin_stronghold::Builder::with_argon2(&salt_path).build(),
-            )?;
+            // Encrypted credential store (AES-256-GCM, key derived from machine identity)
+            credentials::init_secret_store(app)?;
 
             // Deep link plugin
             app.handle().plugin(tauri_plugin_deep_link::init())?;
@@ -154,8 +149,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            credentials::store_credential,
-            credentials::get_provider_status,
+            credentials::save_secret,
+            credentials::get_secret,
+            credentials::delete_secret,
             oauth::start_oauth,
             oauth::exchange_oauth_code,
             sidecar::run_pipeline,
@@ -185,6 +181,8 @@ pub fn run() {
             briefing::generate_briefing,
             briefing::invalidate_briefing_cache,
             display::list_monitors,
+            config_gen::generate_pipeline_config,
+            config_gen::check_drive_type,
         ])
         .on_window_event(|window, event| {
             // Closing the window hides it instead of quitting

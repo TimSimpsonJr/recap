@@ -21,6 +21,7 @@
   import MeetingList from "../lib/components/MeetingList.svelte";
   import FilterSidebar from "../lib/components/FilterSidebar.svelte";
   import DetailPanel from "../lib/components/DetailPanel.svelte";
+  import SetupChecklist from "../lib/components/SetupChecklist.svelte";
 
   interface Props {
     initialMeetingId?: string | null;
@@ -174,6 +175,8 @@
           <SearchBar onSearch={handleSearch} />
         </div>
       </div>
+
+      <SetupChecklist />
 
       {#if $meetings.error}
         <div

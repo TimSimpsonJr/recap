@@ -42,6 +42,7 @@ def transcribe(
     audio_path: pathlib.Path,
     model_name: str = "large-v3",
     device: str = "cuda",
+    compute_type: str = "float16",
     hf_token: str = "",
     language: str | None = "en",
     save_transcript: pathlib.Path | None = None,
@@ -53,7 +54,7 @@ def transcribe(
 
     logger.info("Loading WhisperX model %s on %s", model_name, device)
     model = whisperx.load_model(
-        model_name, device=device, language=language, compute_type="float16"
+        model_name, device=device, language=language, compute_type=compute_type
     )
 
     logger.info("Transcribing %s", audio_path)

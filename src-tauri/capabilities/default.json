@@ -6,8 +6,7 @@
   "permissions": [
     "core:default",
     "opener:default",
-    "stronghold:default",
-    "store:default",
+"store:default",
     "deep-link:default",
     "autostart:default",
     "shell:default",

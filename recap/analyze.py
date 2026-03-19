@@ -51,6 +51,7 @@ def analyze(
     metadata: MeetingMetadata,
     prompt_path: pathlib.Path,
     claude_command: str = "claude",
+    claude_model: str = "sonnet",
 ) -> AnalysisResult:
     template = prompt_path.read_text(encoding="utf-8")
     prompt = _build_prompt(template, transcript, metadata)
@@ -66,7 +67,7 @@ def analyze(
 
         logger.info("Running Claude analysis (attempt %d/%d)", attempt + 1, MAX_RETRIES)
         result = subprocess.run(
-            [claude_command, "--print", "--output-format", "json"],
+            [claude_command, "--print", "--output-format", "json", "--model", claude_model],
             input=prompt,
             capture_output=True,
             text=True,
