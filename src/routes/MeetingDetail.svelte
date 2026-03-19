@@ -12,6 +12,7 @@
   import ScreenshotGallery from "../lib/components/ScreenshotGallery.svelte";
   import PipelineDots from "../lib/components/PipelineDots.svelte";
   import SpeakerReview from "../lib/components/SpeakerReview.svelte";
+  import SkeletonLoader from "../lib/components/SkeletonLoader.svelte";
 
   interface Props {
     meetingId: string;
@@ -97,11 +98,8 @@
 
 <div class="flex flex-col min-h-screen" style="background: var(--bg);">
   {#if loading}
-    <div
-      class="flex items-center justify-center h-screen"
-      style="font-family: 'DM Sans', sans-serif; color: var(--text-faint);"
-    >
-      <span class="spinner"></span>
+    <div style="padding: 24px 28px;">
+      <SkeletonLoader showPlayer={true} lines={6} />
     </div>
   {:else if error}
     <div style="padding: 28px;">
@@ -131,7 +129,7 @@
       <MeetingHeader meeting={detail.summary} />
 
       <div class="flex items-center gap-3">
-        <PipelineDots status={detail.summary.pipeline_status} recordingPath={detail.summary.recording_path} />
+        <PipelineDots status={detail.summary.pipeline_status} recordingPath={detail.summary.recording_path} showLabels={true} />
       </div>
 
       <RetryBanner meeting={detail.summary} />

@@ -57,7 +57,16 @@
   });
 </script>
 
-{#if !meetings.length && !isLoading}
+{#if isLoading && meetings.length === 0}
+  <div class="flex flex-col" style="gap: 8px;">
+    {#each Array(5) as _}
+      <div style="padding:14px 16px;border-radius:8px;background:var(--surface);">
+        <div class="skeleton" style="width:70%;height:16px;border-radius:4px;margin-bottom:8px;"></div>
+        <div class="skeleton" style="width:40%;height:12px;border-radius:4px;"></div>
+      </div>
+    {/each}
+  </div>
+{:else if !meetings.length && !isLoading}
   <div
     class="flex flex-col items-center justify-center py-20"
     style="
@@ -147,5 +156,16 @@
 
   @keyframes spin {
     to { transform: rotate(360deg); }
+  }
+
+  .skeleton {
+    background: linear-gradient(90deg, var(--surface) 25%, var(--raised) 50%, var(--surface) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s ease-in-out infinite;
+  }
+
+  @keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
   }
 </style>

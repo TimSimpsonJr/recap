@@ -5,9 +5,10 @@
   interface Props {
     status: PipelineStatus;
     recordingPath?: string | null;
+    showLabels?: boolean;
   }
 
-  let { status, recordingPath = null }: Props = $props();
+  let { status, recordingPath = null, showLabels = false }: Props = $props();
 
   const stages = ["merge", "frames", "transcribe", "diarize", "analyze", "export"] as const;
   type Stage = (typeof stages)[number];
@@ -107,7 +108,7 @@
     style="
       display: inline-flex;
       align-items: center;
-      gap: 3px;
+      gap: {showLabels ? '8px' : '3px'};
       padding: 4px 6px;
       border: none;
       border-radius: 4px;
@@ -123,18 +124,40 @@
     }}
   >
     {#each stages as stage}
-      <span
-        title={dotTitle(stage)}
-        class={isDotPulsing(stage) ? 'pulse' : ''}
-        style="
-          display: inline-block;
-          width: 6px;
-          height: 6px;
-          border-radius: 50%;
-          background: {dotColor(stage)};
-        "
-      ></span>
+      {#if showLabels}
+        <div style="display:flex;flex-direction:column;align-items:center;gap:2px;">
+          <span
+            title={dotTitle(stage)}
+            class={isDotPulsing(stage) ? 'pulse' : ''}
+            style="
+              display: inline-block;
+              width: 8px;
+              height: 8px;
+              border-radius: 50%;
+              background: {dotColor(stage)};
+            "
+          ></span>
+          <span style="font-size:9px;color:var(--text-faint);font-family:'DM Sans',sans-serif;text-transform:capitalize;">{stage}</span>
+        </div>
+      {:else}
+        <span
+          title={dotTitle(stage)}
+          class={isDotPulsing(stage) ? 'pulse' : ''}
+          style="
+            display: inline-block;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: {dotColor(stage)};
+          "
+        ></span>
+      {/if}
     {/each}
+    {#if showLabels}
+      <svg width="10" height="10" viewBox="0 0 10 10" style="color:var(--text-faint);margin-left:4px;transition:transform 200ms;{expanded ? 'transform:rotate(180deg)' : ''}">
+        <path d="M2 3.5l3 3 3-3" stroke="currentColor" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+      </svg>
+    {/if}
   </button>
 
   {#if expanded}

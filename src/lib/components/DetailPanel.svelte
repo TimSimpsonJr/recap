@@ -11,6 +11,7 @@
   import ScreenshotGallery from "./ScreenshotGallery.svelte";
   import PipelineDots from "./PipelineDots.svelte";
   import SpeakerReview from "./SpeakerReview.svelte";
+  import SkeletonLoader from "./SkeletonLoader.svelte";
 
   interface Props {
     meetingId: string;
@@ -111,7 +112,7 @@
 
   {#if loading}
     <div class="detail-loading">
-      <span class="spinner"></span>
+      <SkeletonLoader showPlayer={true} lines={6} />
     </div>
   {:else if error}
     <div class="detail-error">
@@ -122,7 +123,7 @@
       <MeetingHeader meeting={detail.summary} showBack={false} />
 
       <div class="flex items-center gap-3" style="margin-top: 12px;">
-        <PipelineDots status={detail.summary.pipeline_status} recordingPath={detail.summary.recording_path} />
+        <PipelineDots status={detail.summary.pipeline_status} recordingPath={detail.summary.recording_path} showLabels={true} />
       </div>
 
       <RetryBanner meeting={detail.summary} />
@@ -219,11 +220,7 @@
   }
 
   .detail-loading {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    height: 100%;
-    color: var(--text-faint);
+    padding: 16px 20px;
   }
 
   .detail-error {
