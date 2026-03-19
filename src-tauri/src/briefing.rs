@@ -25,6 +25,14 @@ pub struct BriefingActionItem {
     pub from_meeting: String,
 }
 
+/// Wrapper for cached briefing data, storing participants for structured invalidation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct CachedBriefing {
+    participants: Vec<String>,
+    briefing: Briefing,
+    generated_at: String,
+}
+
 // ---------------------------------------------------------------------------
 // Cache helpers
 // ---------------------------------------------------------------------------
@@ -45,15 +53,24 @@ fn cache_path_for(app: &tauri::AppHandle, event_id: &str) -> PathBuf {
 
 fn read_cached_briefing(path: &Path) -> Option<Briefing> {
     let content = std::fs::read_to_string(path).ok()?;
+    // Try new CachedBriefing format first, fall back to bare Briefing for old cache files
+    if let Ok(cached) = serde_json::from_str::<CachedBriefing>(&content) {
+        return Some(cached.briefing);
+    }
     serde_json::from_str(&content).ok()
 }
 
-fn write_cached_briefing(path: &Path, briefing: &Briefing) -> Result<(), String> {
+fn write_cached_briefing(path: &Path, briefing: &Briefing, participants: &[String]) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("Failed to create briefing cache directory: {}", e))?;
     }
-    let json = serde_json::to_string_pretty(briefing)
+    let cached = CachedBriefing {
+        participants: participants.to_vec(),
+        briefing: briefing.clone(),
+        generated_at: Utc::now().to_rfc3339(),
+    };
+    let json = serde_json::to_string_pretty(&cached)
         .map_err(|e| format!("Failed to serialize briefing: {}", e))?;
     std::fs::write(path, json)
         .map_err(|e| format!("Failed to write briefing cache: {}", e))?;
@@ -413,12 +430,14 @@ pub async fn generate_briefing(
         .map_err(|e| format!("Briefing generation task failed: {}", e))?
         .map_err(|e| format!("Briefing generation failed: {}", e))?;
 
-    // Cache the result
-    write_cached_briefing(&cp, &briefing)?;
+    // Cache the result with participant metadata for structured invalidation
+    write_cached_briefing(&cp, &briefing, &participants)?;
 
     Ok(briefing)
 }
 
+// TODO: Add test for briefing cache invalidation — verify that invalidating
+// by participant name removes the correct cached files and leaves others intact.
 #[tauri::command]
 pub async fn invalidate_briefing_cache(
     app: tauri::AppHandle,
@@ -443,12 +462,19 @@ pub async fn invalidate_briefing_cache(
             continue;
         }
 
-        // Read the cached briefing to check participants
+        // Deserialize cached briefing and check participant array for overlap
         if let Ok(content) = std::fs::read_to_string(&path) {
-            let content_lower = content.to_lowercase();
-            let has_overlap = participant_lower
-                .iter()
-                .any(|p| content_lower.contains(p.as_str()));
+            let has_overlap = if let Ok(cached) = serde_json::from_str::<CachedBriefing>(&content) {
+                // Structured match against the stored participants list
+                let cached_lower: Vec<String> = cached.participants.iter().map(|p| p.to_lowercase()).collect();
+                participant_lower.iter().any(|p| {
+                    cached_lower.iter().any(|cp| cp.contains(p.as_str()) || p.contains(cp.as_str()))
+                })
+            } else {
+                // Legacy cache format without participants — fall back to text search
+                let content_lower = content.to_lowercase();
+                participant_lower.iter().any(|p| content_lower.contains(p.as_str()))
+            };
 
             if has_overlap {
                 let _ = std::fs::remove_file(&path);

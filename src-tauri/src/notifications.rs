@@ -118,5 +118,22 @@ pub fn check_upcoming_notifications<R: Runtime>(app: &AppHandle<R>) -> Result<()
         }
     }
 
+    // Prune notified set: remove event IDs whose start time is in the past,
+    // so the set doesn't grow unboundedly across long-running sessions.
+    let current_event_ids: HashSet<&String> = cache.events.iter().map(|e| &e.id).collect();
+    set.retain(|id| {
+        // Keep if the event is still in the cache and hasn't started yet
+        if !current_event_ids.contains(id) {
+            return false;
+        }
+        // Find the event and check if it's still in the future
+        cache.events.iter().any(|e| {
+            e.id == *id
+                && DateTime::parse_from_rfc3339(&e.start)
+                    .map(|dt| dt.with_timezone(&Utc) > now)
+                    .unwrap_or(false)
+        })
+    });
+
     Ok(())
 }

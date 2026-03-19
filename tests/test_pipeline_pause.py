@@ -114,6 +114,12 @@ class TestPipelinePause:
         status = json.loads(status_path.read_text())
         assert status["analyze"]["waiting"] == "speaker_review"
 
+        # Status should also be copied to recordings dir (<recording>.status.json)
+        recordings_status = config.recordings_path / "meeting.status.json"
+        assert recordings_status.exists(), "status.json was not copied to recordings dir"
+        rec_status = json.loads(recordings_status.read_text())
+        assert rec_status["analyze"]["waiting"] == "speaker_review"
+
     @patch("recap.pipeline.analyze")
     @patch("recap.pipeline.extract_frames")
     @patch("recap.pipeline.transcribe")

@@ -263,10 +263,12 @@ pub async fn sync_calendar(
 
     let events = fetch_calendar_events(app.clone(), start_date, end_date).await?;
 
-    // The cache was already written by fetch_calendar_events, but read it back
-    // to return the full CalendarCache struct.
-    let cp = cache_path(&app);
-    read_cache(&cp)
+    // Build the CalendarCache directly from the fetched events instead of
+    // re-reading the cache file that fetch_calendar_events just wrote.
+    Ok(CalendarCache {
+        events,
+        last_synced: Utc::now().to_rfc3339(),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -316,6 +318,23 @@ pub fn match_event_to_recording(
         overlap_minutes >= 5
     } else {
         false
+    }
+}
+
+/// Return the last_synced timestamp from the calendar cache, or null if no cache exists.
+#[tauri::command]
+pub async fn get_calendar_last_synced(
+    app: tauri::AppHandle,
+) -> Result<Option<String>, String> {
+    let cp = cache_path(&app);
+    if !cp.exists() {
+        return Ok(None);
+    }
+    let cache = read_cache(&cp)?;
+    if cache.last_synced.is_empty() {
+        Ok(None)
+    } else {
+        Ok(Some(cache.last_synced))
     }
 }
 
