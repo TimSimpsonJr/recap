@@ -293,54 +293,83 @@
 
       <div style="display: flex; flex-direction: column; gap: 16px;">
         <label style="display: block;">
-          <span style="display: block; font-size: 14px; color: var(--text-muted); margin-bottom: 4px;">
+          <span style="display: flex; align-items: center; font-size: 14px; color: var(--text-muted); margin-bottom: 4px;">
             HuggingFace Token
-            <a
-              href="https://huggingface.co/settings/tokens"
-              target="_blank"
-              rel="noopener noreferrer"
-              style="color: var(--blue); font-size: 12px; margin-left: 6px; text-decoration: none;"
-              onmouseenter={(e) => { e.currentTarget.style.textDecoration = 'underline'; }}
-              onmouseleave={(e) => { e.currentTarget.style.textDecoration = 'none'; }}
-            >Get a token</a>
+            <!-- svelte-ignore a11y_click_events_have_key_events -->
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <span
+              onclick={(e) => { e.preventDefault(); e.stopPropagation(); showHfHelp = !showHfHelp; }}
+              style="
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                width: 16px;
+                height: 16px;
+                margin-left: 6px;
+                border-radius: 50%;
+                background: var(--border);
+                color: var(--text-muted);
+                font-size: 11px;
+                font-weight: 700;
+                cursor: pointer;
+                user-select: none;
+                flex-shrink: 0;
+              "
+              title="How to get a HuggingFace token"
+            >?</span>
           </span>
-          <input
-            type="password"
-            bind:value={hfToken}
-            style="width: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; font-size: 15px; color: var(--text); font-family: 'DM Sans', sans-serif; outline: none; box-sizing: border-box;"
-            placeholder="hf_..."
-          />
-          <button
-            type="button"
-            onclick={() => showHfHelp = !showHfHelp}
-            style="background: none; border: none; color: var(--blue); font-size: 12px; padding: 4px 0; cursor: pointer; font-family: 'DM Sans', sans-serif; text-align: left;"
-          >{showHfHelp ? 'Hide setup guide' : 'How do I get a token?'}</button>
-          {#if showHfHelp}
-            <div style="
-              background: var(--surface);
-              border: 1px solid var(--border);
-              border-radius: 8px;
-              padding: 14px 18px;
-              font-size: 13px;
-              color: var(--text-secondary);
-              line-height: 1.6;
-              margin-top: 4px;
-            ">
-              <p style="margin: 0 0 8px 0; font-weight: 600; color: var(--text);">Step 1: Create a token</p>
-              <ol style="margin: 0 0 12px 0; padding-left: 20px;">
-                <li>Go to <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer" style="color: var(--blue);">huggingface.co/settings/tokens</a></li>
-                <li>Click "Create new token"</li>
-                <li>Name it "Recap", select <strong>Read</strong> access</li>
-                <li>Copy the token (starts with <code style="background: var(--bg); padding: 1px 4px; border-radius: 3px;">hf_...</code>)</li>
-              </ol>
-              <p style="margin: 0 0 8px 0; font-weight: 600; color: var(--text);">Step 2: Accept model licenses</p>
-              <p style="margin: 0 0 6px 0;">Speaker diarization uses Pyannote models which require accepting their free licenses:</p>
-              <ol style="margin: 0; padding-left: 20px;">
-                <li><a href="https://huggingface.co/pyannote/segmentation-3.0" target="_blank" rel="noopener noreferrer" style="color: var(--blue);">pyannote/segmentation-3.0</a> — click "Agree and access repository"</li>
-                <li><a href="https://huggingface.co/pyannote/speaker-diarization-3.1" target="_blank" rel="noopener noreferrer" style="color: var(--blue);">pyannote/speaker-diarization-3.1</a> — click "Agree and access repository"</li>
-              </ol>
-            </div>
-          {/if}
+          <div style="position: relative;">
+            <input
+              type="password"
+              bind:value={hfToken}
+              style="width: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; font-size: 15px; color: var(--text); font-family: 'DM Sans', sans-serif; outline: none; box-sizing: border-box;"
+              placeholder="hf_..."
+            />
+            {#if showHfHelp}
+              <!-- svelte-ignore a11y_click_events_have_key_events -->
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
+              <div
+                onclick={(e) => e.stopPropagation()}
+                style="
+                  position: absolute;
+                  top: calc(100% + 8px);
+                  left: 0;
+                  right: 0;
+                  background: var(--raised, var(--surface));
+                  border: 1px solid var(--border);
+                  border-radius: 8px;
+                  padding: 16px 18px;
+                  font-size: 13px;
+                  color: var(--text-secondary);
+                  line-height: 1.6;
+                  z-index: 100;
+                  box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+                "
+              >
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                  <span style="font-weight: 600; color: var(--text); font-size: 14px;">Setup Guide</span>
+                  <button
+                    type="button"
+                    onclick={() => showHfHelp = false}
+                    style="background: none; border: none; color: var(--text-faint); cursor: pointer; font-size: 16px; padding: 0 2px;"
+                  >&times;</button>
+                </div>
+                <p style="margin: 0 0 6px 0; font-weight: 600; color: var(--text);">1. Create a token</p>
+                <ol style="margin: 0 0 12px 0; padding-left: 20px;">
+                  <li>Go to <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer" style="color: var(--blue);">huggingface.co/settings/tokens</a></li>
+                  <li>Click "Create new token"</li>
+                  <li>Name it "Recap", select <strong>Read</strong> access</li>
+                  <li>Copy the token (starts with <code style="background: var(--bg); padding: 1px 4px; border-radius: 3px;">hf_...</code>)</li>
+                </ol>
+                <p style="margin: 0 0 6px 0; font-weight: 600; color: var(--text);">2. Accept model licenses</p>
+                <p style="margin: 0 0 6px 0;">Speaker diarization requires accepting these free licenses:</p>
+                <ol style="margin: 0; padding-left: 20px;">
+                  <li><a href="https://huggingface.co/pyannote/segmentation-3.0" target="_blank" rel="noopener noreferrer" style="color: var(--blue);">pyannote/segmentation-3.0</a> — click "Agree and access"</li>
+                  <li><a href="https://huggingface.co/pyannote/speaker-diarization-3.1" target="_blank" rel="noopener noreferrer" style="color: var(--blue);">pyannote/speaker-diarization-3.1</a> — click "Agree and access"</li>
+                </ol>
+              </div>
+            {/if}
+          </div>
         </label>
 
         <label style="display: block;">
