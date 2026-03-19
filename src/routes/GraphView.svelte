@@ -4,7 +4,8 @@
     forceSimulation,
     forceLink,
     forceManyBody,
-    forceCenter,
+    forceX,
+    forceY,
     forceCollide,
     type SimulationNodeDatum,
     type SimulationLinkDatum,
@@ -60,6 +61,7 @@
 
   // Company color map — assigned dynamically
   let companyColorMap: Map<string, string> = new Map();
+  let resizeObserver: ResizeObserver;
 
   // ── Controls state ──
   let filterQuery = $state("");
@@ -400,9 +402,14 @@
         chargeForce.strength(-rf);
       }
 
-      const center = simulation.force("center") as any;
-      if (center) {
-        center.strength(cf / 100);
+      const xForce = simulation.force("x") as any;
+      if (xForce) {
+        xForce.x(width / 2).strength(cf / 1000);
+      }
+
+      const yForce = simulation.force("y") as any;
+      if (yForce) {
+        yForce.y(height / 2).strength(cf / 1000);
       }
 
       simulation.alpha(0.3).restart();
@@ -482,7 +489,8 @@
             .strength(linkStrength / 100)
         )
         .force("charge", forceManyBody().strength(-repelForce))
-        .force("center", forceCenter(width / 2, height / 2).strength(centerForce / 100))
+        .force("x", forceX(width / 2).strength(centerForce / 1000))
+        .force("y", forceY(height / 2).strength(centerForce / 1000))
         .force("collide", forceCollide<SimNode>().radius((d) => getRadius(d.node_type) + 4))
         .alphaDecay(0.03)
         .velocityDecay(0.4)
@@ -509,12 +517,26 @@
 
   onMount(async () => {
     updateSize();
-    window.addEventListener("resize", updateSize);
+    resizeObserver = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (entry) {
+        width = entry.contentRect.width;
+        height = entry.contentRect.height;
+        if (simulation) {
+          const xForce = simulation.force("x") as any;
+          if (xForce) xForce.x(width / 2);
+          const yForce = simulation.force("y") as any;
+          if (yForce) yForce.y(height / 2);
+          simulation.alpha(0.3).restart();
+        }
+      }
+    });
+    if (svgEl) resizeObserver.observe(svgEl);
     await loadGraphData();
   });
 
   onDestroy(() => {
-    window.removeEventListener("resize", updateSize);
+    resizeObserver?.disconnect();
     if (simulation) {
       simulation.stop();
     }
@@ -550,6 +572,13 @@
     >
       <!-- SVG defs -->
       <defs>
+        <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+          <path d="M 40 0 L 0 0 0 40" fill="none" stroke="var(--border)" stroke-width="0.3" opacity="0.3"/>
+        </pattern>
+        <linearGradient id="bottomGlow" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0.7" stop-color="transparent"/>
+          <stop offset="1" stop-color="rgba(77, 156, 245, 0.06)"/>
+        </linearGradient>
         <filter id="node-glow" x="-50%" y="-50%" width="200%" height="200%">
           <feGaussianBlur stdDeviation="4" result="blur" />
           <feMerge>
@@ -582,6 +611,8 @@
           </marker>
         {/if}
       </defs>
+      <rect width="100%" height="100%" fill="url(#grid)" />
+      <rect width="100%" height="100%" fill="url(#bottomGlow)" />
 
       <!-- Pan/zoom transform group -->
       <g transform="translate({panX}, {panY}) scale({scale})">
