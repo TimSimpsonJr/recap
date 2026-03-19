@@ -5,6 +5,7 @@
   import { settings, saveAllSettings } from "../stores/settings";
   import { saveHuggingFaceToken, getHuggingFaceToken } from "../stores/credentials";
   import { checkDriveType } from "../tauri";
+  import { openUrl } from "@tauri-apps/plugin-opener";
   import type { AppSettings } from "../stores/settings";
 
   let step = $state(0);
@@ -30,6 +31,16 @@
 
   function handleWindowClick() {
     if (showHfHelp) showHfHelp = false;
+  }
+
+  function handlePopoverClick(e: MouseEvent) {
+    e.stopPropagation();
+    const target = e.target as HTMLElement;
+    const anchor = target.closest("a");
+    if (anchor?.href) {
+      e.preventDefault();
+      openUrl(anchor.href);
+    }
   }
 
   onMount(async () => {
@@ -336,7 +347,7 @@
               <!-- svelte-ignore a11y_click_events_have_key_events -->
               <!-- svelte-ignore a11y_no_static_element_interactions -->
               <div
-                onclick={(e) => e.stopPropagation()}
+                onclick={handlePopoverClick}
                 style="
                   position: absolute;
                   top: calc(100% + 8px);

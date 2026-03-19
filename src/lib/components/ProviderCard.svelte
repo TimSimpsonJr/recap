@@ -2,6 +2,7 @@
   import { type ProviderName, type ProviderState, saveClientCredentials, disconnect } from "../stores/credentials";
   import { startOAuth } from "../tauri";
   import { settings, saveSetting } from "../stores/settings";
+  import { openUrl } from "@tauri-apps/plugin-opener";
 
   interface Props {
     provider: ProviderName;
@@ -67,6 +68,16 @@
 
   function handleWindowClick() {
     if (showGuide) showGuide = false;
+  }
+
+  function handleGuideClick(e: MouseEvent) {
+    e.stopPropagation();
+    const target = e.target as HTMLElement;
+    const anchor = target.closest("a");
+    if (anchor?.href) {
+      e.preventDefault();
+      openUrl(anchor.href);
+    }
   }
 
   type GuideInfo = { url: string; steps: string[]; redirectUri: string; note?: string };
@@ -157,7 +168,7 @@
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <!-- svelte-ignore a11y_no_static_element_interactions -->
       <div
-        onclick={(e) => e.stopPropagation()}
+        onclick={handleGuideClick}
         style="
           position:absolute;
           top:100%;
