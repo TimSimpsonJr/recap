@@ -10,7 +10,7 @@ import subprocess
 from recap.analyze import analyze
 from recap.config import RecapConfig
 from recap.frames import extract_frames
-from recap.models import MeetingMetadata
+from recap.models import MeetingMetadata, TranscriptResult
 from recap.todoist import create_tasks, save_retry_file
 from recap.transcribe import transcribe
 from recap.vault import find_previous_meeting, write_meeting_note, write_profile_stubs, slugify
@@ -33,7 +33,7 @@ def _load_status(working_dir: pathlib.Path) -> dict:
     if status_path.exists():
         return json.loads(status_path.read_text())
     return {
-        stage: {"completed": False, "timestamp": None, "error": None}
+        stage: {"completed": False, "timestamp": None, "error": None, "waiting": None}
         for stage in PIPELINE_STAGES
     }
 
@@ -57,7 +57,13 @@ def _mark_stage(status: dict, stage: str, completed: bool, error: str | None = N
         "completed": completed,
         "timestamp": datetime.now().isoformat() if completed else None,
         "error": error,
+        "waiting": None,
     }
+
+
+def _mark_waiting(status: dict, stage: str, reason: str) -> None:
+    """Set a waiting state on a stage (e.g. awaiting speaker review)."""
+    status[stage]["waiting"] = reason
 
 
 def _should_run(stage: str, status: dict, from_stage: str | None, only_stage: str | None) -> bool:
@@ -87,6 +93,17 @@ def _get_audio_duration(path: pathlib.Path) -> float:
     except (ValueError, OSError):
         logger.warning("Could not determine audio duration, defaulting to 0")
         return 0.0
+
+
+def _apply_speaker_labels(transcript: TranscriptResult, labels_path: pathlib.Path) -> TranscriptResult:
+    """Apply speaker label corrections from JSON file. Mutates transcript.utterances in place."""
+    if not labels_path.exists():
+        return transcript
+    labels = json.loads(labels_path.read_text())
+    for utterance in transcript.utterances:
+        if utterance.speaker in labels:
+            utterance.speaker = labels[utterance.speaker]
+    return transcript
 
 
 def run_pipeline(
@@ -170,6 +187,18 @@ def run_pipeline(
             _mark_stage(status, "frames", False, str(e))
             _save_status(working_dir, status, recording_dest)
     results["frames"] = [f.path for f in frames]
+
+    # Pause for speaker review if no participants are available
+    if not metadata.participants:
+        _mark_waiting(status, "analyze", "speaker_review")
+        _save_status(working_dir, status, recording_dest)
+        logger.info("No participants available — pausing for speaker review")
+        return {**results, "paused": True, "waiting_at": "analyze"}
+
+    # Apply speaker label corrections if available
+    labels_path = working_dir / "speaker_labels.json"
+    if transcript is not None and isinstance(transcript, TranscriptResult):
+        transcript = _apply_speaker_labels(transcript, labels_path)
 
     # Analyze with Claude
     analysis = None

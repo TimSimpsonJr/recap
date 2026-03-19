@@ -53,7 +53,7 @@
       font-size: 14.5px;
     "
   >
-    <span style="color: {failedStage ? '#D06850' : '#B4A882'};">
+    <span style="color: {failedStage ? 'var(--red)' : 'var(--gold-muted)'};">
       {#if failedStage}
         Pipeline failed at {failedStage}: {meeting.pipeline_status[failedStage].error}
       {:else}
@@ -71,7 +71,7 @@
             border-radius: 6px;
             border: none;
             background: rgba(200,80,60,0.15);
-            color: #D06850;
+            color: var(--red);
             font-family: 'DM Sans', sans-serif;
             font-size: 13.5px;
             font-weight: 600;
@@ -90,7 +90,7 @@
             border-radius: 6px;
             border: none;
             background: rgba(180,165,130,0.15);
-            color: #B4A882;
+            color: var(--gold-muted);
             font-family: 'DM Sans', sans-serif;
             font-size: 13.5px;
             font-weight: 600;
@@ -109,7 +109,7 @@
             border-radius: 6px;
             border: none;
             background: rgba(180,165,130,0.15);
-            color: #B4A882;
+            color: var(--gold-muted);
             font-family: 'DM Sans', sans-serif;
             font-size: 13.5px;
             font-weight: 600;

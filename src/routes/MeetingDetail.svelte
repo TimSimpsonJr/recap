@@ -11,6 +11,7 @@
   import MeetingTranscript from "../lib/components/MeetingTranscript.svelte";
   import ScreenshotGallery from "../lib/components/ScreenshotGallery.svelte";
   import PipelineDots from "../lib/components/PipelineDots.svelte";
+  import SpeakerReview from "../lib/components/SpeakerReview.svelte";
 
   interface Props {
     meetingId: string;
@@ -77,13 +78,28 @@
   );
 
   let screenshotCount = $derived(detail?.screenshots.length ?? 0);
+
+  let needsSpeakerReview = $derived(
+    detail?.summary.pipeline_status.analyze?.waiting === "speaker_review"
+  );
+
+  let speakerLabels = $derived.by(() => {
+    if (!detail?.transcript) return {};
+    const counts: Record<string, number> = {};
+    for (const u of detail.transcript) {
+      if (u.speaker.startsWith("SPEAKER_")) {
+        counts[u.speaker] = (counts[u.speaker] ?? 0) + 1;
+      }
+    }
+    return counts;
+  });
 </script>
 
-<div class="flex flex-col min-h-screen" style="background: #1D1D1B;">
+<div class="flex flex-col min-h-screen" style="background: var(--bg);">
   {#if loading}
     <div
       class="flex items-center justify-center h-screen"
-      style="font-family: 'DM Sans', sans-serif; color: #585650;"
+      style="font-family: 'DM Sans', sans-serif; color: var(--text-faint);"
     >
       <span class="spinner"></span>
     </div>
@@ -94,7 +110,7 @@
         style="
           font-family: 'DM Sans', sans-serif;
           font-size: 14px;
-          color: #A8A078;
+          color: var(--gold);
           text-decoration: none;
         "
       >&larr; Back</a>
@@ -102,7 +118,7 @@
         class="mt-4 p-3 rounded-lg"
         style="
           background: rgba(200,80,60,0.10);
-          color: #D06850;
+          color: var(--red);
           font-family: 'DM Sans', sans-serif;
           font-size: 14.5px;
         "
@@ -130,7 +146,7 @@
       <div
         class="flex gap-0"
         style="
-          border-bottom: 1px solid #262624;
+          border-bottom: 1px solid var(--border);
           font-family: 'DM Sans', sans-serif;
           font-size: 14.5px;
         "
@@ -145,8 +161,8 @@
             font-family: 'DM Sans', sans-serif;
             font-size: 14.5px;
             font-weight: {activeTab === 'notes' ? '600' : '400'};
-            color: {activeTab === 'notes' ? '#A8A078' : '#585650'};
-            border-bottom: 2px solid {activeTab === 'notes' ? '#A8A078' : 'transparent'};
+            color: {activeTab === 'notes' ? 'var(--gold)' : 'var(--text-faint)'};
+            border-bottom: 2px solid {activeTab === 'notes' ? 'var(--gold)' : 'transparent'};
             margin-bottom: -1px;
           "
         >
@@ -162,8 +178,8 @@
             font-family: 'DM Sans', sans-serif;
             font-size: 14.5px;
             font-weight: {activeTab === 'transcript' ? '600' : '400'};
-            color: {activeTab === 'transcript' ? '#A8A078' : '#585650'};
-            border-bottom: 2px solid {activeTab === 'transcript' ? '#A8A078' : 'transparent'};
+            color: {activeTab === 'transcript' ? 'var(--gold)' : 'var(--text-faint)'};
+            border-bottom: 2px solid {activeTab === 'transcript' ? 'var(--gold)' : 'transparent'};
             margin-bottom: -1px;
           "
         >
@@ -180,8 +196,8 @@
               font-family: 'DM Sans', sans-serif;
               font-size: 14.5px;
               font-weight: {activeTab === 'screenshots' ? '600' : '400'};
-              color: {activeTab === 'screenshots' ? '#A8A078' : '#585650'};
-              border-bottom: 2px solid {activeTab === 'screenshots' ? '#A8A078' : 'transparent'};
+              color: {activeTab === 'screenshots' ? 'var(--gold)' : 'var(--text-faint)'};
+              border-bottom: 2px solid {activeTab === 'screenshots' ? 'var(--gold)' : 'transparent'};
               margin-bottom: -1px;
             "
           >
@@ -195,6 +211,14 @@
         {#if activeTab === "notes"}
           <MeetingNotes content={detail.note_content} />
         {:else if activeTab === "transcript"}
+          {#if needsSpeakerReview && detail.summary.recording_path && Object.keys(speakerLabels).length > 0}
+            <SpeakerReview
+              speakerLabels={speakerLabels}
+              calendarParticipants={detail.summary.participants}
+              recordingPath={detail.summary.recording_path}
+              onResumed={loadDetail}
+            />
+          {/if}
           <MeetingTranscript
             utterances={detail.transcript}
             onSeek={handleSeek}
@@ -212,8 +236,8 @@
     display: inline-block;
     width: 24px;
     height: 24px;
-    border: 2px solid #464440;
-    border-top-color: #A8A078;
+    border: 2px solid var(--border);
+    border-top-color: var(--gold);
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
   }

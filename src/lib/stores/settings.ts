@@ -19,6 +19,9 @@ export interface AppSettings {
   detectionAction: "ask" | "always_record" | "never_record";
   timeoutAction: "record" | "skip";
   notificationTimeoutSeconds: number;
+  zoomLevel: number;
+  meetingNotifications: boolean;
+  meetingLeadTimeMinutes: number;
 }
 
 const defaults: AppSettings = {
@@ -39,6 +42,9 @@ const defaults: AppSettings = {
   detectionAction: "ask",
   timeoutAction: "record",
   notificationTimeoutSeconds: 60,
+  zoomLevel: 1.0,
+  meetingNotifications: true,
+  meetingLeadTimeMinutes: 10,
 };
 
 export const settings = writable<AppSettings>({ ...defaults });

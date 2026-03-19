@@ -61,7 +61,7 @@
     class="flex flex-col items-center justify-center py-20"
     style="
       font-family: 'DM Sans', sans-serif;
-      color: #585650;
+      color: var(--text-faint);
       font-size: 15px;
     "
   >
@@ -76,7 +76,7 @@
           font-family: 'DM Sans', sans-serif;
           font-size: 12px;
           font-weight: 600;
-          color: #585650;
+          color: var(--text-faint);
           text-transform: uppercase;
           letter-spacing: 0.05em;
         "
@@ -102,8 +102,8 @@
           padding: 6px 20px;
           border-radius: 6px;
           border: none;
-          background: #242422;
-          color: #A8A078;
+          background: var(--surface);
+          color: var(--gold);
           font-family: 'DM Sans', sans-serif;
           font-size: 14px;
           font-weight: 600;
@@ -112,11 +112,11 @@
         "
         onmouseenter={(e) => {
           const el = e.currentTarget as HTMLElement;
-          el.style.background = '#2B2B28';
+          el.style.background = 'var(--raised)';
         }}
         onmouseleave={(e) => {
           const el = e.currentTarget as HTMLElement;
-          el.style.background = '#242422';
+          el.style.background = 'var(--surface)';
         }}
       >
         {isLoading ? "Loading..." : "Load more"}
@@ -136,8 +136,8 @@
     display: inline-block;
     width: 18px;
     height: 18px;
-    border: 2px solid #464440;
-    border-top-color: #A8A078;
+    border: 2px solid var(--border);
+    border-top-color: var(--gold);
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
   }

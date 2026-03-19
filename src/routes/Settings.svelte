@@ -36,11 +36,11 @@
   let activeProvider = $derived(providers.find((p) => p.provider === activeModal));
 </script>
 
-<div style="height:100%;overflow-y:auto;background:#1D1D1B;">
+<div style="height:100%;overflow-y:auto;background:var(--bg);">
 <div style="max-width:700px;margin:0 auto;padding:24px 28px 48px;">
   <div style="display:flex;flex-direction:column;gap:28px;">
     <section>
-      <h2 style="font-family:'Source Serif 4',serif;font-size:18px;font-weight:600;color:#D8D5CE;margin-bottom:12px;">
+      <h2 style="font-family:'Source Serif 4',serif;font-size:18px;font-weight:600;color:var(--text);margin-bottom:12px;">
         Platform Connections
       </h2>
       <div style="display:flex;flex-direction:column;gap:4px;">
@@ -60,7 +60,7 @@
 
     <SettingsSection title="Recording">
       <RecordingSettings />
-      <div style="border-top:1px solid #262624;padding-top:12px;">
+      <div style="border-top:1px solid var(--border);padding-top:12px;">
         <RecordingBehaviorSettings />
       </div>
     </SettingsSection>

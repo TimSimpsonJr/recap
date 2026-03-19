@@ -29,8 +29,8 @@
       border-radius: 8px;
       border: none;
       outline: none;
-      background: #282826;
-      color: #B0ADA5;
+      background: var(--surface);
+      color: var(--text-secondary);
       font-family: 'DM Sans', sans-serif;
       font-size: 15px;
       font-weight: 400;
@@ -48,6 +48,6 @@
 
 <style>
   input::placeholder {
-    color: #585650;
+    color: var(--text-faint);
   }
 </style>

@@ -19,7 +19,7 @@
         class="overflow-hidden"
         style="
           border-radius: 8px;
-          background: #242422;
+          background: var(--surface);
         "
       >
         <img
@@ -38,7 +38,7 @@
               padding: 8px 10px;
               font-family: 'DM Sans', sans-serif;
               font-size: 13.5px;
-              color: #78756E;
+              color: var(--text-muted);
               line-height: 1.4;
             "
           >
@@ -54,7 +54,7 @@
     style="
       font-family: 'DM Sans', sans-serif;
       font-size: 15px;
-      color: #585650;
+      color: var(--text-faint);
     "
   >
     No screenshots
