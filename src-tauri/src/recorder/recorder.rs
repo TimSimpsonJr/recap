@@ -233,7 +233,7 @@ impl<R: Runtime> RecorderInner<R> {
         // Only act if we have a session with a browser-based platform.
         if let Some(ref session) = self.session {
             match session.platform {
-                MeetingPlatform::GoogleMeet | MeetingPlatform::ZohoMeet => {}
+                MeetingPlatform::GoogleMeet | MeetingPlatform::ZohoMeet | MeetingPlatform::Teams => {}
                 _ => return,
             }
         } else {
@@ -559,96 +559,21 @@ const KNOWN_BROWSER_PROCESSES: &[&str] = &["chrome.exe", "msedge.exe", "firefox.
 
 /// Scan WASAPI audio sessions for a browser process and return its PID.
 ///
-/// Uses the same WASAPI enumeration as `monitor::enumerate_meeting_sessions` but
-/// looks for browser executables instead of meeting apps.
+/// Uses the shared WASAPI enumeration helper to look for browser executables.
+/// If multiple browser PIDs are found with active audio, logs a warning and
+/// returns the first match (which may not be the correct meeting browser).
 fn find_browser_audio_pid() -> Option<u32> {
-    use windows::Win32::Media::Audio::{
-        eConsole, eRender, IAudioSessionControl, IAudioSessionControl2,
-        IAudioSessionEnumerator, IAudioSessionManager2, IMMDeviceEnumerator,
-        MMDeviceEnumerator,
-    };
-    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
-    use windows::Win32::System::Threading::{
-        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
-        PROCESS_QUERY_LIMITED_INFORMATION,
-    };
-    use windows::Win32::Foundation::HANDLE;
-    use windows::core::{Interface, PWSTR};
+    let matches = super::monitor::enumerate_audio_sessions_for_processes(KNOWN_BROWSER_PROCESSES);
 
-    unsafe {
-        let enumerator: IMMDeviceEnumerator =
-            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
-
-        let device = enumerator
-            .GetDefaultAudioEndpoint(eRender, eConsole)
-            .ok()?;
-
-        let manager: IAudioSessionManager2 = device.Activate(CLSCTX_ALL, None).ok()?;
-
-        let session_enum: IAudioSessionEnumerator =
-            manager.GetSessionEnumerator().ok()?;
-
-        let count = session_enum.GetCount().ok()?;
-
-        for i in 0..count {
-            let session: IAudioSessionControl = match session_enum.GetSession(i) {
-                Ok(s) => s,
-                Err(_) => continue,
-            };
-
-            let session2: IAudioSessionControl2 = match session.cast() {
-                Ok(s) => s,
-                Err(_) => continue,
-            };
-
-            let pid = match session2.GetProcessId() {
-                Ok(p) => p,
-                Err(_) => continue,
-            };
-
-            if pid == 0 {
-                continue;
-            }
-
-            // Get the process name for this PID.
-            let handle: HANDLE =
-                match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
-                    Ok(h) => h,
-                    Err(_) => continue,
-                };
-
-            let mut buf = [0u16; 260];
-            let mut size = buf.len() as u32;
-
-            let result = QueryFullProcessImageNameW(
-                handle,
-                PROCESS_NAME_WIN32,
-                PWSTR(buf.as_mut_ptr()),
-                &mut size,
-            );
-
-            let _ = windows::Win32::Foundation::CloseHandle(handle);
-
-            if result.is_err() {
-                continue;
-            }
-
-            let full_path = String::from_utf16_lossy(&buf[..size as usize]);
-            let filename = full_path
-                .rsplit('\\')
-                .next()
-                .unwrap_or(&full_path);
-
-            if KNOWN_BROWSER_PROCESSES
-                .iter()
-                .any(|&known| known.eq_ignore_ascii_case(filename))
-            {
-                return Some(pid);
-            }
-        }
-
-        None
+    if matches.len() > 1 {
+        log::warn!(
+            "Multiple browser PIDs found with active audio: {:?} — using first match (PID {}). \
+             Recording may capture from the wrong browser.",
+            matches, matches[0].1
+        );
     }
+
+    matches.into_iter().next().map(|(_, pid)| pid)
 }
 
 // ── Enrichment routing ───────────────────────────────────────────────────────
@@ -665,6 +590,9 @@ fn platform_display_name(p: &MeetingPlatform) -> &str {
 }
 
 /// Read provider credentials from the settings store JSON file.
+// TODO: Read credentials from Stronghold instead of settings.json.
+// The settings.json mirroring pattern was established in Phase 3, but credentials
+// should migrate to tauri-plugin-stronghold for secure storage.
 fn read_provider_credentials(
     app: &tauri::AppHandle,
     provider: &str,
@@ -860,12 +788,32 @@ pub async fn check_auto_record_events(
     app: &AppHandle<tauri::Wry>,
     recorder: &Arc<Mutex<RecorderInner<tauri::Wry>>>,
 ) {
-    // Read settings from the store
+    // Read settings from the store (via spawn_blocking to avoid sync I/O in async context)
     let store_path = match app.path().app_data_dir() {
         Ok(p) => p.join("settings.json"),
         Err(_) => return,
     };
-    let content = match std::fs::read_to_string(&store_path) {
+    let cache_path = match app.path().app_data_dir() {
+        Ok(p) => p.join("calendar_cache.json"),
+        Err(_) => return,
+    };
+
+    let (settings_result, cache_result) = {
+        let sp = store_path.clone();
+        let cp = cache_path.clone();
+        match tokio::task::spawn_blocking(move || {
+            let settings = std::fs::read_to_string(&sp);
+            let cache = std::fs::read_to_string(&cp);
+            (settings, cache)
+        })
+        .await
+        {
+            Ok(r) => r,
+            Err(_) => return,
+        }
+    };
+
+    let content = match settings_result {
         Ok(c) => c,
         Err(_) => return,
     };
@@ -883,12 +831,7 @@ pub async fn check_auto_record_events(
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
 
-    // Read calendar cache directly
-    let cache_path = match app.path().app_data_dir() {
-        Ok(p) => p.join("calendar_cache.json"),
-        Err(_) => return,
-    };
-    let cache_content = match std::fs::read_to_string(&cache_path) {
+    let cache_content = match cache_result {
         Ok(c) => c,
         Err(_) => return, // No cache yet
     };
@@ -926,7 +869,7 @@ pub async fn check_auto_record_events(
             let expected_platform = event
                 .detected_platform
                 .as_deref()
-                .map(MeetingPlatform::from_str);
+                .map(MeetingPlatform::from_platform_str);
             inner.arm_for_event(event.title.clone(), expected_platform);
         }
         (RecorderState::Armed { .. }, None) => {

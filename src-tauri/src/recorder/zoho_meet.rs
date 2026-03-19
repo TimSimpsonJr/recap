@@ -80,7 +80,18 @@ impl ZohoMeetClient {
 
         for meeting in &meetings {
             if let Some(ref end_time) = meeting.end_time {
-                if let Ok(end) = chrono::DateTime::parse_from_rfc3339(end_time) {
+                // Try RFC 3339 first, then fall back to a common Zoho datetime format.
+                // NOTE: The actual format returned by the Zoho Meeting API should be
+                // verified against real API responses and adjusted if needed.
+                let parsed = chrono::DateTime::parse_from_rfc3339(end_time).or_else(|_| {
+                    chrono::NaiveDateTime::parse_from_str(end_time, "%b %d, %Y %I:%M %p")
+                        .map(|naive| {
+                            naive
+                                .and_utc()
+                                .fixed_offset()
+                        })
+                });
+                if let Ok(end) = parsed {
                     let diff = (end.signed_duration_since(ended_around)).abs();
                     if diff < five_minutes && diff < best_diff {
                         best_diff = diff;

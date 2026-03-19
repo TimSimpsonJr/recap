@@ -36,7 +36,7 @@ pub enum MeetingPlatform {
 }
 
 impl MeetingPlatform {
-    pub fn from_str(s: &str) -> Self {
+    pub fn from_platform_str(s: &str) -> Self {
         match s {
             "zoom" => Self::Zoom,
             "teams" => Self::Teams,

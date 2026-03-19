@@ -101,6 +101,76 @@ pub fn stop_monitoring(stop: &AtomicBool) {
     stop.store(true, Ordering::Relaxed);
 }
 
+/// Enumerate WASAPI audio sessions matching any of the given process names.
+///
+/// Shared helper used by both meeting detection (`enumerate_meeting_sessions`)
+/// and browser audio detection (`find_browser_audio_pid` in recorder.rs).
+/// Returns `(filename, pid)` pairs for processes with active audio sessions.
+pub fn enumerate_audio_sessions_for_processes(process_names: &[&str]) -> Vec<(String, u32)> {
+    unsafe {
+        let enumerator: IMMDeviceEnumerator = match CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL) {
+            Ok(e) => e,
+            Err(_) => return vec![],
+        };
+
+        let device: IMMDevice = match enumerator.GetDefaultAudioEndpoint(eRender, eConsole) {
+            Ok(d) => d,
+            Err(_) => return vec![],
+        };
+
+        let manager: IAudioSessionManager2 = match device.Activate(CLSCTX_ALL, None) {
+            Ok(m) => m,
+            Err(_) => return vec![],
+        };
+
+        let session_enum: IAudioSessionEnumerator = match manager.GetSessionEnumerator() {
+            Ok(e) => e,
+            Err(_) => return vec![],
+        };
+
+        let count = match session_enum.GetCount() {
+            Ok(c) => c,
+            Err(_) => return vec![],
+        };
+
+        let mut results = Vec::new();
+
+        for i in 0..count {
+            let session: IAudioSessionControl = match session_enum.GetSession(i) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+
+            let session2: IAudioSessionControl2 = match session.cast() {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+
+            let pid = match session2.GetProcessId() {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+
+            if pid == 0 {
+                continue;
+            }
+
+            if let Some(name) = get_process_name(pid) {
+                let filename = name.rsplit('\\').next().unwrap_or(&name).to_string();
+
+                if process_names
+                    .iter()
+                    .any(|&known| known.eq_ignore_ascii_case(&filename))
+                {
+                    results.push((filename, pid));
+                }
+            }
+        }
+
+        results
+    }
+}
+
 /// Enumerate audio sessions and return (process_name, pid) pairs for known meeting processes.
 fn enumerate_meeting_sessions() -> Result<Vec<(String, u32)>, String> {
     unsafe {
