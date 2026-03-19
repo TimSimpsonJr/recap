@@ -29,14 +29,16 @@ pub fn run() {
         ))
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
-            // Stronghold with Argon2 password hashing
-            let salt_path = app
-                .path()
-                .app_local_data_dir()
-                .expect("could not resolve app local data path")
-                .join("salt.txt");
+            // Stronghold with fast hash (password is a hardcoded constant, not user input,
+            // so Argon2's brute-force resistance just adds 20-30s startup delay)
             app.handle().plugin(
-                tauri_plugin_stronghold::Builder::with_argon2(&salt_path).build(),
+                tauri_plugin_stronghold::Builder::new(|password| {
+                    use std::hash::{DefaultHasher, Hash, Hasher};
+                    let mut hasher = DefaultHasher::new();
+                    password.hash(&mut hasher);
+                    hasher.finish().to_le_bytes().to_vec()
+                })
+                .build(),
             )?;
 
             // Deep link plugin
