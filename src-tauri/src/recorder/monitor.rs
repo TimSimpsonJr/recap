@@ -5,6 +5,8 @@ use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
 use tokio::sync::mpsc;
+
+use super::types::MeetingPlatform;
 use windows::Win32::Media::Audio::{
     eRender, eConsole,
     IAudioSessionControl, IAudioSessionControl2, IAudioSessionEnumerator,
@@ -28,6 +30,10 @@ const KNOWN_MEETING_PROCESSES: &[&str] = &["Zoom.exe", "Teams.exe"];
 pub enum MonitorEvent {
     MeetingDetected { process_name: String, pid: u32 },
     MeetingEnded { pid: u32 },
+    BrowserMeetingDetected { url: String, title: String, platform: MeetingPlatform, tab_id: Option<u32> },
+    BrowserMeetingEnded { tab_id: Option<u32> },
+    SharingStarted,
+    SharingStopped,
 }
 
 /// Start monitoring for meeting audio sessions on a background thread.

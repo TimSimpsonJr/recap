@@ -18,6 +18,37 @@ pub enum RecorderState {
     Declined,
 }
 
+/// Detected meeting platform, used for API enrichment routing.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MeetingPlatform {
+    Zoom,
+    Teams,
+    GoogleMeet,
+    ZohoMeet,
+    Unknown,
+}
+
+impl MeetingPlatform {
+    pub fn from_str(s: &str) -> Self {
+        match s {
+            "zoom" => Self::Zoom,
+            "teams" => Self::Teams,
+            "google_meet" => Self::GoogleMeet,
+            "zoho_meet" => Self::ZohoMeet,
+            _ => Self::Unknown,
+        }
+    }
+
+    pub fn from_process(name: &str) -> Self {
+        match name {
+            "Zoom.exe" => Self::Zoom,
+            "Teams.exe" => Self::Teams,
+            _ => Self::Unknown,
+        }
+    }
+}
+
 /// What to do when a meeting is detected.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -63,6 +94,7 @@ impl Default for RecordingConfig {
 pub struct RecordingSession {
     pub process_name: String,
     pub pid: u32,
+    pub platform: MeetingPlatform,
     pub started_at: Instant,
     pub working_dir: PathBuf,
     pub remote_audio_path: PathBuf,

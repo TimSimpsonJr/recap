@@ -11,8 +11,8 @@ use tokio::sync::{mpsc, Mutex};
 use super::capture::{AudioCapture, CaptureError, VideoCapture};
 use super::monitor::{self, MonitorEvent};
 use super::types::{
-    DetectionAction, PipelineStatus, RecorderState, RecordingConfig, RecordingSession,
-    TimeoutAction,
+    DetectionAction, MeetingPlatform, PipelineStatus, RecorderState, RecordingConfig,
+    RecordingSession, TimeoutAction,
 };
 use super::zoom;
 
@@ -198,8 +198,9 @@ impl<R: Runtime> RecorderInner<R> {
         };
 
         self.session = Some(RecordingSession {
-            process_name,
+            process_name: process_name.clone(),
             pid,
+            platform: MeetingPlatform::from_process(&process_name),
             started_at: Instant::now(),
             working_dir,
             remote_audio_path: remote_path,
