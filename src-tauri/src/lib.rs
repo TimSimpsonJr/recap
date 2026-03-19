@@ -3,6 +3,7 @@ use tauri_plugin_window_state::{AppHandleExt, StateFlags, WindowExt};
 
 mod briefing;
 mod calendar;
+mod config_gen;
 mod credentials;
 mod deep_link;
 mod diagnostics;
@@ -185,6 +186,8 @@ pub fn run() {
             briefing::generate_briefing,
             briefing::invalidate_briefing_cache,
             display::list_monitors,
+            config_gen::generate_pipeline_config,
+            config_gen::check_drive_type,
         ])
         .on_window_event(|window, event| {
             // Closing the window hides it instead of quitting

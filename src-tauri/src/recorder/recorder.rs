@@ -959,6 +959,8 @@ pub async fn stop_recording(
                         merged_str,
                         Some(meta_str),
                         None,
+                        None,
+                        None,
                     )
                     .await
                     {
@@ -1053,7 +1055,7 @@ pub async fn retry_processing(
         None
     };
 
-    crate::sidecar::run_pipeline(app, config_str, merged_str, meta_str, from_stage)
+    crate::sidecar::run_pipeline(app, config_str, merged_str, meta_str, from_stage, None, None)
         .await
         .map(|_| ())
 }
