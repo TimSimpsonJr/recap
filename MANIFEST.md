@@ -58,10 +58,11 @@ recap/
 │   ├── deep_link.rs                       # recap:// URI handler for OAuth callbacks
 │   ├── sidecar.rs / diagnostics.rs        # Pipeline invocation + NVENC/ffmpeg checks
 │   ├── tray.rs                            # System tray menu + hide-on-close behavior
-│   └── recorder/                          # Monitor → capture → merge → metadata → sidecar
-│       ├── mod.rs / recorder.rs           # Public API + state machine orchestrator
-│       ├── capture.rs / monitor.rs        # WASAPI audio + Graphics Capture screen recording
-│       ├── types.rs                       # RecorderState enum + shared types
+│   └── recorder/                          # State machine: Idle → Armed → Detected → Recording → Processing
+│       ├── mod.rs / recorder.rs           # Orchestrator: transitions states, owns capture handles,
+│       │                                  #   handles MonitorEvents, enriches metadata on stop
+│       ├── capture.rs / monitor.rs        # WASAPI audio + Graphics Capture; monitor polls EnumWindows
+│       ├── types.rs                       # RecorderState, MeetingPlatform, PipelineStatus, CaptureSource
 │       ├── listener.rs                    # Localhost HTTP listener for extension signals
 │       ├── share_detect.rs                # Win32 screen share window detection
 │       ├── zoom.rs                        # Zoom meeting metadata extraction
@@ -72,6 +73,8 @@ recap/
 ├── docs/plans/                            # Design specs + implementation plans per phase
 ├── scripts/build-sidecar.py               # Packages Python pipeline as Tauri sidecar
 ├── tests/                                 # Python tests (pytest): pipeline, transcribe, vault, etc.
+├── config.example.yaml                    # Pipeline config template (see Implicit Contracts)
+├── .reap/genome/                          # Cortex project genome (principles, conventions, constraints)
 └── package.json / pyproject.toml          # JS + Python dependency manifests
 ```
 
@@ -94,3 +97,51 @@ recap/
 - `dummy-data.ts` provides mock data when `VITE_DUMMY_DATA=true`; tree-shaken out of prod builds
 - `lib.rs` hides window on close (not quit); `oauth.rs` spawns localhost for Google/Microsoft OAuth
 - `pipeline.py` writes `status.json` per stage; `--from`/`--only` flags enable retry from any stage
+
+## Recorder State Machine
+
+`recorder.rs` manages a 6-state lifecycle. Each transition emits `recorder-state-changed` to the frontend.
+
+```
+Idle ──(calendar arm)──→ Armed ──(meeting detected)──→ Recording
+ │                         │ (no meeting within window)    │
+ │                         └──→ Idle                       │ (user/tab stops)
+ │                                                         ▼
+ ├──(meeting detected)──→ Detected ──(user accepts)──→ Recording ──→ Processing ──→ Idle
+ │                           │                             │
+ │                           └──(user declines)──→ Declined ──(meeting ends)──→ Idle
+```
+
+- **Idle → Armed**: periodic check (60s) finds a calendar event with `auto_record=true` within lead time
+- **Armed → Recording**: meeting detected (WASAPI or extension); skips notification, starts immediately
+- **Idle → Detected**: WASAPI poll or extension signal finds a meeting; shows desktop notification
+- **Detected → Recording**: user accepts notification, or timeout fires with `timeout_action: Record`
+- **Recording → Processing**: recording stops (tab closed, process exited, user manual stop); triggers ffmpeg merge + metadata enrichment + sidecar launch
+- **During Recording**: `SharingStarted`/`SharingStopped` events switch capture between Window and Display sources without state transition
+- **Failure during Recording**: if capture crashes, logs error and transitions to Idle (no partial processing)
+
+## Implicit Contracts
+
+### status.json (per meeting directory)
+
+Written by Python pipeline, read by Rust (`PipelineStatus` in types.rs) and Svelte (`PipelineDots` component). Each stage key maps to a `StageStatus` object:
+
+```json
+{
+  "merge":      { "completed": true,  "timestamp": "2026-03-19T10:00:00Z", "error": null, "waiting": null },
+  "frames":     { "completed": true,  "timestamp": "...", "error": null, "waiting": null },
+  "transcribe": { "completed": true,  "timestamp": "...", "error": null, "waiting": null },
+  "diarize":    { "completed": false, "timestamp": null,  "error": null, "waiting": null },
+  "analyze":    { "completed": false, "timestamp": null,  "error": null, "waiting": "speaker_review" },
+  "export":     { "completed": false, "timestamp": null,  "error": null, "waiting": null }
+}
+```
+
+- `completed: true` = stage finished successfully
+- `error: string` = stage failed; pipeline stops, retryable via `--from`
+- `waiting: string` = stage paused for user action (e.g., `"speaker_review"` when no participants found)
+- Stages always run in order: merge → frames → transcribe → diarize → analyze → export
+
+### config.yaml (Python pipeline)
+
+Read by `recap/config.py`, loaded once at pipeline start. Template at `config.example.yaml`. Required fields: `vault_path`, `recordings_path`, `frames_path`, `user_name`. Optional: `whisperx.*`, `huggingface_token`, `todoist.*`, `claude.command`. If missing or malformed, pipeline exits with a clear error message — the app creates this file during onboarding (Phase 7)
