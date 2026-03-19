@@ -147,7 +147,7 @@
 <svelte:window onkeydown={handleKeydown} onfocus={handleWindowFocus} />
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="flex flex-col h-screen" style="background: var(--bg);" onwheel={handleWheel}>
+<div class="flex flex-col h-screen overflow-hidden" style="background: var(--bg);" onwheel={handleWheel}>
   {#if !initialized}
     <div
       class="flex items-center justify-center h-screen"
