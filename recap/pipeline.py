@@ -341,6 +341,10 @@ def run_pipeline(
             project_name = config.todoist.project_for_type(analysis.meeting_type)
             vault_name = config.vault_path.name
             note_rel = f"Work/Meetings/{note_filename}" if note_path else ""
+            # Extract first company name for project grouping
+            company_name = (
+                analysis.companies[0].name if analysis.companies else None
+            )
             task_ids = create_tasks(
                 action_items=analysis.action_items,
                 user_name=config.user_name,
@@ -349,6 +353,9 @@ def run_pipeline(
                 vault_name=vault_name,
                 note_path=note_rel,
                 meeting_dir=working_dir,
+                grouping=config.todoist.project_grouping,
+                company_name=company_name,
+                meeting_title=metadata.title,
             )
             results["todoist_tasks"] = task_ids
         except Exception as e:

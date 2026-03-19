@@ -46,6 +46,8 @@ struct TodoistConfig {
     labels: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     project_map: Option<HashMap<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    project_grouping: Option<String>,
 }
 
 /// Helper to read a string from the settings store.
@@ -134,11 +136,13 @@ pub async fn generate_pipeline_config(app: tauri::AppHandle) -> Result<String, S
         let default_project = get_string(&store, "todoistProject");
         let labels = get_string_array(&store, "todoistLabels");
         let project_map = get_string_map(&store, "todoistProjectMap");
-        if default_project.is_some() || labels.is_some() || project_map.is_some() {
+        let project_grouping = get_string(&store, "todoistProjectGrouping");
+        if default_project.is_some() || labels.is_some() || project_map.is_some() || project_grouping.is_some() {
             Some(TodoistConfig {
                 default_project,
                 labels,
                 project_map,
+                project_grouping,
             })
         } else {
             None

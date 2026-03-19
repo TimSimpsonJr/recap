@@ -46,6 +46,39 @@ def _save_task_mapping(meeting_dir: pathlib.Path, tasks: list[dict]) -> None:
     logger.info("Saved %d task mappings to %s", len(tasks), path)
 
 
+def _resolve_project(
+    api: "TodoistAPI",
+    grouping: str,
+    default_project_name: str,
+    company_name: str | None,
+    meeting_title: str,
+) -> str | None:
+    """Resolve the Todoist project ID based on grouping strategy."""
+    if grouping == "company" and company_name:
+        project_name = f"Recap: {company_name}"
+    elif grouping == "meeting":
+        project_name = f"Recap: {meeting_title}"
+    else:
+        project_name = default_project_name
+
+    # Look up or create project
+    try:
+        projects = api.get_projects()
+        for proj in projects:
+            if proj.name == project_name:
+                return proj.id
+    except Exception as e:
+        logger.warning("Failed to fetch projects: %s", e)
+        return None
+
+    try:
+        new_proj = api.add_project(name=project_name)
+        return new_proj.id
+    except Exception as e:
+        logger.warning("Failed to create project '%s': %s", project_name, e)
+        return None
+
+
 def create_tasks(
     action_items: list[ActionItem],
     user_name: str,
@@ -54,6 +87,9 @@ def create_tasks(
     vault_name: str,
     note_path: str,
     meeting_dir: pathlib.Path | None = None,
+    grouping: str = "single",
+    company_name: str | None = None,
+    meeting_title: str = "",
 ) -> list[str]:
     user_items = _filter_user_items(action_items, user_name)
     if not user_items:
@@ -68,16 +104,10 @@ def create_tasks(
     api = TodoistAPI(api_token)
     obsidian_link = _build_obsidian_uri(vault_name, note_path)
 
-    # Find project ID
-    project_id = None
-    try:
-        projects = api.get_projects()
-        for proj in projects:
-            if proj.name == project_name:
-                project_id = proj.id
-                break
-    except Exception as e:
-        logger.warning("Failed to fetch projects, using default: %s", e)
+    # Resolve project ID based on grouping strategy
+    project_id = _resolve_project(
+        api, grouping, project_name, company_name, meeting_title
+    )
 
     # Fetch existing tasks for idempotency check
     existing_contents: set[str] = set()

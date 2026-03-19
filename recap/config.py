@@ -21,6 +21,7 @@ class TodoistConfig:
     api_token: str = ""
     default_project: str = "Recap"
     project_map: dict[str, str] = field(default_factory=dict)
+    project_grouping: str = "company"
 
     def project_for_type(self, meeting_type: str) -> str:
         return self.project_map.get(meeting_type, self.default_project)
@@ -93,6 +94,7 @@ def load_config(path: pathlib.Path) -> RecapConfig:
             api_token=os.environ.get("TODOIST_API_TOKEN", td.get("api_token", "")),
             default_project=td.get("default_project", "Recap"),
             project_map=td.get("project_map", {}),
+            project_grouping=td.get("project_grouping", "company"),
         ),
         claude=ClaudeConfig(
             command=cl.get("command", "claude"),

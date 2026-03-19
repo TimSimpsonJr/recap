@@ -31,6 +31,14 @@
     <input type="text" value={$settings.todoistProject} onblur={(e) => saveSetting("todoistProject", e.currentTarget.value)} style={inputStyle} placeholder="Project name for meeting tasks" />
   </label>
   <label style="display:block;">
+    <span style="display:flex;align-items:center;font-size:14px;color:var(--text-muted);margin-bottom:4px;font-family:'DM Sans',sans-serif;">Project Grouping<SettingsTooltip text="How Todoist projects are organized. Per company creates a project per company (e.g. 'Recap: Acme Corp'). Per meeting creates one per meeting title. Single project puts all tasks in the default project above." /></span>
+    <select value={$settings.todoistProjectGrouping} onchange={(e) => saveSetting("todoistProjectGrouping", e.currentTarget.value)} style={inputStyle}>
+      <option value="company">Per company</option>
+      <option value="meeting">Per meeting</option>
+      <option value="single">Single project</option>
+    </select>
+  </label>
+  <label style="display:block;">
     <span style={labelStyle}>Default Labels</span>
     <input type="text" value={$settings.todoistLabels} onblur={(e) => saveSetting("todoistLabels", e.currentTarget.value)} style={inputStyle} placeholder="Comma-separated labels" />
   </label>

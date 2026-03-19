@@ -13,6 +13,7 @@ export interface AppSettings {
   whisperxLanguage: string;
   todoistProject: string;
   todoistLabels: string;
+  todoistProjectGrouping: "company" | "meeting" | "single";
   zohoRegion: string;
   showNotificationOnComplete: boolean;
   autoDetectMeetings: boolean;
@@ -45,6 +46,7 @@ const defaults: AppSettings = {
   whisperxLanguage: "en",
   todoistProject: "",
   todoistLabels: "",
+  todoistProjectGrouping: "company",
   zohoRegion: "com",
   showNotificationOnComplete: true,
   autoDetectMeetings: true,
