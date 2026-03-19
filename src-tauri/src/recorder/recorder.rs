@@ -12,10 +12,9 @@ use super::capture::{AudioCapture, CaptureError, VideoCapture};
 use super::monitor::{self, MonitorEvent};
 use super::share_detect;
 use super::types::{
-    CaptureSource, DetectionAction, MeetingPlatform, PipelineStatus, RecorderState,
-    RecordingConfig, RecordingSession, TimeoutAction,
+    CaptureSource, DetectionAction, MeetingMetadata, MeetingPlatform, PipelineStatus,
+    RecorderState, RecordingConfig, RecordingSession, TimeoutAction,
 };
-use super::zoom;
 
 /// Shared recorder handle stored in Tauri managed state.
 pub struct RecorderHandle<R: Runtime> {
@@ -486,18 +485,17 @@ pub fn merge_recording(session: &RecordingSession) -> Result<PathBuf, String> {
 /// Write meeting metadata JSON file.
 pub fn write_meeting_json(
     working_dir: &PathBuf,
-    meeting_info: Option<zoom::ZoomMeetingInfo>,
+    meeting_info: Option<MeetingMetadata>,
 ) -> Result<PathBuf, String> {
     let metadata = match meeting_info {
-        Some(info) => json!({
-            "title": info.title,
+        Some(info) => serde_json::to_value(&info)
+            .map_err(|e| format!("Failed to serialize metadata: {}", e))?,
+        None => json!({
+            "title": "Meeting",
             "date": chrono::Utc::now().format("%Y-%m-%d").to_string(),
-            "participants": info.participants,
-            "user_email": info.user_email,
-            "user_name": info.user_name,
-            "platform": "zoom"
+            "participants": [],
+            "platform": "unknown"
         }),
-        None => zoom::fallback_metadata(),
     };
 
     let path = working_dir.join("meeting.json");
