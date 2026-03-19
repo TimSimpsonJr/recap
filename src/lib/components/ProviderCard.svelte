@@ -170,10 +170,14 @@
       <div
         onclick={handleGuideClick}
         style="
-          position:absolute;
-          top:100%;
-          left:0;
-          right:0;
+          position:fixed;
+          top:50%;
+          left:50%;
+          transform:translate(-50%, -50%);
+          width:420px;
+          max-width:90vw;
+          max-height:80vh;
+          overflow-y:auto;
           background:var(--raised, var(--surface));
           border:1px solid var(--border);
           border-radius:8px;
@@ -181,7 +185,7 @@
           font-size:13px;
           color:var(--text-secondary);
           line-height:1.6;
-          z-index:100;
+          z-index:200;
           box-shadow:0 8px 24px rgba(0,0,0,0.4);
         "
       >
