@@ -141,3 +141,11 @@ export async function disconnect(provider: ProviderName): Promise<void> {
     [provider]: { ...state[provider], accessToken: null, refreshToken: null, displayName: null, status: "disconnected" },
   }));
 }
+
+export async function saveHuggingFaceToken(token: string): Promise<void> {
+  await storeValue("huggingface.token", token);
+}
+
+export async function getHuggingFaceToken(): Promise<string | null> {
+  return getValue("huggingface.token");
+}
