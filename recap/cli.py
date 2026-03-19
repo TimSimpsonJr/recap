@@ -33,7 +33,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     )
     process_parser.add_argument(
         "--only",
-        choices=["merge", "frames", "transcribe", "diarize", "analyze", "export"],
+        choices=["merge", "frames", "transcribe", "diarize", "analyze", "export", "todoist-sync"],
         help="Re-run only this single stage",
     )
 
@@ -76,6 +76,17 @@ def main(argv: list[str] | None = None) -> None:
     if args.command == "process":
         audio_path = pathlib.Path(args.audio)
         metadata_path = pathlib.Path(args.metadata)
+
+        if args.only == "todoist-sync":
+            from recap.pipeline import run_todoist_sync
+
+            results = run_todoist_sync(config)
+            logger.info(
+                "Todoist sync complete: %d tasks synced, %d notes missing",
+                results["total_synced"],
+                results["notes_missing"],
+            )
+            return
 
         if not audio_path.exists():
             logger.error("Audio file not found: %s", audio_path)

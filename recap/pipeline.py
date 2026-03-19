@@ -13,7 +13,7 @@ from recap.config import RecapConfig
 from recap.errors import map_error
 from recap.frames import extract_frames
 from recap.models import MeetingMetadata, Participant, TranscriptResult
-from recap.todoist import create_tasks, save_retry_file
+from recap.todoist import create_tasks, save_retry_file, sync_completions
 from recap.transcribe import transcribe
 from recap.vault import find_previous_meeting, write_meeting_note, write_profile_stubs, slugify
 
@@ -358,6 +358,11 @@ def run_pipeline(
                 meeting_title=metadata.title,
             )
             results["todoist_tasks"] = task_ids
+            # Copy todoist_tasks.json alongside recording (flat file pattern)
+            src_tasks = working_dir / "todoist_tasks.json"
+            if src_tasks.exists():
+                dest_tasks = recording_dest.with_suffix(".todoist_tasks.json")
+                shutil.copy2(str(src_tasks), str(dest_tasks))
         except Exception as e:
             logger.warning("Todoist task creation failed, saving to retry: %s", e)
             retry_items = [
@@ -378,3 +383,73 @@ def run_pipeline(
 
     logger.info("Pipeline complete")
     return results
+
+
+def run_todoist_sync(config: RecapConfig) -> dict:
+    """Sync Todoist task completions across all meeting directories.
+
+    Iterates all todoist_tasks.json files in the recordings directory,
+    checks each task's completion status via the Todoist API, and updates
+    the corresponding vault note checkboxes.
+
+    Returns a dict with total_synced and notes_missing counts.
+    """
+    total_synced = 0
+    notes_missing = 0
+    meetings_processed = 0
+
+    if not config.todoist.api_token:
+        logger.warning("No Todoist API token configured, skipping sync")
+        return {"total_synced": 0, "notes_missing": 0, "meetings_processed": 0}
+
+    # Find all *.todoist_tasks.json files (flat file pattern in recordings dir)
+    for tasks_file in config.recordings_path.glob("*.todoist_tasks.json"):
+        meetings_processed += 1
+        stem = tasks_file.name.replace(".todoist_tasks.json", "")
+
+        # Derive vault note path from the matching .meeting.json
+        meeting_json = config.recordings_path / f"{stem}.meeting.json"
+        if not meeting_json.exists():
+            logger.debug("No meeting metadata found for %s, skipping", stem)
+            continue
+
+        try:
+            meta = json.loads(meeting_json.read_text())
+            title = meta.get("title", "Unknown")
+            date = meta.get("date", "")
+            note_filename = f"{date} - {title}.md"
+            vault_note_path = config.meetings_path / note_filename
+        except (json.JSONDecodeError, KeyError) as e:
+            logger.warning("Failed to read metadata from %s: %s", meeting_json, e)
+            continue
+
+        try:
+            result = sync_completions(
+                vault_note_path=vault_note_path,
+                api_token=config.todoist.api_token,
+                tasks_path=tasks_file,
+            )
+            total_synced += result["synced"]
+            if result.get("note_missing"):
+                notes_missing += 1
+                logger.warning(
+                    "Vault note not found for %s: %s",
+                    title,
+                    result.get("expected_path", vault_note_path),
+                )
+            elif result["synced"] > 0:
+                logger.info("Synced %d completions for %s", result["synced"], title)
+        except Exception as e:
+            logger.error("Failed to sync completions for %s: %s", stem, e)
+
+    logger.info(
+        "Todoist sync complete: %d meetings processed, %d tasks synced, %d notes missing",
+        meetings_processed,
+        total_synced,
+        notes_missing,
+    )
+    return {
+        "total_synced": total_synced,
+        "notes_missing": notes_missing,
+        "meetings_processed": meetings_processed,
+    }
