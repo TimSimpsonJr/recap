@@ -105,8 +105,39 @@ impl<R: Runtime> RecorderInner<R> {
         }
     }
 
+    /// Arm the recorder for auto-record from a calendar event.
+    /// When armed, meeting detection will skip the notification prompt and
+    /// start recording immediately.
+    pub fn arm_for_event(&mut self, event_title: String, expected_platform: Option<MeetingPlatform>) {
+        if self.state == RecorderState::Idle {
+            self.set_state(RecorderState::Armed {
+                event_title: event_title.clone(),
+                expected_platform,
+            });
+            self.notify("Recap Armed", &format!("Ready to record: {}", event_title));
+        }
+    }
+
+    /// Disarm the recorder, returning to Idle if currently Armed.
+    pub fn disarm(&mut self) {
+        if matches!(self.state, RecorderState::Armed { .. }) {
+            self.set_state(RecorderState::Idle);
+        }
+    }
+
     /// Handle a meeting detection event.
     pub fn on_meeting_detected(&mut self, process_name: String, pid: u32) {
+        // When Armed, skip the notification and start recording immediately
+        if matches!(self.state, RecorderState::Armed { .. }) {
+            log::info!("Armed auto-record: starting capture for {} (PID {})", process_name, pid);
+            self.set_state(RecorderState::Detected {
+                process_name: process_name.clone(),
+                pid,
+            });
+            let _ = self.start_capture(process_name, pid);
+            return;
+        }
+
         if self.state != RecorderState::Idle {
             return; // Already handling a session.
         }
@@ -166,7 +197,8 @@ impl<R: Runtime> RecorderInner<R> {
         platform: MeetingPlatform,
         _tab_id: Option<u32>,
     ) {
-        if self.state != RecorderState::Idle {
+        // Allow Armed state to proceed (auto-record)
+        if self.state != RecorderState::Idle && !matches!(self.state, RecorderState::Armed { .. }) {
             log::info!(
                 "Browser meeting detected but already in state {:?}, ignoring",
                 self.state
@@ -838,8 +870,8 @@ pub async fn start_recording(
         return inner.start_capture(process_name.clone(), pid);
     }
 
-    // If idle, scan for known meeting processes.
-    if inner.state() == RecorderState::Idle {
+    // If idle or armed, scan for known meeting processes.
+    if inner.state() == RecorderState::Idle || matches!(inner.state(), RecorderState::Armed { .. }) {
         // For now, return an error — the monitor should detect processes.
         return Err("No meeting detected. Start a Zoom or Teams meeting first.".to_string());
     }

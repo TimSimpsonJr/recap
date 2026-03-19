@@ -8,6 +8,12 @@ use std::time::Instant;
 pub enum RecorderState {
     /// No meeting detected, monitoring for audio sessions.
     Idle,
+    /// Armed for auto-record from a calendar event. Will start recording
+    /// immediately when a meeting is detected, skipping the notification prompt.
+    Armed {
+        event_title: String,
+        expected_platform: Option<MeetingPlatform>,
+    },
     /// Meeting audio session detected, awaiting user response or auto-record.
     Detected { process_name: String, pid: u32 },
     /// Actively capturing audio + video.
