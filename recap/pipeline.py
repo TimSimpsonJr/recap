@@ -96,7 +96,7 @@ def _get_audio_duration(path: pathlib.Path) -> float:
 
 
 def _apply_speaker_labels(transcript: TranscriptResult, labels_path: pathlib.Path) -> TranscriptResult:
-    """Apply speaker label corrections from a JSON mapping file."""
+    """Apply speaker label corrections from JSON file. Mutates transcript.utterances in place."""
     if not labels_path.exists():
         return transcript
     labels = json.loads(labels_path.read_text())
@@ -193,7 +193,7 @@ def run_pipeline(
         _mark_waiting(status, "analyze", "speaker_review")
         _save_status(working_dir, status, recording_dest)
         logger.info("No participants available — pausing for speaker review")
-        return {"paused": True, "waiting_at": "analyze"}
+        return {**results, "paused": True, "waiting_at": "analyze"}
 
     # Apply speaker label corrections if available
     labels_path = working_dir / "speaker_labels.json"
