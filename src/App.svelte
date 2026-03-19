@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import { get } from "svelte/store";
   import { listen } from "@tauri-apps/api/event";
+  import { getCurrentWindow } from "@tauri-apps/api/window";
   import Settings from "./routes/Settings.svelte";
   import Dashboard from "./routes/Dashboard.svelte";
   import Calendar from "./routes/Calendar.svelte";
@@ -11,6 +12,9 @@
   import { loadSettings, settings, saveSetting } from "./lib/stores/settings";
   import { exchangeOAuthCode, syncCalendar } from "./lib/tauri";
   import Onboarding from "./lib/components/Onboarding.svelte";
+  import logoSvg from "./lib/assets/logo.svg";
+
+  const appWindow = getCurrentWindow();
 
   function setZoom(level: number) {
     const clamped = Math.round(Math.min(2.0, Math.max(0.5, level)) * 10) / 10;
@@ -153,29 +157,36 @@
     {#if !$settings.onboardingComplete}
       <Onboarding />
     {:else}
-    <!-- Nav bar -->
+    <!-- Title bar + Nav -->
     <nav
+      data-tauri-drag-region
       class="flex items-center shrink-0"
       style="
         height: 48px;
-        padding: 0 28px;
+        padding: 0 16px 0 28px;
         background: var(--bg);
         border-bottom: 1px solid var(--border);
         font-family: 'DM Sans', sans-serif;
         gap: 24px;
       "
     >
+      <!-- Logo + Title -->
       <span
+        class="flex items-center gap-2"
         style="
           font-family: 'Source Serif 4', serif;
           font-size: 18px;
           font-weight: 700;
           color: var(--text);
           margin-right: 12px;
+          -webkit-app-region: no-drag;
         "
       >
+        <img src={logoSvg} alt="Recap" width="22" height="22" />
         Recap
       </span>
+
+      <!-- Nav links -->
       <a
         href="#dashboard"
         style="
@@ -184,6 +195,7 @@
           padding: 10px 0;
           border-bottom: 2px solid {currentRoute === 'dashboard' ? 'var(--gold)' : 'transparent'};
           color: {currentRoute === 'dashboard' ? 'var(--gold)' : 'var(--text-faint)'};
+          -webkit-app-region: no-drag;
         "
       >Meetings</a>
       <a
@@ -194,6 +206,7 @@
           padding: 10px 0;
           border-bottom: 2px solid {currentRoute === 'calendar' ? 'var(--gold)' : 'transparent'};
           color: {currentRoute === 'calendar' ? 'var(--gold)' : 'var(--text-faint)'};
+          -webkit-app-region: no-drag;
         "
       >Calendar</a>
       <a
@@ -204,6 +217,7 @@
           padding: 10px 0;
           border-bottom: 2px solid {currentRoute === 'graph' ? 'var(--gold)' : 'transparent'};
           color: {currentRoute === 'graph' ? 'var(--gold)' : 'var(--text-faint)'};
+          -webkit-app-region: no-drag;
         "
       >Graph</a>
       <a
@@ -214,8 +228,43 @@
           padding: 10px 0;
           border-bottom: 2px solid {currentRoute === 'settings' ? 'var(--gold)' : 'transparent'};
           color: {currentRoute === 'settings' ? 'var(--gold)' : 'var(--text-faint)'};
+          -webkit-app-region: no-drag;
         "
       >Settings</a>
+
+      <!-- Spacer -->
+      <div class="flex-1"></div>
+
+      <!-- Window controls -->
+      <div class="flex items-center" style="-webkit-app-region: no-drag;">
+        <button
+          class="titlebar-btn"
+          onclick={() => appWindow.minimize()}
+          aria-label="Minimize"
+        >
+          <svg width="12" height="12" viewBox="0 0 12 12">
+            <rect x="1" y="5.5" width="10" height="1" fill="currentColor"/>
+          </svg>
+        </button>
+        <button
+          class="titlebar-btn"
+          onclick={() => appWindow.toggleMaximize()}
+          aria-label="Maximize"
+        >
+          <svg width="12" height="12" viewBox="0 0 12 12">
+            <rect x="1.5" y="1.5" width="9" height="9" fill="none" stroke="currentColor" stroke-width="1.2"/>
+          </svg>
+        </button>
+        <button
+          class="titlebar-btn titlebar-close"
+          onclick={() => appWindow.close()}
+          aria-label="Close"
+        >
+          <svg width="12" height="12" viewBox="0 0 12 12">
+            <path d="M2 2L10 10M10 2L2 10" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+          </svg>
+        </button>
+      </div>
     </nav>
 
     <!-- Route content -->
