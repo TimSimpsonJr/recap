@@ -69,7 +69,7 @@
     }
     initialized = true;
 
-    // Load credentials in background (Stronghold + Argon2 is slow)
+    // Load credentials in background
     loadCredentials().catch((err) => {
       console.error("Failed to load credentials:", err);
     });
@@ -168,6 +168,7 @@
         border-bottom: 1px solid var(--border);
         font-family: 'DM Sans', sans-serif;
         gap: 24px;
+        user-select: none;
       "
     >
       <!-- Logo + Title -->
