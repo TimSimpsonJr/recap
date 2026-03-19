@@ -5,7 +5,9 @@ use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use tauri::Manager;
 
+use crate::credentials::SecretStoreState;
 use crate::meetings::MeetingSummary;
+use crate::oauth;
 
 // ---------------------------------------------------------------------------
 // Types
@@ -160,33 +162,79 @@ fn read_cache(path: &Path) -> Result<CalendarCache, String> {
 // Zoho API helpers
 // ---------------------------------------------------------------------------
 
-/// Read the Zoho OAuth access token from the Tauri plugin-store JSON file.
-///
-/// The frontend persists tokens via `@tauri-apps/plugin-stronghold` and also
-/// mirrors the access token into the Tauri plugin-store so Rust-side code can
-/// read it without needing direct Stronghold access.  The store key follows
-/// the pattern `zoho_access_token`.
-///
-/// TODO: If the project migrates to reading directly from Stronghold on the
-/// Rust side, update this helper accordingly.
-fn get_zoho_access_token(app: &tauri::AppHandle) -> Result<String, String> {
-    // The store file is written by the frontend via @tauri-apps/plugin-store.
-    let store_path = app
-        .path()
+/// Zoho credentials bundle read from the encrypted SecretStore.
+struct ZohoCredentials {
+    access_token: String,
+    refresh_token: String,
+    client_id: String,
+    client_secret: String,
+}
+
+/// Read Zoho OAuth credentials from the encrypted SecretStore.
+async fn get_zoho_credentials(app: &tauri::AppHandle) -> Result<ZohoCredentials, String> {
+    let store = app.state::<SecretStoreState>();
+    let store = store.lock().await;
+
+    let access_token = store
+        .get("zoho.access_token")
+        .ok_or_else(|| "Zoho access token not found — please connect Zoho in Settings".to_string())?;
+    let refresh_token = store
+        .get("zoho.refresh_token")
+        .ok_or_else(|| "Zoho refresh token not found — please reconnect Zoho in Settings".to_string())?;
+    let client_id = store
+        .get("zoho.client_id")
+        .ok_or_else(|| "Zoho client ID not found — please set up Zoho in Settings".to_string())?;
+    let client_secret = store
+        .get("zoho.client_secret")
+        .ok_or_else(|| "Zoho client secret not found — please set up Zoho in Settings".to_string())?;
+
+    Ok(ZohoCredentials {
+        access_token,
+        refresh_token,
+        client_id,
+        client_secret,
+    })
+}
+
+/// Read the Zoho region from the plugin-store settings file.
+/// Defaults to "com" if not set or unreadable.
+fn get_zoho_region(app: &tauri::AppHandle) -> String {
+    app.path()
         .app_data_dir()
-        .map_err(|e| format!("Could not resolve app data dir: {}", e))?
-        .join("settings.json");
+        .ok()
+        .and_then(|p| std::fs::read_to_string(p.join("settings.json")).ok())
+        .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+        .and_then(|s| s.get("zohoRegion")?.as_str().map(String::from))
+        .unwrap_or_else(|| "com".to_string())
+}
 
-    let content = std::fs::read_to_string(&store_path)
-        .map_err(|e| format!("Could not read settings store: {}", e))?;
-    let store_data: serde_json::Value = serde_json::from_str(&content)
-        .map_err(|e| format!("Could not parse settings store: {}", e))?;
+/// Refresh the Zoho access token and persist the new token to the SecretStore.
+/// Returns the new access token on success.
+async fn refresh_zoho_token(app: &tauri::AppHandle, creds: &ZohoCredentials) -> Result<String, String> {
+    let region = get_zoho_region(app);
+    let config = oauth::get_provider_config("zoho", Some(&region))
+        .ok_or_else(|| "Could not build Zoho OAuth config".to_string())?;
 
-    store_data
-        .get("zoho_access_token")
-        .and_then(|v| v.as_str())
-        .map(|s| s.to_string())
-        .ok_or_else(|| "Zoho access token not found — please connect Zoho in Settings".to_string())
+    let token_response = oauth::refresh_token(
+        &config,
+        &creds.client_id,
+        &creds.client_secret,
+        &creds.refresh_token,
+    )
+    .await?;
+
+    // Persist refreshed access token to SecretStore
+    let store = app.state::<SecretStoreState>();
+    let mut store = store.lock().await;
+    store.set("zoho.access_token", &token_response.access_token)?;
+
+    // Zoho may return a new refresh token; persist it if present
+    if let Some(ref new_refresh) = token_response.refresh_token {
+        store.set("zoho.refresh_token", new_refresh)?;
+    }
+
+    log::info!("Zoho access token refreshed successfully");
+    Ok(token_response.access_token)
 }
 
 /// Convert Zoho API event objects into our CalendarEvent structs.
@@ -231,25 +279,18 @@ fn parse_zoho_events(response: ZohoEventsResponse) -> Vec<CalendarEvent> {
 // Tauri commands — sync & fetch
 // ---------------------------------------------------------------------------
 
-/// Fetch calendar events from the Zoho Calendar API for a date range.
-///
-/// Reads the Zoho access token from the app store, calls the Zoho Calendar
-/// events endpoint, caches the result locally, and returns the events.
-#[tauri::command]
-pub async fn fetch_calendar_events(
-    app: tauri::AppHandle,
-    start_date: String,
-    end_date: String,
-) -> Result<Vec<CalendarEvent>, String> {
-    let access_token = get_zoho_access_token(&app)?;
-
-    // TODO: Allow the user to configure their Zoho calendar ID in Settings.
-    // For now, use the primary calendar placeholder.
-    let calendar_id = "primary";
-
+/// Make a Zoho Calendar API request. Returns the response body on success.
+/// On a 401, returns Err with a message containing "401" so the caller can retry.
+async fn zoho_calendar_request(
+    access_token: &str,
+    region: &str,
+    calendar_id: &str,
+    start_date: &str,
+    end_date: &str,
+) -> Result<ZohoEventsResponse, String> {
     let url = format!(
-        "https://calendar.zoho.com/api/v1/calendars/{}/events?range={},{}",
-        calendar_id, start_date, end_date,
+        "https://calendar.zoho.{}/api/v1/calendars/{}/events?range={},{}",
+        region, calendar_id, start_date, end_date,
     );
 
     let client = reqwest::Client::new();
@@ -273,10 +314,46 @@ pub async fn fetch_calendar_events(
         ));
     }
 
-    let zoho_response: ZohoEventsResponse = response
+    response
         .json()
         .await
-        .map_err(|e| format!("Failed to parse Zoho Calendar response: {}", e))?;
+        .map_err(|e| format!("Failed to parse Zoho Calendar response: {}", e))
+}
+
+/// Fetch calendar events from the Zoho Calendar API for a date range.
+///
+/// Reads credentials from the encrypted SecretStore, calls the Zoho Calendar
+/// events endpoint (using the configured region), and automatically refreshes
+/// the access token on a 401 before retrying once. Caches the result locally.
+#[tauri::command]
+pub async fn fetch_calendar_events(
+    app: tauri::AppHandle,
+    start_date: String,
+    end_date: String,
+) -> Result<Vec<CalendarEvent>, String> {
+    let creds = get_zoho_credentials(&app).await?;
+    let region = get_zoho_region(&app);
+
+    // TODO: Allow the user to configure their Zoho calendar ID in Settings.
+    let calendar_id = "primary";
+
+    // First attempt with current access token
+    let result = zoho_calendar_request(
+        &creds.access_token, &region, calendar_id, &start_date, &end_date,
+    ).await;
+
+    let zoho_response = match result {
+        Ok(resp) => resp,
+        Err(e) if e.contains("401") => {
+            // Token expired — refresh and retry once
+            log::info!("Zoho token expired, attempting refresh...");
+            let new_token = refresh_zoho_token(&app, &creds).await?;
+            zoho_calendar_request(
+                &new_token, &region, calendar_id, &start_date, &end_date,
+            ).await?
+        }
+        Err(e) => return Err(e),
+    };
 
     let events = parse_zoho_events(zoho_response);
 

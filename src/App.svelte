@@ -63,7 +63,9 @@
     const fifteenMinutes = 15 * 60 * 1000;
     if (now - lastCalendarSync > fifteenMinutes) {
       lastCalendarSync = now;
-      syncCalendar().catch(() => {}); // silent background sync
+      syncCalendar().catch((err) => {
+        console.warn("Calendar auto-sync failed:", err);
+      });
     }
   }
 
