@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import { get } from "svelte/store";
   import { settings } from "../lib/stores/settings";
   import { getMeetingDetail, type MeetingDetail } from "../lib/tauri";
@@ -25,9 +25,19 @@
   let loading = $state(true);
   let activeTab: "notes" | "transcript" | "screenshots" = $state("notes");
   let playerRef: MeetingPlayer | undefined = $state();
+  let windowWidth = $state(window.innerWidth);
+
+  function handleResize() {
+    windowWidth = window.innerWidth;
+  }
 
   onMount(async () => {
+    window.addEventListener("resize", handleResize);
     await loadDetail();
+  });
+
+  onDestroy(() => {
+    window.removeEventListener("resize", handleResize);
   });
 
   async function loadDetail() {
@@ -134,96 +144,102 @@
 
       <RetryBanner meeting={detail.summary} />
 
-      <MeetingPlayer
-        bind:this={playerRef}
-        src={videoSrc}
-        audioOnly={isAudioOnly}
-      />
+      <div class={windowWidth > 1400 ? "flex gap-6" : "flex flex-col"}>
+        <div style={windowWidth > 1400 ? "width:45%;flex-shrink:0;" : ""}>
+          <MeetingPlayer
+            bind:this={playerRef}
+            src={videoSrc}
+            audioOnly={isAudioOnly}
+          />
+        </div>
 
-      <!-- Tabs -->
-      <div
-        class="flex gap-0"
-        style="
-          border-bottom: 1px solid var(--border);
-          font-family: 'DM Sans', sans-serif;
-          font-size: 14.5px;
-        "
-      >
-        <button
-          onclick={() => activeTab = "notes"}
-          style="
-            padding: 8px 16px;
-            border: none;
-            background: none;
-            cursor: pointer;
-            font-family: 'DM Sans', sans-serif;
-            font-size: 14.5px;
-            font-weight: {activeTab === 'notes' ? '600' : '400'};
-            color: {activeTab === 'notes' ? 'var(--gold)' : 'var(--text-faint)'};
-            border-bottom: 2px solid {activeTab === 'notes' ? 'var(--gold)' : 'transparent'};
-            margin-bottom: -1px;
-          "
-        >
-          Notes
-        </button>
-        <button
-          onclick={() => activeTab = "transcript"}
-          style="
-            padding: 8px 16px;
-            border: none;
-            background: none;
-            cursor: pointer;
-            font-family: 'DM Sans', sans-serif;
-            font-size: 14.5px;
-            font-weight: {activeTab === 'transcript' ? '600' : '400'};
-            color: {activeTab === 'transcript' ? 'var(--gold)' : 'var(--text-faint)'};
-            border-bottom: 2px solid {activeTab === 'transcript' ? 'var(--gold)' : 'transparent'};
-            margin-bottom: -1px;
-          "
-        >
-          Transcript
-        </button>
-        {#if screenshotCount > 0}
-          <button
-            onclick={() => activeTab = "screenshots"}
+        <div class="flex-1 min-w-0">
+          <!-- Tabs -->
+          <div
+            class="flex gap-0"
             style="
-              padding: 8px 16px;
-              border: none;
-              background: none;
-              cursor: pointer;
+              border-bottom: 1px solid var(--border);
               font-family: 'DM Sans', sans-serif;
               font-size: 14.5px;
-              font-weight: {activeTab === 'screenshots' ? '600' : '400'};
-              color: {activeTab === 'screenshots' ? 'var(--gold)' : 'var(--text-faint)'};
-              border-bottom: 2px solid {activeTab === 'screenshots' ? 'var(--gold)' : 'transparent'};
-              margin-bottom: -1px;
             "
           >
-            Screenshots ({screenshotCount})
-          </button>
-        {/if}
-      </div>
+            <button
+              onclick={() => activeTab = "notes"}
+              style="
+                padding: 8px 16px;
+                border: none;
+                background: none;
+                cursor: pointer;
+                font-family: 'DM Sans', sans-serif;
+                font-size: 14.5px;
+                font-weight: {activeTab === 'notes' ? '600' : '400'};
+                color: {activeTab === 'notes' ? 'var(--gold)' : 'var(--text-faint)'};
+                border-bottom: 2px solid {activeTab === 'notes' ? 'var(--gold)' : 'transparent'};
+                margin-bottom: -1px;
+              "
+            >
+              Notes
+            </button>
+            <button
+              onclick={() => activeTab = "transcript"}
+              style="
+                padding: 8px 16px;
+                border: none;
+                background: none;
+                cursor: pointer;
+                font-family: 'DM Sans', sans-serif;
+                font-size: 14.5px;
+                font-weight: {activeTab === 'transcript' ? '600' : '400'};
+                color: {activeTab === 'transcript' ? 'var(--gold)' : 'var(--text-faint)'};
+                border-bottom: 2px solid {activeTab === 'transcript' ? 'var(--gold)' : 'transparent'};
+                margin-bottom: -1px;
+              "
+            >
+              Transcript
+            </button>
+            {#if screenshotCount > 0}
+              <button
+                onclick={() => activeTab = "screenshots"}
+                style="
+                  padding: 8px 16px;
+                  border: none;
+                  background: none;
+                  cursor: pointer;
+                  font-family: 'DM Sans', sans-serif;
+                  font-size: 14.5px;
+                  font-weight: {activeTab === 'screenshots' ? '600' : '400'};
+                  color: {activeTab === 'screenshots' ? 'var(--gold)' : 'var(--text-faint)'};
+                  border-bottom: 2px solid {activeTab === 'screenshots' ? 'var(--gold)' : 'transparent'};
+                  margin-bottom: -1px;
+                "
+              >
+                Screenshots ({screenshotCount})
+              </button>
+            {/if}
+          </div>
 
-      <!-- Tab content -->
-      <div style="padding-bottom: 32px;">
-        {#if activeTab === "notes"}
-          <MeetingNotes content={detail.note_content} />
-        {:else if activeTab === "transcript"}
-          {#if needsSpeakerReview && detail.summary.recording_path && Object.keys(speakerLabels).length > 0}
-            <SpeakerReview
-              speakerLabels={speakerLabels}
-              calendarParticipants={detail.summary.participants}
-              recordingPath={detail.summary.recording_path}
-              onResumed={loadDetail}
-            />
-          {/if}
-          <MeetingTranscript
-            utterances={detail.transcript}
-            onSeek={handleSeek}
-          />
-        {:else if activeTab === "screenshots"}
-          <ScreenshotGallery screenshots={detail.screenshots} />
-        {/if}
+          <!-- Tab content -->
+          <div style="padding-bottom: 32px;">
+            {#if activeTab === "notes"}
+              <MeetingNotes content={detail.note_content} />
+            {:else if activeTab === "transcript"}
+              {#if needsSpeakerReview && detail.summary.recording_path && Object.keys(speakerLabels).length > 0}
+                <SpeakerReview
+                  speakerLabels={speakerLabels}
+                  calendarParticipants={detail.summary.participants}
+                  recordingPath={detail.summary.recording_path}
+                  onResumed={loadDetail}
+                />
+              {/if}
+              <MeetingTranscript
+                utterances={detail.transcript}
+                onSeek={handleSeek}
+              />
+            {:else if activeTab === "screenshots"}
+              <ScreenshotGallery screenshots={detail.screenshots} />
+            {/if}
+          </div>
+        </div>
       </div>
     </div>
   {/if}

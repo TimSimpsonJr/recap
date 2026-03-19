@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import { get } from "svelte/store";
   import { listen } from "@tauri-apps/api/event";
   import { getCurrentWindow } from "@tauri-apps/api/window";
@@ -49,6 +49,11 @@
   let meetingId = $state<string | null>(null);
   let filterParticipant = $state<string | null>(null);
   let initialized = $state(false);
+  let windowWidth = $state(window.innerWidth);
+
+  function handleResize() {
+    windowWidth = window.innerWidth;
+  }
 
   // D5: Auto-sync calendar on window focus, debounced to once per 15 min
   let lastCalendarSync = $state(0);
@@ -62,7 +67,13 @@
     }
   }
 
+  onDestroy(() => {
+    window.removeEventListener("resize", handleResize);
+  });
+
   onMount(async () => {
+    window.addEventListener("resize", handleResize);
+
     // Load settings first (fast, plugin-store) so UI can render immediately
     try {
       await loadSettings();
@@ -192,48 +203,88 @@
       <!-- Nav links -->
       <a
         href="#dashboard"
+        class="nav-link"
+        title="Meetings"
         style="
           font-size: 14.5px;
           text-decoration: none;
           padding: 10px 0;
+          display: flex;
+          align-items: center;
+          gap: 6px;
           border-bottom: 2px solid {currentRoute === 'dashboard' ? 'var(--gold)' : 'transparent'};
           color: {currentRoute === 'dashboard' ? 'var(--gold)' : 'var(--text-faint)'};
           -webkit-app-region: no-drag;
         "
-      >Meetings</a>
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M2 4h12M2 8h12M2 12h12"/>
+        </svg>
+        <span style="display:{windowWidth >= 900 ? 'inline' : 'none'};">Meetings</span>
+      </a>
       <a
         href="#calendar"
+        class="nav-link"
+        title="Calendar"
         style="
           font-size: 14.5px;
           text-decoration: none;
           padding: 10px 0;
+          display: flex;
+          align-items: center;
+          gap: 6px;
           border-bottom: 2px solid {currentRoute === 'calendar' ? 'var(--gold)' : 'transparent'};
           color: {currentRoute === 'calendar' ? 'var(--gold)' : 'var(--text-faint)'};
           -webkit-app-region: no-drag;
         "
-      >Calendar</a>
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="2" y="3" width="12" height="11" rx="1.5"/><path d="M2 6.5h12M5.5 1.5v3M10.5 1.5v3"/>
+        </svg>
+        <span style="display:{windowWidth >= 900 ? 'inline' : 'none'};">Calendar</span>
+      </a>
       <a
         href="#graph"
+        class="nav-link"
+        title="Graph"
         style="
           font-size: 14.5px;
           text-decoration: none;
           padding: 10px 0;
+          display: flex;
+          align-items: center;
+          gap: 6px;
           border-bottom: 2px solid {currentRoute === 'graph' ? 'var(--gold)' : 'transparent'};
           color: {currentRoute === 'graph' ? 'var(--gold)' : 'var(--text-faint)'};
           -webkit-app-region: no-drag;
         "
-      >Graph</a>
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <circle cx="4" cy="5" r="2"/><circle cx="12" cy="4" r="2"/><circle cx="8" cy="12" r="2"/><path d="M5.7 6.3L6.8 10.5M10.3 5.3L9.2 10.5"/>
+        </svg>
+        <span style="display:{windowWidth >= 900 ? 'inline' : 'none'};">Graph</span>
+      </a>
       <a
         href="#settings"
+        class="nav-link"
+        title="Settings"
         style="
           font-size: 14.5px;
           text-decoration: none;
           padding: 10px 0;
+          display: flex;
+          align-items: center;
+          gap: 6px;
           border-bottom: 2px solid {currentRoute === 'settings' ? 'var(--gold)' : 'transparent'};
           color: {currentRoute === 'settings' ? 'var(--gold)' : 'var(--text-faint)'};
           -webkit-app-region: no-drag;
         "
-      >Settings</a>
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="8" cy="8" r="2.5"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"/>
+        </svg>
+        <span style="display:{windowWidth >= 900 ? 'inline' : 'none'};">Settings</span>
+      </a>
 
       <!-- Spacer -->
       <div class="flex-1"></div>

@@ -32,6 +32,7 @@
 
   let filtersExpanded = $state(false);
   let selectedMeetingId = $state<string | null>(null);
+  let windowWidth = $state(window.innerWidth);
 
   // Set initial meeting ID from deep link
   $effect(() => {
@@ -50,7 +51,12 @@
     }
   });
 
+  function handleResize() {
+    windowWidth = window.innerWidth;
+  }
+
   onMount(async () => {
+    window.addEventListener("resize", handleResize);
     await initRecorderListener();
     await initMeetingsListener();
     await loadMeetings();
@@ -58,6 +64,7 @@
   });
 
   onDestroy(() => {
+    window.removeEventListener("resize", handleResize);
     destroyRecorderListener();
     destroyMeetingsListener();
     if (searchTimer) clearTimeout(searchTimer);
@@ -100,147 +107,165 @@
 <div class="flex flex-col h-full" style="background: var(--bg);">
   <RecordingStatusBar />
 
-  <div class="flex flex-1 overflow-hidden">
-    <FilterSidebar expanded={filtersExpanded} />
-
-    <!-- Meeting list panel -->
-    <div
-      class="meeting-list-panel"
-      class:has-detail={selectedMeetingId !== null}
-    >
-      <div
-        style="
-          padding-top: 18px;
-          display: flex;
-          align-items: center;
-          gap: 10px;
-        "
-      >
-        <!-- Filter toggle button -->
-        <button
-          onclick={toggleFilters}
-          title={filtersExpanded ? "Hide filters" : "Show filters"}
-          style="
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            width: 36px;
-            height: 36px;
-            border-radius: 8px;
-            border: none;
-            background: {filtersExpanded ? 'rgba(168,160,120,0.12)' : 'var(--surface)'};
-            color: {filtersExpanded ? 'var(--gold)' : 'var(--text-faint)'};
-            cursor: pointer;
-            flex-shrink: 0;
-            position: relative;
-            font-size: 18px;
-          "
-        >
-          <!-- Filter icon (funnel) using SVG -->
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 16 16"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.5"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-          >
-            <path d="M1.5 2h13l-5 6v4.5L7.5 14V8z" />
-          </svg>
-          {#if filterCount > 0}
-            <span
-              style="
-                position: absolute;
-                top: -4px;
-                right: -4px;
-                background: var(--gold);
-                color: var(--bg);
-                font-size: 9px;
-                font-weight: 700;
-                font-family: 'DM Sans', sans-serif;
-                width: 16px;
-                height: 16px;
-                border-radius: 50%;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-              "
-            >{filterCount}</span>
-          {/if}
-        </button>
-
-        <div class="flex-1">
-          <SearchBar onSearch={handleSearch} />
-        </div>
-      </div>
-
-      <SetupChecklist />
-
-      {#if $meetings.error}
-        <div
-          class="mt-4 p-3 rounded-lg"
-          style="
-            background: rgba(200,80,60,0.10);
-            color: var(--red);
-            font-family: 'DM Sans', sans-serif;
-            font-size: 14.5px;
-          "
-        >
-          {$meetings.error}
-        </div>
-      {/if}
-
-      {#if !$settings.recordingsFolder}
-        <div
-          class="mt-4 p-4 rounded-lg"
-          style="
-            background: rgba(180,165,130,0.08);
-            font-family: 'DM Sans', sans-serif;
-            font-size: 14.5px;
-            color: var(--gold-muted);
-            text-align: center;
-          "
-        >
-          <p style="margin: 0 0 8px 0;">No recordings folder configured</p>
-          <a
-            href="#settings"
-            style="
-              color: var(--gold);
-              text-decoration: underline;
-              font-weight: 600;
-            "
-          >
-            Configure in Settings
-          </a>
-        </div>
-      {/if}
-
-      <div style="padding-top: 14px;">
-        <MeetingList
-          meetings={$filteredMeetings.items}
-          hasMore={$filteredMeetings.nextCursor !== null}
-          isLoading={$filteredMeetings.loading}
-          onLoadMore={handleLoadMore}
-          selectedId={selectedMeetingId}
-          onSelect={handleSelectMeeting}
-        />
-      </div>
-    </div>
-
-    <!-- Detail panel -->
-    {#if selectedMeetingId}
-      <div class="detail-panel-wrapper">
+  {#if windowWidth < 900 && selectedMeetingId}
+    <div class="flex flex-col h-full" style="background:var(--bg);">
+      <button onclick={handleCloseDetail} style="
+        padding:8px 16px;display:flex;align-items:center;gap:6px;
+        background:none;border:none;color:var(--text-muted);cursor:pointer;
+        font-family:'DM Sans',sans-serif;font-size:14px;
+      ">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 2L4 7l5 5"/></svg>
+        Back to meetings
+      </button>
+      <div class="flex-1 overflow-hidden">
         {#key selectedMeetingId}
-          <DetailPanel
-            meetingId={selectedMeetingId}
-            onClose={handleCloseDetail}
-          />
+          <DetailPanel meetingId={selectedMeetingId} onClose={handleCloseDetail} />
         {/key}
       </div>
-    {/if}
-  </div>
+    </div>
+  {:else}
+    <div class="flex flex-1 overflow-hidden">
+      <FilterSidebar expanded={filtersExpanded} narrowMode={windowWidth < 900} />
+
+      <!-- Meeting list panel -->
+      <div
+        class="meeting-list-panel"
+        class:has-detail={selectedMeetingId !== null}
+      >
+        <div
+          style="
+            padding-top: 18px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+          "
+        >
+          <!-- Filter toggle button -->
+          <button
+            onclick={toggleFilters}
+            title={filtersExpanded ? "Hide filters" : "Show filters"}
+            style="
+              display: flex;
+              align-items: center;
+              justify-content: center;
+              width: 36px;
+              height: 36px;
+              border-radius: 8px;
+              border: none;
+              background: {filtersExpanded ? 'rgba(168,160,120,0.12)' : 'var(--surface)'};
+              color: {filtersExpanded ? 'var(--gold)' : 'var(--text-faint)'};
+              cursor: pointer;
+              flex-shrink: 0;
+              position: relative;
+              font-size: 18px;
+            "
+          >
+            <!-- Filter icon (funnel) using SVG -->
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 16 16"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M1.5 2h13l-5 6v4.5L7.5 14V8z" />
+            </svg>
+            {#if filterCount > 0}
+              <span
+                style="
+                  position: absolute;
+                  top: -4px;
+                  right: -4px;
+                  background: var(--gold);
+                  color: var(--bg);
+                  font-size: 9px;
+                  font-weight: 700;
+                  font-family: 'DM Sans', sans-serif;
+                  width: 16px;
+                  height: 16px;
+                  border-radius: 50%;
+                  display: flex;
+                  align-items: center;
+                  justify-content: center;
+                "
+              >{filterCount}</span>
+            {/if}
+          </button>
+
+          <div class="flex-1">
+            <SearchBar onSearch={handleSearch} />
+          </div>
+        </div>
+
+        <SetupChecklist />
+
+        {#if $meetings.error}
+          <div
+            class="mt-4 p-3 rounded-lg"
+            style="
+              background: rgba(200,80,60,0.10);
+              color: var(--red);
+              font-family: 'DM Sans', sans-serif;
+              font-size: 14.5px;
+            "
+          >
+            {$meetings.error}
+          </div>
+        {/if}
+
+        {#if !$settings.recordingsFolder}
+          <div
+            class="mt-4 p-4 rounded-lg"
+            style="
+              background: rgba(180,165,130,0.08);
+              font-family: 'DM Sans', sans-serif;
+              font-size: 14.5px;
+              color: var(--gold-muted);
+              text-align: center;
+            "
+          >
+            <p style="margin: 0 0 8px 0;">No recordings folder configured</p>
+            <a
+              href="#settings"
+              style="
+                color: var(--gold);
+                text-decoration: underline;
+                font-weight: 600;
+              "
+            >
+              Configure in Settings
+            </a>
+          </div>
+        {/if}
+
+        <div style="padding-top: 14px;">
+          <MeetingList
+            meetings={$filteredMeetings.items}
+            hasMore={$filteredMeetings.nextCursor !== null}
+            isLoading={$filteredMeetings.loading}
+            onLoadMore={handleLoadMore}
+            selectedId={selectedMeetingId}
+            onSelect={handleSelectMeeting}
+          />
+        </div>
+      </div>
+
+      <!-- Detail panel -->
+      {#if selectedMeetingId}
+        <div class="detail-panel-wrapper">
+          {#key selectedMeetingId}
+            <DetailPanel
+              meetingId={selectedMeetingId}
+              onClose={handleCloseDetail}
+            />
+          {/key}
+        </div>
+      {/if}
+    </div>
+  {/if}
 </div>
 
 <style>
