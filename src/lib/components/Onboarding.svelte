@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import { get } from "svelte/store";
   import { open } from "@tauri-apps/plugin-dialog";
   import { settings, saveAllSettings } from "../stores/settings";
@@ -10,6 +10,13 @@
 
   let step = $state(0);
   let showHfHelp = $state(false);
+  let windowWidth = $state(window.innerWidth);
+
+  function handleResize() {
+    windowWidth = window.innerWidth;
+  }
+
+  let narrow = $derived(windowWidth < 900);
 
   // Step 1: Storage
   let recordingsFolder = $state("");
@@ -43,7 +50,12 @@
     }
   }
 
+  onDestroy(() => {
+    window.removeEventListener("resize", handleResize);
+  });
+
   onMount(async () => {
+    window.addEventListener("resize", handleResize);
     const current = get(settings);
     recordingsFolder = current.recordingsFolder || "";
     userName = current.userName || "";
@@ -123,8 +135,8 @@
 ">
   <div style="
     width: 100%;
-    max-width: 520px;
-    padding: 0 24px;
+    max-width: {narrow ? '420px' : '520px'};
+    padding: 0 {narrow ? '16px' : '24px'};
   ">
     {#if step === 0}
       <!-- Welcome -->

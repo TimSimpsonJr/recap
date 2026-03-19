@@ -204,6 +204,7 @@
       <div
         class="meeting-list-panel"
         class:has-detail={selectedMeetingId !== null}
+        class:narrow-mode={windowWidth < 900 && !selectedMeetingId}
       >
         <div
           style="
@@ -385,6 +386,10 @@
     padding: 0 28px;
     transition: flex 400ms cubic-bezier(0.4, 0, 0.2, 1);
     position: relative;
+  }
+
+  .meeting-list-panel.narrow-mode {
+    padding: 0 16px;
   }
 
   .meeting-list-panel.has-detail {

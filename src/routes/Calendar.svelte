@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from "svelte";
+  import { onMount, onDestroy } from "svelte";
   import { get } from "svelte/store";
   import { settings } from "../lib/stores/settings";
   import { credentials } from "../lib/stores/credentials";
@@ -25,6 +25,12 @@
 
   let zohoConnected = $state(false);
   let expandedEventId: string | null = $state(null);
+  let windowWidth = $state(window.innerWidth);
+  let narrow = $derived(windowWidth < 900);
+
+  function handleResize() {
+    windowWidth = window.innerWidth;
+  }
 
   function toggleBriefing(eventId: string) {
     expandedEventId = expandedEventId === eventId ? null : eventId;
@@ -144,7 +150,12 @@
     }
   }
 
+  onDestroy(() => {
+    window.removeEventListener("resize", handleResize);
+  });
+
   onMount(async () => {
+    window.addEventListener("resize", handleResize);
     // Subscribe to credentials to track Zoho status reactively.
     // Svelte store .subscribe() calls the callback synchronously with the
     // current value, so zohoConnected is set before the if-check below.
@@ -186,7 +197,7 @@
 
 <div
   class="h-full overflow-y-auto"
-  style="font-family: 'DM Sans', sans-serif; padding: 32px 40px;"
+  style="font-family: 'DM Sans', sans-serif; padding: {narrow ? '24px 16px' : '32px 40px'}; overflow-x: hidden;"
 >
   <!-- Header -->
   <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 28px;">
@@ -353,8 +364,8 @@
                     font-family: 'DM Sans', sans-serif;
                   "
                 >
-                  <div style="display: flex; align-items: center; gap: 8px;">
-                    <span style="font-size: 14.5px; font-weight: 500; color: var(--text);">
+                  <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
+                    <span style="font-size: 14.5px; font-weight: 500; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;">
                       {event.title}
                     </span>
                     {#if event.detected_platform}
@@ -474,8 +485,8 @@
               "
             >
               <div style="flex: 1; min-width: 0;">
-                <div style="display: flex; align-items: center; gap: 8px;">
-                  <span style="font-size: 14px; font-weight: 500; color: var(--text);">
+                <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
+                  <span style="font-size: 14px; font-weight: 500; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;">
                     {event.title}
                   </span>
                   {#if matchedId}
