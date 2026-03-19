@@ -11,4 +11,4 @@
 - **No cloud storage of user data** — recordings, transcripts, and analysis artifacts stay local
 - **PyTorch CUDA 12.1** — extra-index-url pinned to cu121 wheels
 - **Obsidian vault compatibility** — generated notes must be valid Obsidian markdown (wikilinks, callouts, YAML frontmatter). Not generic markdown.
-- **Claude CLI for LLM calls** — all LLM interactions use the `claude` CLI (`claude --print`), not the Anthropic API SDK. This keeps auth/config centralized in the CLI and avoids managing API keys in the app.
+- **Claude CLI for LLM calls (personal use)** — all LLM interactions use `claude --print`. This is permitted under Consumer ToS for personal use on your own machine (Anthropic's docs explicitly show scripted/piped usage). If Recap is ever distributed to other users, switch to Anthropic API keys under Commercial Terms. Ollama is a future option for local inference when model quality catches up (limited to ~14B models on 12GB RTX 4070).

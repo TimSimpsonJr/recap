@@ -57,13 +57,13 @@ function waitingForSpeakerReviewStatus(): PipelineStatus {
 
 export const DUMMY_MEETINGS: MeetingSummary[] = [
   { id: "2026-03-17-project-kickoff-acme", title: "Project Kickoff with Acme Corp", date: "2026-03-17", platform: "zoom", participants: ["Jane Smith", "Bob Jones", "Alice Chen"], company: "Acme Corp", duration_seconds: 2700, pipeline_status: doneStatus(), has_note: true, has_transcript: true, has_video: true, recording_path: null, note_path: null },
-  { id: "2026-03-17-weekly-standup", title: "Weekly Engineering Standup", date: "2026-03-17", platform: "zoom", participants: ["Tim", "Sarah", "Dev Team", "Mike", "Lisa"], company: null, duration_seconds: 1800, pipeline_status: processingStatus(), has_note: false, has_transcript: false, has_video: true, recording_path: null, note_path: null },
-  { id: "2026-03-16-quarterly-review", title: "Quarterly Business Review", date: "2026-03-16", platform: "zoom", participants: ["Jane Smith", "Bob Jones", "CFO Team", "Tim", "VP Sales", "Director Ops", "Analyst", "Board Rep"], company: "Acme Corp", duration_seconds: 3600, pipeline_status: doneStatus(), has_note: true, has_transcript: true, has_video: true, recording_path: null, note_path: null },
+  { id: "2026-03-17-weekly-standup", title: "Weekly Engineering Standup", date: "2026-03-17", platform: "google_meet", participants: ["Tim", "Sarah", "Dev Team", "Mike", "Lisa"], company: null, duration_seconds: 1800, pipeline_status: processingStatus(), has_note: false, has_transcript: false, has_video: true, recording_path: null, note_path: null },
+  { id: "2026-03-16-quarterly-review", title: "Quarterly Business Review", date: "2026-03-16", platform: "teams", participants: ["Jane Smith", "Bob Jones", "CFO Team", "Tim", "VP Sales", "Director Ops", "Analyst", "Board Rep"], company: "Acme Corp", duration_seconds: 3600, pipeline_status: doneStatus(), has_note: true, has_transcript: true, has_video: true, recording_path: null, note_path: null },
   { id: "2026-03-16-client-feedback", title: "Client Feedback Session", date: "2026-03-16", platform: "teams", participants: ["Dave Wilson", "Tim"], company: "Globex Inc", duration_seconds: 1500, pipeline_status: failedStatus("transcribe"), has_note: false, has_transcript: false, has_video: true, recording_path: null, note_path: null },
-  { id: "2026-03-16-design-sprint-retro", title: "Design Sprint Retro", date: "2026-03-16", platform: "google", participants: ["Sarah", "Mike", "Lisa", "Tim"], company: null, duration_seconds: 2400, pipeline_status: doneStatus(), has_note: true, has_transcript: true, has_video: true, recording_path: null, note_path: null },
+  { id: "2026-03-16-design-sprint-retro", title: "Design Sprint Retro", date: "2026-03-16", platform: "google_meet", participants: ["Sarah", "Mike", "Lisa", "Tim"], company: null, duration_seconds: 2400, pipeline_status: doneStatus(), has_note: true, has_transcript: true, has_video: true, recording_path: null, note_path: null },
   { id: "2026-03-15-investor-update", title: "Investor Update Call", date: "2026-03-15", platform: "zoom", participants: ["Tim", "Jane Smith", "Investor A"], company: null, duration_seconds: 3000, pipeline_status: doneStatus(), has_note: true, has_transcript: true, has_video: true, recording_path: null, note_path: null },
-  { id: "2026-03-15-1on1-sarah", title: "1:1 with Sarah", date: "2026-03-15", platform: "zoom", participants: ["Tim", "Sarah"], company: null, duration_seconds: 1800, pipeline_status: doneStatus(), has_note: true, has_transcript: true, has_video: false, recording_path: null, note_path: null },
-  { id: "2026-03-14-product-planning", title: "Product Planning Session", date: "2026-03-14", platform: "zoho", participants: ["Tim", "Mike", "Lisa", "Product Team"], company: null, duration_seconds: 5400, pipeline_status: doneStatus(), has_note: true, has_transcript: true, has_video: true, recording_path: null, note_path: null },
+  { id: "2026-03-15-1on1-sarah", title: "1:1 with Sarah", date: "2026-03-15", platform: "google_meet", participants: ["Tim", "Sarah"], company: null, duration_seconds: 1800, pipeline_status: doneStatus(), has_note: true, has_transcript: true, has_video: false, recording_path: null, note_path: null },
+  { id: "2026-03-14-product-planning", title: "Product Planning Session", date: "2026-03-14", platform: "zoho_meet", participants: ["Tim", "Mike", "Lisa", "Product Team"], company: null, duration_seconds: 5400, pipeline_status: doneStatus(), has_note: true, has_transcript: true, has_video: true, recording_path: null, note_path: null },
   { id: "2026-03-17-sales-demo", title: "Sales Demo with Initech", date: "2026-03-17", platform: "zoom", participants: [], company: "Initech", duration_seconds: 2100, pipeline_status: waitingForSpeakerReviewStatus(), has_note: false, has_transcript: false, has_video: true, recording_path: "C:/Recordings/2026-03-17-sales-demo/recording.mp4", note_path: null },
 ];
 
@@ -248,6 +248,10 @@ export const DUMMY_CALENDAR_EVENTS: CalendarEvent[] = [
       { name: "Mike", email: "mike@example.com" },
     ],
     location: "Zoom",
+    auto_record: true,
+    recurring_series_id: "series-sprint-planning",
+    meeting_url: "https://zoom.us/j/123456789",
+    detected_platform: "zoom",
   },
   {
     id: "cal-002",
@@ -261,6 +265,10 @@ export const DUMMY_CALENDAR_EVENTS: CalendarEvent[] = [
       { name: "Bob Jones", email: "bob@acme.com" },
     ],
     location: null,
+    auto_record: false,
+    recurring_series_id: null,
+    meeting_url: null,
+    detected_platform: null,
   },
   {
     id: "cal-003",
@@ -275,6 +283,10 @@ export const DUMMY_CALENDAR_EVENTS: CalendarEvent[] = [
       { name: "Alice Chen", email: "alice@acme.com" },
     ],
     location: "Zoom",
+    auto_record: true,
+    recurring_series_id: null,
+    meeting_url: "https://zoom.us/j/987654321",
+    detected_platform: "zoom",
   },
   {
     id: "cal-004",
@@ -289,6 +301,10 @@ export const DUMMY_CALENDAR_EVENTS: CalendarEvent[] = [
       { name: "Tim", email: "tim@example.com" },
     ],
     location: "Google Meet",
+    auto_record: true,
+    recurring_series_id: "series-design-retro",
+    meeting_url: "https://meet.google.com/abc-defg-hij",
+    detected_platform: "google_meet",
   },
 ];
 

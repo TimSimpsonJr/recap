@@ -1,0 +1,1087 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Calendar Integration Mockups</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,300;8..60,400;8..60,600;8..60,700&family=DM+Sans:wght@300;400;500;600;700&display=swap');
+
+  :root {
+    --bg-base: #1D1D1B;
+    --bg-surface: #242422;
+    --bg-surface-hover: #2B2B28;
+    --bg-inset: #282826;
+    --bg-overlay: #1A1A18;
+    --text-primary: #D8D5CE;
+    --text-body: #B0ADA5;
+    --text-muted: #78756E;
+    --text-faint: #585650;
+    --accent: #A8A078;
+    --accent-hover: #B8B088;
+    --status-done-bg: rgba(160,150,120,0.12);
+    --status-done-text: #A8A078;
+    --status-active-bg: rgba(180,165,130,0.10);
+    --status-active-text: #B4A882;
+    --status-failed-bg: rgba(200,80,60,0.10);
+    --status-failed-text: #D06850;
+    --border-subtle: #262624;
+    --dot: #464440;
+    --upcoming-bg: rgba(168,160,120,0.06);
+    --upcoming-border: rgba(168,160,120,0.15);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg-base);
+    color: var(--text-body);
+    font-family: 'DM Sans', sans-serif;
+    font-size: 15px;
+    padding: 32px;
+    line-height: 1.5;
+  }
+
+  h1 {
+    font-family: 'Source Serif 4', serif;
+    color: var(--text-primary);
+    font-size: 28px;
+    font-weight: 700;
+    margin-bottom: 8px;
+  }
+
+  h2 {
+    font-family: 'Source Serif 4', serif;
+    color: var(--text-primary);
+    font-size: 20px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    margin-top: 48px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border-subtle);
+  }
+
+  .subtitle {
+    color: var(--text-muted);
+    font-size: 14px;
+    margin-bottom: 40px;
+  }
+
+  .desc {
+    color: var(--text-muted);
+    font-size: 13.5px;
+    margin-bottom: 16px;
+    max-width: 700px;
+  }
+
+  .divider {
+    border: none;
+    border-top: 1px solid var(--border-subtle);
+    margin: 48px 0;
+  }
+
+  /* ── Nav Bar ── */
+  .nav-bar {
+    display: flex;
+    align-items: center;
+    height: 44px;
+    background: var(--bg-overlay);
+    border-bottom: 1px solid var(--border-subtle);
+    padding: 0 20px;
+    border-radius: 8px 8px 0 0;
+    gap: 24px;
+  }
+
+  .nav-title {
+    font-family: 'Source Serif 4', serif;
+    font-size: 16px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-right: 16px;
+  }
+
+  .nav-tab {
+    font-size: 14px;
+    color: var(--text-faint);
+    padding: 12px 0;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    transition: color 120ms ease;
+  }
+
+  .nav-tab:hover { color: var(--text-muted); }
+  .nav-tab.active {
+    color: var(--accent);
+    border-bottom-color: var(--accent);
+  }
+
+  /* ── App Frame ── */
+  .app-frame {
+    max-width: 900px;
+    border: 1px solid var(--border-subtle);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--bg-base);
+  }
+
+  .app-body {
+    display: flex;
+    min-height: 500px;
+  }
+
+  /* ── Filter Sidebar ── */
+  .filter-sidebar {
+    width: 180px;
+    background: var(--bg-overlay);
+    border-right: 1px solid var(--border-subtle);
+    padding: 16px 12px;
+    flex-shrink: 0;
+  }
+
+  .filter-section-label {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-faint);
+    margin-bottom: 8px;
+    margin-top: 16px;
+  }
+
+  .filter-section-label:first-child { margin-top: 0; }
+
+  .filter-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 0;
+    font-size: 13px;
+    color: var(--text-muted);
+  }
+
+  .filter-item input[type="checkbox"] {
+    accent-color: var(--accent);
+  }
+
+  /* ── Meeting List ── */
+  .meeting-list {
+    flex: 1;
+    padding: 16px;
+    overflow-y: auto;
+  }
+
+  .search-bar {
+    width: 100%;
+    padding: 8px 12px;
+    background: var(--bg-inset);
+    border: none;
+    border-radius: 8px;
+    color: var(--text-body);
+    font-size: 14px;
+    margin-bottom: 16px;
+    outline: none;
+  }
+
+  .search-bar::placeholder { color: var(--text-faint); }
+
+  .date-header {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-faint);
+    padding: 14px 0 6px;
+  }
+
+  .meeting-card {
+    background: var(--bg-surface);
+    border-radius: 8px;
+    padding: 12px 14px;
+    margin-bottom: 4px;
+    cursor: pointer;
+    transition: background 120ms ease;
+  }
+
+  .meeting-card:hover { background: var(--bg-surface-hover); }
+
+  .card-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 3px;
+  }
+
+  .card-meta {
+    font-size: 13px;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .meta-dot {
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: var(--dot);
+  }
+
+  .card-status {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 4px;
+    margin-left: auto;
+  }
+
+  .status-done {
+    background: var(--status-done-bg);
+    color: var(--status-done-text);
+  }
+
+  .status-processing {
+    background: var(--status-active-bg);
+    color: var(--status-active-text);
+  }
+
+  /* ══════════════════════════════════════════════════ */
+  /* APPROACH A: Upcoming Section in Meetings Tab      */
+  /* ══════════════════════════════════════════════════ */
+
+  .upcoming-section {
+    margin-bottom: 20px;
+    padding: 12px;
+    background: var(--upcoming-bg);
+    border: 1px solid var(--upcoming-border);
+    border-radius: 8px;
+  }
+
+  .upcoming-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+
+  .upcoming-title {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .upcoming-title .icon {
+    font-size: 14px;
+  }
+
+  .upcoming-count {
+    font-size: 11px;
+    color: var(--text-faint);
+  }
+
+  .upcoming-card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 10px;
+    background: var(--bg-surface);
+    border-radius: 6px;
+    margin-bottom: 4px;
+    transition: background 120ms ease;
+  }
+
+  .upcoming-card:hover { background: var(--bg-surface-hover); }
+
+  .upcoming-time {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--accent);
+    min-width: 52px;
+    text-align: right;
+  }
+
+  .upcoming-time.now {
+    color: #ef4444;
+    animation: pulse-badge 1.5s ease-in-out infinite;
+  }
+
+  @keyframes pulse-badge {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+  }
+
+  .upcoming-divider {
+    width: 1px;
+    height: 28px;
+    background: var(--border-subtle);
+  }
+
+  .upcoming-info {
+    flex: 1;
+  }
+
+  .upcoming-name {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary);
+  }
+
+  .upcoming-meta {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  .upcoming-platform {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+
+  .platform-zoho {
+    background: rgba(220,80,60,0.1);
+    color: #e8735c;
+  }
+
+  .platform-zoom {
+    background: rgba(45,140,255,0.1);
+    color: #4d9fff;
+  }
+
+  .upcoming-record-btn {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--accent);
+    background: rgba(168,160,120,0.1);
+    border: 1px solid rgba(168,160,120,0.2);
+    border-radius: 4px;
+    padding: 4px 10px;
+    cursor: pointer;
+    transition: all 120ms ease;
+    white-space: nowrap;
+  }
+
+  .upcoming-record-btn:hover {
+    background: rgba(168,160,120,0.2);
+    border-color: rgba(168,160,120,0.3);
+  }
+
+  .upcoming-record-btn.live {
+    color: #ef4444;
+    background: rgba(239,68,68,0.1);
+    border-color: rgba(239,68,68,0.2);
+  }
+
+  /* ══════════════════════════════════════════════════ */
+  /* APPROACH B: Dedicated Calendar Tab                */
+  /* ══════════════════════════════════════════════════ */
+
+  .calendar-view {
+    flex: 1;
+    padding: 20px;
+    display: flex;
+    gap: 20px;
+  }
+
+  .calendar-agenda {
+    flex: 1;
+  }
+
+  .calendar-day-header {
+    font-family: 'Source Serif 4', serif;
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+  }
+
+  .calendar-day-sub {
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-bottom: 16px;
+  }
+
+  .time-slot {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 2px;
+    min-height: 48px;
+  }
+
+  .time-label {
+    font-size: 12px;
+    color: var(--text-faint);
+    width: 56px;
+    text-align: right;
+    padding-top: 4px;
+    flex-shrink: 0;
+  }
+
+  .time-line {
+    width: 1px;
+    background: var(--border-subtle);
+    position: relative;
+    flex-shrink: 0;
+  }
+
+  .time-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--border-subtle);
+    position: absolute;
+    top: 6px;
+    left: -3.5px;
+  }
+
+  .time-dot.active {
+    background: var(--accent);
+  }
+
+  .time-dot.live {
+    background: #ef4444;
+    animation: pulse-badge 1.5s ease-in-out infinite;
+  }
+
+  .time-content {
+    flex: 1;
+    padding-bottom: 8px;
+  }
+
+  .cal-event {
+    padding: 10px 14px;
+    border-radius: 8px;
+    background: var(--bg-surface);
+    border-left: 3px solid var(--accent);
+    transition: background 120ms ease;
+    cursor: pointer;
+  }
+
+  .cal-event:hover { background: var(--bg-surface-hover); }
+
+  .cal-event.live {
+    border-left-color: #ef4444;
+    background: rgba(239,68,68,0.04);
+  }
+
+  .cal-event.past {
+    opacity: 0.5;
+    border-left-color: var(--text-faint);
+  }
+
+  .cal-event.recorded {
+    border-left-color: var(--status-done-text);
+  }
+
+  .cal-event-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 2px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .cal-event-meta {
+    font-size: 12px;
+    color: var(--text-muted);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .cal-badge {
+    font-size: 10px;
+    font-weight: 600;
+    padding: 1px 6px;
+    border-radius: 3px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+  }
+
+  .cal-badge.live {
+    background: rgba(239,68,68,0.15);
+    color: #ef4444;
+  }
+
+  .cal-badge.recorded {
+    background: var(--status-done-bg);
+    color: var(--status-done-text);
+  }
+
+  .cal-badge.upcoming {
+    background: rgba(168,160,120,0.1);
+    color: var(--accent);
+  }
+
+  .empty-slot {
+    height: 40px;
+  }
+
+  /* Day picker sidebar in calendar */
+  .day-picker {
+    width: 200px;
+    flex-shrink: 0;
+  }
+
+  .mini-calendar {
+    background: var(--bg-surface);
+    border-radius: 8px;
+    padding: 14px;
+  }
+
+  .mini-cal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+
+  .mini-cal-month {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .mini-cal-nav {
+    display: flex;
+    gap: 4px;
+  }
+
+  .mini-cal-btn {
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .mini-cal-btn:hover { background: var(--bg-surface-hover); }
+
+  .mini-cal-grid {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 2px;
+    text-align: center;
+  }
+
+  .mini-cal-dow {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-faint);
+    text-transform: uppercase;
+    padding: 4px 0;
+  }
+
+  .mini-cal-day {
+    font-size: 12px;
+    color: var(--text-muted);
+    padding: 4px 0;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+
+  .mini-cal-day:hover { background: var(--bg-surface-hover); }
+  .mini-cal-day.today {
+    background: rgba(168,160,120,0.15);
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .mini-cal-day.has-events::after {
+    content: '';
+    display: block;
+    width: 3px;
+    height: 3px;
+    border-radius: 50%;
+    background: var(--accent);
+    margin: 1px auto 0;
+  }
+  .mini-cal-day.other-month { color: var(--text-faint); opacity: 0.4; }
+
+  .day-meetings-section {
+    margin-top: 16px;
+  }
+
+  .day-meetings-title {
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-faint);
+    margin-bottom: 8px;
+  }
+
+  .day-meeting-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 0;
+    font-size: 13px;
+    color: var(--text-body);
+    cursor: pointer;
+  }
+
+  .day-meeting-row:hover { color: var(--text-primary); }
+
+  .day-meeting-time {
+    color: var(--text-muted);
+    font-size: 12px;
+    min-width: 44px;
+  }
+
+  .day-meeting-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--accent);
+    flex-shrink: 0;
+  }
+
+  .now-indicator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 0;
+  }
+
+  .now-line {
+    flex: 1;
+    height: 1px;
+    background: #ef4444;
+  }
+
+  .now-label {
+    font-size: 10px;
+    font-weight: 600;
+    color: #ef4444;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+</style>
+</head>
+<body>
+
+<h1>Calendar Integration</h1>
+<p class="subtitle">Two approaches for showing upcoming Zoho Calendar meetings in Recap</p>
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2>Option A: Upcoming Section in Meetings Tab</h2>
+<p class="desc">An "Upcoming" section appears at the top of the meeting list, showing the next few calendar events. Compact, no new navigation — just enhanced context in the existing view.</p>
+
+<div class="app-frame">
+  <div class="nav-bar">
+    <span class="nav-title">Recap</span>
+    <span class="nav-tab active">Meetings</span>
+    <span class="nav-tab">Graph</span>
+    <span class="nav-tab">Settings</span>
+  </div>
+  <div class="app-body">
+    <div class="filter-sidebar">
+      <div class="filter-section-label">Company</div>
+      <label class="filter-item"><input type="checkbox" checked> Acme Corp</label>
+      <label class="filter-item"><input type="checkbox"> Globex Inc</label>
+      <div class="filter-section-label">Platform</div>
+      <label class="filter-item"><input type="checkbox" checked> Zoom</label>
+      <label class="filter-item"><input type="checkbox" checked> Zoho</label>
+    </div>
+    <div class="meeting-list">
+      <input class="search-bar" placeholder="Search meetings..." />
+
+      <!-- Upcoming section -->
+      <div class="upcoming-section">
+        <div class="upcoming-header">
+          <div class="upcoming-title">
+            <span class="icon">◈</span> Upcoming
+          </div>
+          <span class="upcoming-count">3 meetings today</span>
+        </div>
+
+        <!-- Live meeting -->
+        <div class="upcoming-card">
+          <div class="upcoming-time now">NOW</div>
+          <div class="upcoming-divider"></div>
+          <div class="upcoming-info">
+            <div class="upcoming-name">Weekly 1:1 with Sarah</div>
+            <div class="upcoming-meta">Started 5 min ago · 2 attendees</div>
+          </div>
+          <span class="upcoming-platform platform-zoho">Zoho</span>
+          <button class="upcoming-record-btn live">● Recording</button>
+        </div>
+
+        <!-- Next meeting -->
+        <div class="upcoming-card">
+          <div class="upcoming-time">2:00p</div>
+          <div class="upcoming-divider"></div>
+          <div class="upcoming-info">
+            <div class="upcoming-name">Acme Corp Design Review</div>
+            <div class="upcoming-meta">In 45 min · 5 attendees</div>
+          </div>
+          <span class="upcoming-platform platform-zoho">Zoho</span>
+          <button class="upcoming-record-btn">Auto-record</button>
+        </div>
+
+        <!-- Later -->
+        <div class="upcoming-card">
+          <div class="upcoming-time">4:30p</div>
+          <div class="upcoming-divider"></div>
+          <div class="upcoming-info">
+            <div class="upcoming-name">Sprint Retro</div>
+            <div class="upcoming-meta">In 3 hours · 8 attendees</div>
+          </div>
+          <span class="upcoming-platform platform-zoom">Zoom</span>
+        </div>
+      </div>
+
+      <!-- Past meetings as normal -->
+      <div class="date-header">Today</div>
+      <div class="meeting-card">
+        <div style="display: flex; align-items: center;">
+          <div style="flex: 1;">
+            <div class="card-title">Morning Standup</div>
+            <div class="card-meta">
+              <span>Zoho</span>
+              <div class="meta-dot"></div>
+              <span>15m</span>
+              <div class="meta-dot"></div>
+              <span>4 participants</span>
+            </div>
+          </div>
+          <span class="card-status status-done">✓ Complete</span>
+        </div>
+      </div>
+
+      <div class="date-header">Yesterday</div>
+      <div class="meeting-card">
+        <div style="display: flex; align-items: center;">
+          <div style="flex: 1;">
+            <div class="card-title">Project Kickoff with Acme Corp</div>
+            <div class="card-meta">
+              <span>Zoom</span>
+              <div class="meta-dot"></div>
+              <span>45m</span>
+              <div class="meta-dot"></div>
+              <span>3 participants</span>
+            </div>
+          </div>
+          <span class="card-status status-done">✓ Complete</span>
+        </div>
+      </div>
+
+      <div class="meeting-card">
+        <div style="display: flex; align-items: center;">
+          <div style="flex: 1;">
+            <div class="card-title">Quarterly Business Review</div>
+            <div class="card-meta">
+              <span>Zoom</span>
+              <div class="meta-dot"></div>
+              <span>60m</span>
+              <div class="meta-dot"></div>
+              <span>8 participants</span>
+            </div>
+          </div>
+          <span class="card-status status-done">✓ Complete</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<hr class="divider">
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2>Option B: Dedicated Calendar Tab</h2>
+<p class="desc">A new "Calendar" tab in the nav bar showing an agenda-style day view with a mini calendar picker. Timeline-style layout with event cards showing recording status and quick actions.</p>
+
+<div class="app-frame">
+  <div class="nav-bar">
+    <span class="nav-title">Recap</span>
+    <span class="nav-tab">Meetings</span>
+    <span class="nav-tab active">Calendar</span>
+    <span class="nav-tab">Graph</span>
+    <span class="nav-tab">Settings</span>
+  </div>
+  <div class="app-body">
+    <div class="calendar-view">
+      <div class="calendar-agenda">
+        <div class="calendar-day-header">Today — Tuesday, March 18</div>
+        <div class="calendar-day-sub">4 meetings · 1 recorded · 1 in progress</div>
+
+        <!-- 9:00 AM - Past, recorded -->
+        <div class="time-slot">
+          <div class="time-label">9:00 AM</div>
+          <div class="time-line"><div class="time-dot active"></div></div>
+          <div class="time-content">
+            <div class="cal-event past recorded">
+              <div class="cal-event-title">
+                Morning Standup
+                <span class="cal-badge recorded">✓ Recorded</span>
+              </div>
+              <div class="cal-event-meta">
+                <span>Zoho Meeting</span>
+                <div class="meta-dot"></div>
+                <span>15 min</span>
+                <div class="meta-dot"></div>
+                <span>4 attendees</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 10:00 - 11:00 empty -->
+        <div class="time-slot">
+          <div class="time-label">10:00</div>
+          <div class="time-line"><div class="time-dot"></div></div>
+          <div class="time-content"><div class="empty-slot"></div></div>
+        </div>
+
+        <div class="time-slot">
+          <div class="time-label">11:00</div>
+          <div class="time-line"><div class="time-dot"></div></div>
+          <div class="time-content"><div class="empty-slot"></div></div>
+        </div>
+
+        <!-- Now indicator -->
+        <div class="time-slot">
+          <div class="time-label" style="color: #ef4444; font-weight: 600;">NOW</div>
+          <div class="time-line"><div class="time-dot live"></div></div>
+          <div class="time-content">
+            <div class="now-indicator">
+              <span class="now-label">1:15 PM</span>
+              <div class="now-line"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 1:00 PM - Live meeting -->
+        <div class="time-slot">
+          <div class="time-label">1:00 PM</div>
+          <div class="time-line"><div class="time-dot live"></div></div>
+          <div class="time-content">
+            <div class="cal-event live">
+              <div class="cal-event-title">
+                Weekly 1:1 with Sarah
+                <span class="cal-badge live">● Live</span>
+              </div>
+              <div class="cal-event-meta">
+                <span>Zoho Meeting</span>
+                <div class="meta-dot"></div>
+                <span>30 min</span>
+                <div class="meta-dot"></div>
+                <span>Recording 15:23</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 2:00 PM - Upcoming -->
+        <div class="time-slot">
+          <div class="time-label">2:00 PM</div>
+          <div class="time-line"><div class="time-dot"></div></div>
+          <div class="time-content">
+            <div class="cal-event">
+              <div class="cal-event-title">
+                Acme Corp Design Review
+                <span class="cal-badge upcoming">In 45m</span>
+              </div>
+              <div class="cal-event-meta">
+                <span>Zoho Meeting</span>
+                <div class="meta-dot"></div>
+                <span>60 min</span>
+                <div class="meta-dot"></div>
+                <span>5 attendees</span>
+                <div class="meta-dot"></div>
+                <span style="color: var(--accent);">Auto-record on</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 3:00 PM empty -->
+        <div class="time-slot">
+          <div class="time-label">3:00</div>
+          <div class="time-line"><div class="time-dot"></div></div>
+          <div class="time-content"><div class="empty-slot"></div></div>
+        </div>
+
+        <!-- 4:30 PM -->
+        <div class="time-slot">
+          <div class="time-label">4:30 PM</div>
+          <div class="time-line"><div class="time-dot"></div></div>
+          <div class="time-content">
+            <div class="cal-event">
+              <div class="cal-event-title">
+                Sprint Retro
+              </div>
+              <div class="cal-event-meta">
+                <span>Zoom</span>
+                <div class="meta-dot"></div>
+                <span>45 min</span>
+                <div class="meta-dot"></div>
+                <span>8 attendees</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Day picker sidebar -->
+      <div class="day-picker">
+        <div class="mini-calendar">
+          <div class="mini-cal-header">
+            <span class="mini-cal-month">March 2026</span>
+            <div class="mini-cal-nav">
+              <button class="mini-cal-btn">‹</button>
+              <button class="mini-cal-btn">›</button>
+            </div>
+          </div>
+          <div class="mini-cal-grid">
+            <span class="mini-cal-dow">S</span>
+            <span class="mini-cal-dow">M</span>
+            <span class="mini-cal-dow">T</span>
+            <span class="mini-cal-dow">W</span>
+            <span class="mini-cal-dow">T</span>
+            <span class="mini-cal-dow">F</span>
+            <span class="mini-cal-dow">S</span>
+
+            <span class="mini-cal-day other-month">1</span>
+            <span class="mini-cal-day has-events">2</span>
+            <span class="mini-cal-day has-events">3</span>
+            <span class="mini-cal-day has-events">4</span>
+            <span class="mini-cal-day has-events">5</span>
+            <span class="mini-cal-day has-events">6</span>
+            <span class="mini-cal-day">7</span>
+
+            <span class="mini-cal-day">8</span>
+            <span class="mini-cal-day has-events">9</span>
+            <span class="mini-cal-day has-events">10</span>
+            <span class="mini-cal-day has-events">11</span>
+            <span class="mini-cal-day has-events">12</span>
+            <span class="mini-cal-day has-events">13</span>
+            <span class="mini-cal-day">14</span>
+
+            <span class="mini-cal-day">15</span>
+            <span class="mini-cal-day has-events">16</span>
+            <span class="mini-cal-day has-events">17</span>
+            <span class="mini-cal-day today has-events">18</span>
+            <span class="mini-cal-day">19</span>
+            <span class="mini-cal-day has-events">20</span>
+            <span class="mini-cal-day">21</span>
+
+            <span class="mini-cal-day">22</span>
+            <span class="mini-cal-day has-events">23</span>
+            <span class="mini-cal-day has-events">24</span>
+            <span class="mini-cal-day has-events">25</span>
+            <span class="mini-cal-day">26</span>
+            <span class="mini-cal-day has-events">27</span>
+            <span class="mini-cal-day">28</span>
+
+            <span class="mini-cal-day">29</span>
+            <span class="mini-cal-day has-events">30</span>
+            <span class="mini-cal-day">31</span>
+            <span class="mini-cal-day other-month">1</span>
+            <span class="mini-cal-day other-month">2</span>
+            <span class="mini-cal-day other-month">3</span>
+            <span class="mini-cal-day other-month">4</span>
+          </div>
+        </div>
+
+        <div class="day-meetings-section">
+          <div class="day-meetings-title">Today's Recordings</div>
+          <div class="day-meeting-row">
+            <div class="day-meeting-dot" style="background: var(--status-done-text);"></div>
+            <div class="day-meeting-time">9:00a</div>
+            <span>Morning Standup</span>
+          </div>
+          <div class="day-meeting-row">
+            <div class="day-meeting-dot" style="background: #ef4444;"></div>
+            <div class="day-meeting-time">1:00p</div>
+            <span>1:1 with Sarah</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<hr class="divider">
+
+<!-- ═══════════════════════════════════════════════════════ -->
+<h2>Option C: Both — Preview + Full Tab</h2>
+<p class="desc">Combines both approaches: compact upcoming section in the Meetings tab (Option A) for quick context, plus the full Calendar tab (Option B) for detailed day planning. The upcoming section links to the Calendar tab for more detail.</p>
+
+<div style="display: flex; gap: 24px; align-items: flex-start; flex-wrap: wrap;">
+  <div style="flex: 1; min-width: 320px;">
+    <div style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-faint); margin-bottom: 8px;">Meetings tab → Upcoming preview</div>
+    <div style="background: var(--upcoming-bg); border: 1px solid var(--upcoming-border); border-radius: 8px; padding: 12px;">
+      <div class="upcoming-header">
+        <div class="upcoming-title"><span class="icon">◈</span> Upcoming</div>
+        <span style="font-size: 12px; color: var(--accent); cursor: pointer;">View calendar →</span>
+      </div>
+      <div class="upcoming-card">
+        <div class="upcoming-time now">NOW</div>
+        <div class="upcoming-divider"></div>
+        <div class="upcoming-info">
+          <div class="upcoming-name">1:1 with Sarah</div>
+          <div class="upcoming-meta">Started 5 min ago</div>
+        </div>
+        <button class="upcoming-record-btn live">● Rec</button>
+      </div>
+      <div class="upcoming-card">
+        <div class="upcoming-time">2:00p</div>
+        <div class="upcoming-divider"></div>
+        <div class="upcoming-info">
+          <div class="upcoming-name">Acme Design Review</div>
+          <div class="upcoming-meta">In 45 min</div>
+        </div>
+      </div>
+      <div style="font-size: 12px; color: var(--text-faint); text-align: center; padding: 4px 0;">+1 more today</div>
+    </div>
+  </div>
+
+  <div style="font-size: 32px; color: var(--text-faint); display: flex; align-items: center; padding-top: 40px;">→</div>
+
+  <div style="flex: 1; min-width: 320px;">
+    <div style="font-size: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-faint); margin-bottom: 8px;">Calendar tab → Full agenda view</div>
+    <div style="background: var(--bg-surface); border-radius: 8px; padding: 16px; font-size: 13px; color: var(--text-muted);">
+      <div style="font-family: 'Source Serif 4', serif; font-size: 16px; color: var(--text-primary); margin-bottom: 12px;">Tuesday, March 18</div>
+      <div style="display: flex; gap: 8px; align-items: center; padding: 6px 0; opacity: 0.5;">
+        <span style="width: 48px; text-align: right; font-size: 12px;">9:00a</span>
+        <div style="width: 4px; height: 4px; border-radius: 50%; background: var(--accent);"></div>
+        <span>Morning Standup</span>
+        <span class="cal-badge recorded" style="margin-left: auto;">✓ Rec'd</span>
+      </div>
+      <div style="display: flex; gap: 8px; align-items: center; padding: 6px 0;">
+        <span style="width: 48px; text-align: right; font-size: 12px; color: #ef4444; font-weight: 600;">NOW</span>
+        <div style="width: 4px; height: 4px; border-radius: 50%; background: #ef4444;"></div>
+        <span>1:1 with Sarah</span>
+        <span class="cal-badge live" style="margin-left: auto;">● Live</span>
+      </div>
+      <div style="display: flex; gap: 8px; align-items: center; padding: 6px 0;">
+        <span style="width: 48px; text-align: right; font-size: 12px;">2:00p</span>
+        <div style="width: 4px; height: 4px; border-radius: 50%; background: var(--dot);"></div>
+        <span>Acme Design Review</span>
+      </div>
+      <div style="display: flex; gap: 8px; align-items: center; padding: 6px 0;">
+        <span style="width: 48px; text-align: right; font-size: 12px;">4:30p</span>
+        <div style="width: 4px; height: 4px; border-radius: 50%; background: var(--dot);"></div>
+        <span>Sprint Retro</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+</body>
+</html>

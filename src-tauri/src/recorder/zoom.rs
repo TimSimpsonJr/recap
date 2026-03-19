@@ -1,4 +1,6 @@
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
+
+use super::types::{MeetingMetadata, MeetingPlatform, Participant};
 
 const ZOOM_API_BASE: &str = "https://api.zoom.us/v2";
 
@@ -18,23 +20,6 @@ impl std::fmt::Display for ZoomError {
             ZoomError::Parse(msg) => write!(f, "Zoom parse error: {}", msg),
         }
     }
-}
-
-/// Meeting metadata retrieved from Zoom API.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ZoomMeetingInfo {
-    pub title: String,
-    pub participants: Vec<ZoomParticipant>,
-    pub user_email: String,
-    pub user_name: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ZoomParticipant {
-    pub name: String,
-    pub email: Option<String>,
-    pub join_time: String,
-    pub leave_time: String,
 }
 
 /// Client for the Zoom REST API.
@@ -68,7 +53,7 @@ impl ZoomClient {
     pub async fn fetch_recent_meeting(
         &mut self,
         ended_around: chrono::DateTime<chrono::Utc>,
-    ) -> Result<Option<ZoomMeetingInfo>, ZoomError> {
+    ) -> Result<Option<MeetingMetadata>, ZoomError> {
         // Get user info first.
         let user = self.get_user_info().await?;
 
@@ -98,11 +83,14 @@ impl ZoomClient {
         // Get participants for this meeting.
         let participants = self.get_participants(&meeting.id.to_string()).await?;
 
-        Ok(Some(ZoomMeetingInfo {
+        Ok(Some(MeetingMetadata {
             title: meeting.topic.clone(),
+            platform: MeetingPlatform::Zoom,
             participants,
-            user_email: user.email,
             user_name: user.display_name,
+            user_email: user.email,
+            start_time: meeting.end_time.clone(), // Zoom only gives end_time in list
+            end_time: meeting.end_time.clone(),
         }))
     }
 
@@ -135,7 +123,7 @@ impl ZoomClient {
     async fn get_participants(
         &mut self,
         meeting_id: &str,
-    ) -> Result<Vec<ZoomParticipant>, ZoomError> {
+    ) -> Result<Vec<Participant>, ZoomError> {
         let body = self
             .api_get(&format!(
                 "{}/past_meetings/{}/participants",
@@ -149,15 +137,15 @@ impl ZoomClient {
         Ok(response
             .participants
             .into_iter()
-            .map(|p| ZoomParticipant {
+            .map(|p| Participant {
                 name: p.name,
                 email: if p.user_email.is_empty() {
                     None
                 } else {
                     Some(p.user_email)
                 },
-                join_time: p.join_time,
-                leave_time: p.leave_time,
+                join_time: Some(p.join_time),
+                leave_time: Some(p.leave_time),
             })
             .collect())
     }

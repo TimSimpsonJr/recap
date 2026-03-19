@@ -22,6 +22,8 @@ export interface AppSettings {
   zoomLevel: number;
   meetingNotifications: boolean;
   meetingLeadTimeMinutes: number;
+  screenShareMonitor: number;
+  autoRecordAllCalendar: boolean;
 }
 
 const defaults: AppSettings = {
@@ -45,6 +47,8 @@ const defaults: AppSettings = {
   zoomLevel: 1.0,
   meetingNotifications: true,
   meetingLeadTimeMinutes: 10,
+  screenShareMonitor: 0,
+  autoRecordAllCalendar: false,
 };
 
 export const settings = writable<AppSettings>({ ...defaults });
