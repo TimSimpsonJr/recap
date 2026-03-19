@@ -10,9 +10,10 @@ use tokio::sync::{mpsc, Mutex};
 
 use super::capture::{AudioCapture, CaptureError, VideoCapture};
 use super::monitor::{self, MonitorEvent};
+use super::share_detect;
 use super::types::{
-    DetectionAction, MeetingPlatform, PipelineStatus, RecorderState, RecordingConfig,
-    RecordingSession, TimeoutAction,
+    CaptureSource, DetectionAction, MeetingPlatform, PipelineStatus, RecorderState,
+    RecordingConfig, RecordingSession, TimeoutAction,
 };
 use super::zoom;
 
@@ -34,6 +35,8 @@ impl<R: Runtime> RecorderHandle<R> {
                 video: None,
                 monitor_stop: None,
                 monitor_handle: None,
+                share_monitor_stop: None,
+                share_monitor_handle: None,
             })),
         }
     }
@@ -53,6 +56,8 @@ pub struct RecorderInner<R: Runtime> {
     video: Option<VideoCapture>,
     monitor_stop: Option<Arc<std::sync::atomic::AtomicBool>>,
     monitor_handle: Option<std::thread::JoinHandle<()>>,
+    share_monitor_stop: Option<Arc<std::sync::atomic::AtomicBool>>,
+    share_monitor_handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl<R: Runtime> RecorderInner<R> {
@@ -153,6 +158,125 @@ impl<R: Runtime> RecorderInner<R> {
         }
     }
 
+    /// Handle a browser-based meeting detection from the extension.
+    pub fn on_browser_meeting_detected(
+        &mut self,
+        url: String,
+        title: String,
+        platform: MeetingPlatform,
+        _tab_id: Option<u32>,
+    ) {
+        if self.state != RecorderState::Idle {
+            log::info!(
+                "Browser meeting detected but already in state {:?}, ignoring",
+                self.state
+            );
+            return;
+        }
+
+        // Find a browser PID from WASAPI audio sessions.
+        let browser_pid = find_browser_audio_pid();
+        match browser_pid {
+            Some(pid) => {
+                log::info!(
+                    "Browser meeting detected: {} ({}) — browser PID {}",
+                    title,
+                    url,
+                    pid
+                );
+                let process_name = format!("{:?} (browser)", platform);
+                self.on_meeting_detected(process_name, pid);
+            }
+            None => {
+                log::warn!(
+                    "Browser meeting detected ({}) but no browser audio session found",
+                    url
+                );
+            }
+        }
+    }
+
+    /// Handle a browser meeting ended event.
+    pub fn on_browser_meeting_ended(&mut self, _tab_id: Option<u32>) {
+        // Only act if we have a session with a browser-based platform.
+        if let Some(ref session) = self.session {
+            match session.platform {
+                MeetingPlatform::GoogleMeet | MeetingPlatform::ZohoMeet => {}
+                _ => return,
+            }
+        } else {
+            return;
+        }
+
+        if self.state == RecorderState::Recording {
+            log::info!("Browser meeting ended, stopping recording");
+            let _ = self.stop_capture();
+        } else if matches!(self.state, RecorderState::Detected { .. }) {
+            self.set_state(RecorderState::Idle);
+        }
+    }
+
+    /// Handle screen sharing started — switch video to display capture.
+    pub fn on_sharing_started(&mut self) {
+        if self.state != RecorderState::Recording {
+            return;
+        }
+        if let Some(ref mut video) = self.video {
+            let target = CaptureSource::Display {
+                monitor_index: self.config.screen_share_monitor,
+            };
+            match video.switch_source(target) {
+                Ok(()) => log::info!(
+                    "Switched to display capture (monitor {})",
+                    self.config.screen_share_monitor
+                ),
+                Err(e) => log::warn!("Failed to switch to display capture: {}", e),
+            }
+        }
+    }
+
+    /// Handle screen sharing stopped — switch video back to window capture.
+    pub fn on_sharing_stopped(&mut self) {
+        if self.state != RecorderState::Recording {
+            return;
+        }
+        if let Some(ref session) = self.session {
+            let pid = session.pid;
+            if let Some(ref mut video) = self.video {
+                let target = CaptureSource::Window { pid };
+                match video.switch_source(target) {
+                    Ok(()) => log::info!("Switched back to window capture (PID {})", pid),
+                    Err(e) => log::warn!("Failed to switch back to window capture: {}", e),
+                }
+            }
+        }
+    }
+
+    /// Start the share monitor for desktop meeting apps (Zoom/Teams).
+    pub fn start_share_monitor(&mut self, tx: mpsc::Sender<MonitorEvent>) {
+        if let Some(ref session) = self.session {
+            if matches!(
+                session.platform,
+                MeetingPlatform::Zoom | MeetingPlatform::Teams
+            ) {
+                let (handle, stop) =
+                    share_detect::start_share_monitor(tx, session.pid);
+                self.share_monitor_handle = Some(handle);
+                self.share_monitor_stop = Some(stop);
+            }
+        }
+    }
+
+    /// Stop the share monitor if running.
+    pub fn stop_share_monitor(&mut self) {
+        if let Some(stop) = self.share_monitor_stop.take() {
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        if let Some(handle) = self.share_monitor_handle.take() {
+            let _ = handle.join();
+        }
+    }
+
     /// Start capturing audio and video for a detected meeting process.
     pub fn start_capture(
         &mut self,
@@ -219,6 +343,9 @@ impl<R: Runtime> RecorderInner<R> {
 
     /// Stop all capture streams and begin post-processing.
     pub fn stop_capture(&mut self) -> Result<Option<RecordingSession>, String> {
+        // Stop share monitor if running.
+        self.stop_share_monitor();
+
         // Stop all capture streams.
         if let Some(mut audio) = self.remote_audio.take() {
             let _ = audio.stop();
@@ -238,6 +365,8 @@ impl<R: Runtime> RecorderInner<R> {
 
     /// Cancel recording — stop capture, delete temp files, return to idle.
     pub fn cancel_recording(&mut self) {
+        self.stop_share_monitor();
+
         if let Some(mut audio) = self.remote_audio.take() {
             let _ = audio.stop();
         }
@@ -392,6 +521,103 @@ pub fn write_initial_status(working_dir: &PathBuf) -> Result<(), String> {
             .map_err(|e| format!("Failed to serialize status: {}", e))?,
     )
     .map_err(|e| format!("Failed to write status.json: {}", e))
+}
+
+/// Known browser process names for meeting audio detection.
+const KNOWN_BROWSER_PROCESSES: &[&str] = &["chrome.exe", "msedge.exe", "firefox.exe"];
+
+/// Scan WASAPI audio sessions for a browser process and return its PID.
+///
+/// Uses the same WASAPI enumeration as `monitor::enumerate_meeting_sessions` but
+/// looks for browser executables instead of meeting apps.
+fn find_browser_audio_pid() -> Option<u32> {
+    use windows::Win32::Media::Audio::{
+        eConsole, eRender, IAudioSessionControl, IAudioSessionControl2,
+        IAudioSessionEnumerator, IAudioSessionManager2, IMMDeviceEnumerator,
+        MMDeviceEnumerator,
+    };
+    use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_ALL};
+    use windows::Win32::System::Threading::{
+        OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32,
+        PROCESS_QUERY_LIMITED_INFORMATION,
+    };
+    use windows::Win32::Foundation::HANDLE;
+    use windows::core::{Interface, PWSTR};
+
+    unsafe {
+        let enumerator: IMMDeviceEnumerator =
+            CoCreateInstance(&MMDeviceEnumerator, None, CLSCTX_ALL).ok()?;
+
+        let device = enumerator
+            .GetDefaultAudioEndpoint(eRender, eConsole)
+            .ok()?;
+
+        let manager: IAudioSessionManager2 = device.Activate(CLSCTX_ALL, None).ok()?;
+
+        let session_enum: IAudioSessionEnumerator =
+            manager.GetSessionEnumerator().ok()?;
+
+        let count = session_enum.GetCount().ok()?;
+
+        for i in 0..count {
+            let session: IAudioSessionControl = match session_enum.GetSession(i) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+
+            let session2: IAudioSessionControl2 = match session.cast() {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+
+            let pid = match session2.GetProcessId() {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+
+            if pid == 0 {
+                continue;
+            }
+
+            // Get the process name for this PID.
+            let handle: HANDLE =
+                match OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) {
+                    Ok(h) => h,
+                    Err(_) => continue,
+                };
+
+            let mut buf = [0u16; 260];
+            let mut size = buf.len() as u32;
+
+            let result = QueryFullProcessImageNameW(
+                handle,
+                PROCESS_NAME_WIN32,
+                PWSTR(buf.as_mut_ptr()),
+                &mut size,
+            );
+
+            let _ = windows::Win32::Foundation::CloseHandle(handle);
+
+            if result.is_err() {
+                continue;
+            }
+
+            let full_path = String::from_utf16_lossy(&buf[..size as usize]);
+            let filename = full_path
+                .rsplit('\\')
+                .next()
+                .unwrap_or(&full_path);
+
+            if KNOWN_BROWSER_PROCESSES
+                .iter()
+                .any(|&known| known.eq_ignore_ascii_case(filename))
+            {
+                return Some(pid);
+            }
+        }
+
+        None
+    }
 }
 
 // ── IPC Commands ─────────────────────────────────────────────────────────────

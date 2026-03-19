@@ -43,6 +43,53 @@ pub fn run() {
             let recorder_handle = recorder::recorder::RecorderHandle::new(app.handle().clone());
             app.manage(recorder_handle);
 
+            // Start localhost HTTP listener for browser extension
+            let listener_tx = {
+                // Create a channel for the listener — events will be processed
+                // by the recorder when monitoring starts. For now we create a
+                // standalone channel; events from the extension flow through the
+                // same MonitorEvent enum as WASAPI polling.
+                let (tx, mut rx) = tokio::sync::mpsc::channel::<recorder::monitor::MonitorEvent>(64);
+
+                // Spawn a task that forwards listener events to the recorder.
+                let forward_handle = app.state::<recorder::recorder::RecorderHandle<tauri::Wry>>().handle().clone();
+                tokio::spawn(async move {
+                    while let Some(event) = rx.recv().await {
+                        let mut inner = forward_handle.lock().await;
+                        match event {
+                            recorder::monitor::MonitorEvent::BrowserMeetingDetected {
+                                url, title, platform, tab_id,
+                            } => {
+                                inner.on_browser_meeting_detected(url, title, platform, tab_id);
+                            }
+                            recorder::monitor::MonitorEvent::BrowserMeetingEnded { tab_id } => {
+                                inner.on_browser_meeting_ended(tab_id);
+                            }
+                            recorder::monitor::MonitorEvent::SharingStarted => {
+                                inner.on_sharing_started();
+                            }
+                            recorder::monitor::MonitorEvent::SharingStopped => {
+                                inner.on_sharing_stopped();
+                            }
+                            recorder::monitor::MonitorEvent::MeetingDetected { process_name, pid } => {
+                                inner.on_meeting_detected(process_name, pid);
+                            }
+                            recorder::monitor::MonitorEvent::MeetingEnded { pid } => {
+                                inner.on_meeting_ended(pid);
+                            }
+                        }
+                    }
+                });
+
+                tx
+            };
+            tokio::spawn(async move {
+                match recorder::listener::start_listener(listener_tx).await {
+                    Ok(port) => log::info!("Extension listener on port {}", port),
+                    Err(e) => log::warn!("Failed to start extension listener: {}", e),
+                }
+            });
+
             // System tray
             tray::create_tray(app.handle())?;
 
