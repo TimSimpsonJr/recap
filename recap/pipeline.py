@@ -348,6 +348,7 @@ def run_pipeline(
                 project_name=project_name,
                 vault_name=vault_name,
                 note_path=note_rel,
+                meeting_dir=working_dir,
             )
             results["todoist_tasks"] = task_ids
         except Exception as e:

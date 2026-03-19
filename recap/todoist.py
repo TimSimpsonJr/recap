@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import pathlib
+from datetime import datetime, timezone
 from urllib.parse import quote
 
 from recap.models import ActionItem
@@ -26,6 +27,25 @@ def _build_obsidian_uri(vault_name: str, note_path: str) -> str:
     return f"obsidian://open?vault={encoded_vault}&file={encoded_path}"
 
 
+def _save_task_mapping(meeting_dir: pathlib.Path, tasks: list[dict]) -> None:
+    """Save Todoist task ID mapping for completion sync."""
+    path = meeting_dir / "todoist_tasks.json"
+    existing = []
+    if path.exists():
+        try:
+            data = json.loads(path.read_text())
+            existing = data.get("tasks", [])
+        except (json.JSONDecodeError, KeyError):
+            pass
+
+    data = {
+        "tasks": existing + tasks,
+        "last_synced": datetime.now(timezone.utc).isoformat(),
+    }
+    path.write_text(json.dumps(data, indent=2))
+    logger.info("Saved %d task mappings to %s", len(tasks), path)
+
+
 def create_tasks(
     action_items: list[ActionItem],
     user_name: str,
@@ -33,6 +53,7 @@ def create_tasks(
     project_name: str,
     vault_name: str,
     note_path: str,
+    meeting_dir: pathlib.Path | None = None,
 ) -> list[str]:
     user_items = _filter_user_items(action_items, user_name)
     if not user_items:
@@ -67,6 +88,7 @@ def create_tasks(
         logger.warning("Failed to fetch existing tasks for idempotency check: %s", e)
 
     task_ids = []
+    task_records = []
     errors = []
     for item in user_items:
         # Idempotency: skip if a task with the same content already exists
@@ -93,10 +115,18 @@ def create_tasks(
 
             task = api.add_task(**kwargs)
             task_ids.append(task.id)
+            task_records.append({
+                "todoist_id": task.id,
+                "description": item.description,
+                "project_id": project_id or "",
+            })
             logger.info("Created Todoist task: %s (id=%s)", item.description, task.id)
         except Exception as e:
             logger.error("Failed to create task '%s': %s", item.description, e)
             errors.append((item.description, str(e)))
+
+    if task_records and meeting_dir:
+        _save_task_mapping(meeting_dir, task_records)
 
     if errors:
         failed_descriptions = [desc for desc, _ in errors]
