@@ -377,6 +377,23 @@ export async function checkDriveType(path: string): Promise<string> {
   return invoke<string>("check_drive_type", { path });
 }
 
+// Bulk operations IPC
+export async function deleteMeetings(ids: string[]): Promise<string[]> {
+  return invoke<string[]>("delete_meetings", { ids });
+}
+
+export async function reprocessMeetings(ids: string[]): Promise<void> {
+  return invoke<void>("reprocess_meetings", { ids });
+}
+
+export async function bulkRenameSpeaker(oldName: string, newName: string, meetingIds: string[]): Promise<number> {
+  return invoke<number>("bulk_rename_speaker", { oldName, newName, meetingIds });
+}
+
+export async function getSpeakersForMeetings(ids: string[]): Promise<[string, number][]> {
+  return invoke<[string, number][]>("get_speakers_for_meetings", { ids });
+}
+
 // Shared utilities
 
 export function getRecordingDir(filePath: string): string {
