@@ -339,6 +339,19 @@ export async function invalidateBriefingCache(
   return invoke("invalidate_briefing_cache", { participantNames });
 }
 
+// Display monitors
+export interface MonitorInfo {
+  index: number;
+  name: string;
+  width: number;
+  height: number;
+  is_primary: boolean;
+}
+
+export async function listMonitors(): Promise<MonitorInfo[]> {
+  return invoke("list_monitors");
+}
+
 // Shared utilities
 
 export function getRecordingDir(filePath: string): string {

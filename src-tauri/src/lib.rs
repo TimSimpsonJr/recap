@@ -6,6 +6,7 @@ mod calendar;
 mod credentials;
 mod deep_link;
 mod diagnostics;
+mod display;
 mod meetings;
 mod notifications;
 mod oauth;
@@ -146,6 +147,7 @@ pub fn run() {
             calendar::get_calendar_matches,
             briefing::generate_briefing,
             briefing::invalidate_briefing_cache,
+            display::list_monitors,
         ])
         .on_window_event(|window, event| {
             // Closing the window hides it instead of quitting
