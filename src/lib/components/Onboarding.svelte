@@ -28,6 +28,10 @@
   let canAdvanceVault = $derived(vaultPath !== "");
   let canFinish = $derived(hfToken !== "");
 
+  function handleWindowClick() {
+    if (showHfHelp) showHfHelp = false;
+  }
+
   onMount(async () => {
     const current = get(settings);
     recordingsFolder = current.recordingsFolder || "";
@@ -90,6 +94,9 @@
     if (step > 0) step--;
   }
 </script>
+
+<!-- svelte-ignore a11y_click_events_have_key_events -->
+<svelte:window onclick={handleWindowClick} />
 
 <div style="
   position: fixed;
@@ -346,13 +353,8 @@
                   box-shadow: 0 8px 24px rgba(0,0,0,0.4);
                 "
               >
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <div style="margin-bottom: 10px;">
                   <span style="font-weight: 600; color: var(--text); font-size: 14px;">Setup Guide</span>
-                  <button
-                    type="button"
-                    onclick={() => showHfHelp = false}
-                    style="background: none; border: none; color: var(--text-faint); cursor: pointer; font-size: 16px; padding: 0 2px;"
-                  >&times;</button>
                 </div>
                 <p style="margin: 0 0 6px 0; font-weight: 600; color: var(--text);">1. Create a token</p>
                 <ol style="margin: 0 0 12px 0; padding-left: 20px;">
