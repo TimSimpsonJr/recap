@@ -13,6 +13,7 @@
   import { exchangeOAuthCode, syncCalendar } from "./lib/tauri";
   import Onboarding from "./lib/components/Onboarding.svelte";
   import ToastContainer from "./lib/components/ToastContainer.svelte";
+  import { fade } from "svelte/transition";
   import logoSvg from "./lib/assets/logo.svg";
 
   const appWindow = getCurrentWindow();
@@ -270,17 +271,19 @@
     </nav>
 
     <!-- Route content -->
-    <div class="flex-1 overflow-hidden">
-      {#if currentRoute === "settings"}
-        <Settings />
-      {:else if currentRoute === "calendar"}
-        <Calendar />
-      {:else if currentRoute === "graph"}
-        <GraphView />
-      {:else}
-        <Dashboard initialMeetingId={meetingId} initialFilterParticipant={filterParticipant} />
-      {/if}
-    </div>
+    {#key currentRoute}
+      <div class="flex-1 overflow-hidden" transition:fade={{ duration: 150 }}>
+        {#if currentRoute === "settings"}
+          <Settings />
+        {:else if currentRoute === "calendar"}
+          <Calendar />
+        {:else if currentRoute === "graph"}
+          <GraphView />
+        {:else}
+          <Dashboard initialMeetingId={meetingId} initialFilterParticipant={filterParticipant} />
+        {/if}
+      </div>
+    {/key}
     {/if}
   {/if}
   <ToastContainer />
