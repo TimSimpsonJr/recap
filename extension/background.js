@@ -95,5 +95,14 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
   }
 });
 
-setInterval(findRecapPort, HEALTH_CHECK_INTERVAL_MS);
+// Use chrome.alarms instead of setInterval — MV3 service workers get terminated
+// after 30s of inactivity, so setInterval doesn't survive.
+chrome.alarms.create("recap-health-check", { periodInMinutes: 0.5 });
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === "recap-health-check") {
+    findRecapPort();
+  }
+});
+
+// Initial check on service worker startup
 findRecapPort();

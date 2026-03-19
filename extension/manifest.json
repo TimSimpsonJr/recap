@@ -3,7 +3,7 @@
   "name": "Recap Meeting Detector",
   "version": "1.0.0",
   "description": "Detects browser-based meetings and notifies Recap for recording",
-  "permissions": ["tabs", "storage"],
+  "permissions": ["tabs", "storage", "alarms"],
   "host_permissions": ["http://localhost/*"],
   "background": {
     "service_worker": "background.js"
