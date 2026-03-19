@@ -1,6 +1,7 @@
 """Configuration loading for Recap pipeline."""
 from __future__ import annotations
 
+import os
 import pathlib
 from dataclasses import dataclass, field
 
@@ -11,6 +12,7 @@ import yaml
 class WhisperXConfig:
     model: str = "large-v3"
     device: str = "cuda"
+    compute_type: str = "float16"
     language: str = "en"
 
 
@@ -27,6 +29,7 @@ class TodoistConfig:
 @dataclass
 class ClaudeConfig:
     command: str = "claude"
+    model: str = "sonnet"
 
 
 @dataclass
@@ -72,6 +75,8 @@ def load_config(path: pathlib.Path) -> RecapConfig:
     td = raw.get("todoist", {})
     cl = raw.get("claude", {})
 
+    hf_token = os.environ.get("HUGGINGFACE_TOKEN", raw.get("huggingface_token", ""))
+
     return RecapConfig(
         vault_path=pathlib.Path(raw["vault_path"]),
         recordings_path=pathlib.Path(raw["recordings_path"]),
@@ -80,13 +85,17 @@ def load_config(path: pathlib.Path) -> RecapConfig:
         whisperx=WhisperXConfig(
             model=wx.get("model", "large-v3"),
             device=wx.get("device", "cuda"),
+            compute_type=wx.get("compute_type", "float16"),
             language=wx.get("language", "en"),
         ),
-        huggingface_token=raw.get("huggingface_token", ""),
+        huggingface_token=hf_token,
         todoist=TodoistConfig(
-            api_token=td.get("api_token", ""),
+            api_token=os.environ.get("TODOIST_API_TOKEN", td.get("api_token", "")),
             default_project=td.get("default_project", "Recap"),
             project_map=td.get("project_map", {}),
         ),
-        claude=ClaudeConfig(command=cl.get("command", "claude")),
+        claude=ClaudeConfig(
+            command=cl.get("command", "claude"),
+            model=cl.get("model", "sonnet"),
+        ),
     )

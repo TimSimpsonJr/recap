@@ -205,6 +205,7 @@ def run_pipeline(
                 audio_path=recording_dest,
                 model_name=config.whisperx.model,
                 device=config.whisperx.device,
+                compute_type=config.whisperx.compute_type,
                 hf_token=config.huggingface_token,
                 language=config.whisperx.language,
                 save_transcript=transcript_path,
@@ -272,6 +273,7 @@ def run_pipeline(
                 metadata=metadata,
                 prompt_path=prompt_path,
                 claude_command=config.claude.command,
+                claude_model=config.claude.model,
             )
             _mark_stage(status, "analyze", True)
             _save_status(working_dir, status, recording_dest)
