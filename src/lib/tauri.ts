@@ -394,6 +394,20 @@ export async function getSpeakersForMeetings(ids: string[]): Promise<[string, nu
   return invoke<[string, number][]>("get_speakers_for_meetings", { ids });
 }
 
+// Vault note relinking
+export async function relinkVaultNotes(
+  foundPath: string,
+  expectedPath: string,
+  otherMissing: string[]
+): Promise<[string, string][]> {
+  return invoke<[string, string][]>("relink_vault_notes", { foundPath, expectedPath, otherMissing });
+}
+
+// Todoist sync
+export async function triggerTodoistSync(): Promise<string> {
+  return invoke<string>("trigger_todoist_sync");
+}
+
 // Shared utilities
 
 export function getRecordingDir(filePath: string): string {

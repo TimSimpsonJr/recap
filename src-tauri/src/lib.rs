@@ -1,4 +1,6 @@
 use tauri::Manager;
+use tauri_plugin_shell::ShellExt;
+use tauri_plugin_store::StoreExt;
 use tauri_plugin_window_state::{AppHandleExt, StateFlags, WindowExt};
 
 mod briefing;
@@ -14,6 +16,76 @@ mod oauth;
 mod recorder;
 mod sidecar;
 mod tray;
+
+/// Run the Todoist completion sync via sidecar.
+///
+/// Generates a pipeline config, reads the Todoist API token from the
+/// credential store, and launches the sidecar with `--only todoist-sync`.
+async fn run_todoist_sync(app: &tauri::AppHandle) -> Result<String, String> {
+    // Generate config so the sidecar has up-to-date settings
+    let config_path = config_gen::generate_pipeline_config(app.clone()).await?;
+
+    // Read Todoist API token from SecretStore
+    let todoist_token = {
+        let store = app.state::<credentials::SecretStoreState>();
+        let store = store.lock().await;
+        store.get("todoist.access_token")
+    };
+
+    let token = todoist_token.ok_or_else(|| "Todoist API token not configured".to_string())?;
+    if token.is_empty() {
+        return Err("Todoist API token is empty".to_string());
+    }
+
+    // We need a dummy recording path for the CLI — use the recordings folder
+    let recordings_path = {
+        let store = app
+            .store("settings.json")
+            .map_err(|e| format!("Failed to open settings store: {}", e))?;
+        store
+            .get("recordingsFolder")
+            .and_then(|v| v.as_str().map(|s| s.to_string()))
+            .ok_or_else(|| "recordingsFolder not set".to_string())?
+    };
+
+    // The CLI requires positional audio + metadata args even for --only todoist-sync
+    // (they are not used). Pass recordings_path as a dummy for both.
+    let args = vec![
+        "process".to_string(),
+        "--config".to_string(),
+        config_path,
+        "--only".to_string(),
+        "todoist-sync".to_string(),
+        recordings_path.clone(),
+        recordings_path,
+    ];
+
+    let sidecar = app
+        .shell()
+        .sidecar("recap-pipeline")
+        .map_err(|e| format!("Failed to create sidecar command: {}", e))?
+        .args(&args)
+        .env("TODOIST_API_TOKEN", &token);
+
+    let output = sidecar
+        .output()
+        .await
+        .map_err(|e| format!("Sidecar execution failed: {}", e))?;
+
+    if output.status.success() {
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        Ok(stdout)
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        Err(format!("Todoist sync failed: {}", stderr))
+    }
+}
+
+/// Tauri command: manually trigger a Todoist completion sync.
+#[tauri::command]
+async fn trigger_todoist_sync(app: tauri::AppHandle) -> Result<String, String> {
+    run_todoist_sync(&app).await
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -136,6 +208,47 @@ pub fn run() {
                 });
             }
 
+            // Todoist completion sync timer
+            {
+                let app_handle_todoist = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    loop {
+                        // Read interval from settings store (default 15 min)
+                        let interval_mins = {
+                            let store = app_handle_todoist.store("settings.json").ok();
+                            store
+                                .and_then(|s| {
+                                    s.get("todoistSyncInterval")
+                                        .and_then(|v| v.as_u64())
+                                })
+                                .unwrap_or(15)
+                        };
+                        tokio::time::sleep(std::time::Duration::from_secs(
+                            interval_mins * 60,
+                        ))
+                        .await;
+
+                        // Check if Todoist is configured before syncing
+                        let has_token = {
+                            let store =
+                                app_handle_todoist.state::<credentials::SecretStoreState>();
+                            let store = store.lock().await;
+                            store
+                                .get("todoist.access_token")
+                                .map(|t| !t.is_empty())
+                                .unwrap_or(false)
+                        };
+
+                        if has_token {
+                            match run_todoist_sync(&app_handle_todoist).await {
+                                Ok(_) => log::info!("Todoist auto-sync completed"),
+                                Err(e) => log::warn!("Todoist auto-sync failed: {}", e),
+                            }
+                        }
+                    }
+                });
+            }
+
             // Show the main window on launch.
             // TODO: When auto-start-with-Windows is implemented, check if launched
             // via startup and hide instead (start in tray).
@@ -174,6 +287,7 @@ pub fn run() {
             meetings::reprocess_meetings,
             meetings::bulk_rename_speaker,
             meetings::get_speakers_for_meetings,
+            meetings::relink_vault_notes,
             calendar::fetch_calendar_events,
             calendar::get_upcoming_meetings,
             calendar::sync_calendar,
@@ -187,6 +301,7 @@ pub fn run() {
             display::list_monitors,
             config_gen::generate_pipeline_config,
             config_gen::check_drive_type,
+            trigger_todoist_sync,
         ])
         .on_window_event(|window, event| {
             // Closing the window hides it instead of quitting

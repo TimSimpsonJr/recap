@@ -857,6 +857,42 @@ pub async fn bulk_rename_speaker(
     Ok(updated_count)
 }
 
+/// Given a file the user located and the path where it was expected, try to
+/// relink other missing vault notes by checking whether they exist in the same
+/// directory as the found file. Returns pairs of (expected_path, found_path)
+/// for each successfully relinked note.
+#[tauri::command]
+pub async fn relink_vault_notes(
+    found_path: String,
+    expected_path: String,
+    other_missing: Vec<String>,
+) -> Result<Vec<(String, String)>, String> {
+    let found = PathBuf::from(&found_path);
+    let _expected = PathBuf::from(&expected_path);
+
+    let found_dir = found
+        .parent()
+        .ok_or_else(|| "Invalid found path".to_string())?;
+
+    let mut relinked = Vec::new();
+
+    for other_expected in &other_missing {
+        let other_path = PathBuf::from(other_expected);
+        if let Some(filename) = other_path.file_name() {
+            // Try the same directory as the found file
+            let candidate = found_dir.join(filename);
+            if candidate.exists() {
+                relinked.push((
+                    other_expected.clone(),
+                    candidate.to_string_lossy().to_string(),
+                ));
+            }
+        }
+    }
+
+    Ok(relinked)
+}
+
 /// Get all unique speakers across the selected meetings with a count of how
 /// many meetings each speaker appears in. Results are sorted by count
 /// descending.
