@@ -6,6 +6,7 @@ mod calendar;
 mod credentials;
 mod deep_link;
 mod diagnostics;
+mod display;
 mod meetings;
 mod notifications;
 mod oauth;
@@ -43,6 +44,53 @@ pub fn run() {
             let recorder_handle = recorder::recorder::RecorderHandle::new(app.handle().clone());
             app.manage(recorder_handle);
 
+            // Start localhost HTTP listener for browser extension
+            let listener_tx = {
+                // Create a channel for the listener — events will be processed
+                // by the recorder when monitoring starts. For now we create a
+                // standalone channel; events from the extension flow through the
+                // same MonitorEvent enum as WASAPI polling.
+                let (tx, mut rx) = tokio::sync::mpsc::channel::<recorder::monitor::MonitorEvent>(64);
+
+                // Spawn a task that forwards listener events to the recorder.
+                let forward_handle = app.state::<recorder::recorder::RecorderHandle<tauri::Wry>>().handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    while let Some(event) = rx.recv().await {
+                        let mut inner = forward_handle.lock().await;
+                        match event {
+                            recorder::monitor::MonitorEvent::BrowserMeetingDetected {
+                                url, title, platform, tab_id,
+                            } => {
+                                inner.on_browser_meeting_detected(url, title, platform, tab_id);
+                            }
+                            recorder::monitor::MonitorEvent::BrowserMeetingEnded { tab_id } => {
+                                inner.on_browser_meeting_ended(tab_id);
+                            }
+                            recorder::monitor::MonitorEvent::SharingStarted => {
+                                inner.on_sharing_started();
+                            }
+                            recorder::monitor::MonitorEvent::SharingStopped => {
+                                inner.on_sharing_stopped();
+                            }
+                            recorder::monitor::MonitorEvent::MeetingDetected { process_name, pid } => {
+                                inner.on_meeting_detected(process_name, pid);
+                            }
+                            recorder::monitor::MonitorEvent::MeetingEnded { pid } => {
+                                inner.on_meeting_ended(pid);
+                            }
+                        }
+                    }
+                });
+
+                tx
+            };
+            tauri::async_runtime::spawn(async move {
+                match recorder::listener::start_listener(listener_tx).await {
+                    Ok(port) => log::info!("Extension listener on port {}", port),
+                    Err(e) => log::warn!("Failed to start extension listener: {}", e),
+                }
+            });
+
             // System tray
             tray::create_tray(app.handle())?;
 
@@ -51,13 +99,47 @@ pub fn run() {
 
             // Start periodic notification check (every 60 seconds)
             let notification_handle = app.handle().clone();
-            tokio::spawn(async move {
+            tauri::async_runtime::spawn(async move {
                 let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
                 loop {
                     interval.tick().await;
                     let _ = notifications::check_upcoming_notifications(&notification_handle);
                 }
             });
+
+            // Start periodic auto-record check (every 60 seconds)
+            {
+                let auto_record_handle = app.handle().clone();
+                let auto_record_recorder = app
+                    .state::<recorder::recorder::RecorderHandle<tauri::Wry>>()
+                    .handle()
+                    .clone();
+
+                // Immediate check on startup (for late-start scenarios)
+                let startup_handle = auto_record_handle.clone();
+                let startup_recorder = auto_record_recorder.clone();
+                tauri::async_runtime::spawn(async move {
+                    recorder::recorder::check_auto_record_events(
+                        &startup_handle,
+                        &startup_recorder,
+                    )
+                    .await;
+                });
+
+                // Periodic check
+                tauri::async_runtime::spawn(async move {
+                    let mut interval =
+                        tokio::time::interval(std::time::Duration::from_secs(60));
+                    loop {
+                        interval.tick().await;
+                        recorder::recorder::check_auto_record_events(
+                            &auto_record_handle,
+                            &auto_record_recorder,
+                        )
+                        .await;
+                    }
+                });
+            }
 
             // Show the main window on launch.
             // TODO: When auto-start-with-Windows is implemented, check if launched
@@ -97,8 +179,12 @@ pub fn run() {
             calendar::sync_calendar,
             calendar::get_calendar_last_synced,
             calendar::get_calendar_matches,
+            calendar::set_auto_record,
+            calendar::set_series_auto_record,
+            calendar::get_auto_record_events,
             briefing::generate_briefing,
             briefing::invalidate_briefing_cache,
+            display::list_monitors,
         ])
         .on_window_event(|window, event| {
             // Closing the window hides it instead of quitting

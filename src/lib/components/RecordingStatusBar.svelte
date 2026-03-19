@@ -6,6 +6,9 @@
   let processName = $derived(
     typeof state === "object" && "detected" in state ? state.detected.process_name : null
   );
+  let armedTitle = $derived(
+    typeof state === "object" && "armed" in state ? state.armed.event_title : null
+  );
 </script>
 
 {#if tag !== "idle" && tag !== "declined"}
@@ -20,7 +23,12 @@
     "
   >
     <div class="flex items-center gap-3">
-      {#if tag === "recording"}
+      {#if tag === "armed"}
+        <span style="color: var(--gold);">
+          <svg class="inline-block mr-1" width="12" height="12" viewBox="0 0 12 12" fill="var(--gold)"><circle cx="6" cy="6" r="5"/></svg>
+          Armed — {armedTitle}
+        </span>
+      {:else if tag === "recording"}
         <span class="rec-dot"></span>
         <span style="color: var(--text-secondary);">Recording</span>
       {:else if tag === "detected"}

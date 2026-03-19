@@ -57,13 +57,13 @@
 --font-body:    'DM Sans', sans-serif;
 
 /* ── Scale ── */
---text-title:    21px;      /* "Recap" app title */
---text-card:     14.5px;    /* meeting card titles */
---text-body:     13.5px;    /* search input, recording bar */
---text-meta:     12px;      /* card metadata */
---text-badge:    10.5px;    /* status badges */
---text-section:  10.5px;    /* date section headers */
---text-link:     12.5px;    /* settings link */
+--text-title:    24px;      /* "Recap" app title */
+--text-card:     16px;      /* meeting card titles */
+--text-body:     15px;      /* search input, recording bar, general body */
+--text-meta:     13.5px;    /* card metadata */
+--text-badge:    12px;      /* status badges */
+--text-section:  12px;      /* date section headers */
+--text-link:     14px;      /* nav links, settings link */
 
 /* ── Weights ── */
 --weight-title:  700;

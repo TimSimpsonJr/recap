@@ -2,26 +2,13 @@
 
 Features explicitly deferred from current phases, organized into planned phases.
 
-## Phase 6: Recording Expansion
+## ~~Phase 6: Recording Expansion~~ (Complete)
 
-**Dependencies:** Phase 5c calendar integration (for auto-record)
-
-### Non-Zoom Platform Recording
-
-**Deferred from:** App shell design
-
-Local audio/screen capture for Teams, Google Meet, Zoho Meet. Requires WASAPI or virtual audio cable strategy. See app-shell design doc for full context.
-
-### Auto-Record from Calendar
-
-**Deferred from:** Phase 5c
-
-Per-event or per-series auto-record flag stored in calendar cache. When a matching calendar event is approaching and auto-record is on, the recorder prepares capture automatically. Depends on recording expansion — auto-record is most useful once multiple platforms are supported, not just Zoom (which already has meeting detection).
+Multi-platform recording (Teams, Google Meet, Zoho Meet), browser extension for meeting detection, screen share detection, per-platform metadata enrichment, and calendar-driven auto-record are all implemented.
 
 ## Phase 7: Onboarding Flow (First-Run Experience)
 
 **Deferred from:** Phase 5b
-**Blocked by:** Phase 6 — onboarding should cover all recording integrations, not just Zoom
 
 When Settings aren't configured (no vault path, no recordings directory, no calendar connected), the dashboard is empty with no guidance. A first-run onboarding flow should:
 

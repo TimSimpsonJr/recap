@@ -6,11 +6,12 @@ import logging
 import pathlib
 import shutil
 import subprocess
+import typing
 
 from recap.analyze import analyze
 from recap.config import RecapConfig
 from recap.frames import extract_frames
-from recap.models import MeetingMetadata, TranscriptResult
+from recap.models import MeetingMetadata, Participant, TranscriptResult
 from recap.todoist import create_tasks, save_retry_file
 from recap.transcribe import transcribe
 from recap.vault import find_previous_meeting, write_meeting_note, write_profile_stubs, slugify
@@ -106,6 +107,50 @@ def _apply_speaker_labels(transcript: TranscriptResult, labels_path: pathlib.Pat
     return transcript
 
 
+def run_claude_cli(
+    prompt: str,
+    image_paths: list[pathlib.Path] | None = None,
+) -> str:
+    """Run Claude CLI with optional image inputs for vision tasks."""
+    cmd = ["claude", "--print", "--output-format", "text"]
+    if image_paths:
+        for img in image_paths:
+            cmd.extend(["--image", str(img)])
+    cmd.extend(["-p", prompt])
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+    if result.returncode != 0:
+        raise RuntimeError(f"Claude CLI failed: {result.stderr}")
+    return result.stdout.strip()
+
+
+def extract_participants_from_screenshots(
+    screenshots: list[pathlib.Path],
+) -> list[str]:
+    """Extract participant names from meeting screenshots using Claude vision."""
+    if not screenshots:
+        return []
+
+    prompt_path = pathlib.Path(__file__).parent.parent / "prompts" / "participant_extraction.md"
+    if not prompt_path.exists():
+        logger.warning("Participant extraction prompt not found: %s", prompt_path)
+        return []
+
+    prompt = prompt_path.read_text()
+    all_names: set[str] = set()
+
+    for screenshot in screenshots[:3]:
+        try:
+            response = run_claude_cli(prompt, image_paths=[screenshot])
+            names = json.loads(response)
+            if isinstance(names, list):
+                all_names.update(names)
+        except Exception as e:
+            logger.warning("Participant extraction failed for %s: %s", screenshot, e)
+            continue
+
+    return sorted(all_names)
+
+
 def run_pipeline(
     audio_path: pathlib.Path,
     metadata_path: pathlib.Path,
@@ -187,6 +232,22 @@ def run_pipeline(
             _mark_stage(status, "frames", False, str(e))
             _save_status(working_dir, status, recording_dest)
     results["frames"] = [f.path for f in frames]
+
+    # If no participants, try screenshot extraction
+    if not metadata.participants:
+        participant_frames = sorted(working_dir.glob("participant_frame_*.png"))
+        if participant_frames:
+            logger.info("No participants in metadata — trying screenshot extraction")
+            extracted_names = extract_participants_from_screenshots(participant_frames)
+            if extracted_names:
+                metadata.participants = [
+                    Participant(name=name) for name in extracted_names
+                ]
+                logger.info(
+                    "Extracted %d participants from screenshots: %s",
+                    len(extracted_names),
+                    extracted_names,
+                )
 
     # Pause for speaker review if no participants are available
     if not metadata.participants:

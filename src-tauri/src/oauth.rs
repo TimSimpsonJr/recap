@@ -46,7 +46,7 @@ pub fn get_provider_config(provider: &str, zoho_region: Option<&str>) -> Option<
             provider: "google".into(),
             auth_url: "https://accounts.google.com/o/oauth2/v2/auth".into(),
             token_url: "https://oauth2.googleapis.com/token".into(),
-            scopes: "https://www.googleapis.com/auth/calendar.readonly".into(),
+            scopes: "https://www.googleapis.com/auth/calendar.readonly https://www.googleapis.com/auth/meetings.space.readonly".into(),
             redirect_method: RedirectMethod::Localhost,
         }),
         "microsoft" => Some(OAuthConfig {

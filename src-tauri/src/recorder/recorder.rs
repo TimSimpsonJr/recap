@@ -4,17 +4,18 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use serde_json::json;
-use tauri::{AppHandle, Emitter, Runtime};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tauri_plugin_notification::NotificationExt;
 use tokio::sync::{mpsc, Mutex};
 
 use super::capture::{AudioCapture, CaptureError, VideoCapture};
 use super::monitor::{self, MonitorEvent};
+use super::share_detect;
 use super::types::{
-    DetectionAction, PipelineStatus, RecorderState, RecordingConfig, RecordingSession,
-    TimeoutAction,
+    CaptureSource, DetectionAction, MeetingMetadata, MeetingPlatform, Participant, PipelineStatus,
+    RecorderState, RecordingConfig, RecordingSession, TimeoutAction,
 };
-use super::zoom;
+use crate::calendar::{self, CalendarEvent};
 
 /// Shared recorder handle stored in Tauri managed state.
 pub struct RecorderHandle<R: Runtime> {
@@ -34,6 +35,8 @@ impl<R: Runtime> RecorderHandle<R> {
                 video: None,
                 monitor_stop: None,
                 monitor_handle: None,
+                share_monitor_stop: None,
+                share_monitor_handle: None,
             })),
         }
     }
@@ -53,6 +56,8 @@ pub struct RecorderInner<R: Runtime> {
     video: Option<VideoCapture>,
     monitor_stop: Option<Arc<std::sync::atomic::AtomicBool>>,
     monitor_handle: Option<std::thread::JoinHandle<()>>,
+    share_monitor_stop: Option<Arc<std::sync::atomic::AtomicBool>>,
+    share_monitor_handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl<R: Runtime> RecorderInner<R> {
@@ -100,8 +105,39 @@ impl<R: Runtime> RecorderInner<R> {
         }
     }
 
+    /// Arm the recorder for auto-record from a calendar event.
+    /// When armed, meeting detection will skip the notification prompt and
+    /// start recording immediately.
+    pub fn arm_for_event(&mut self, event_title: String, expected_platform: Option<MeetingPlatform>) {
+        if self.state == RecorderState::Idle {
+            self.set_state(RecorderState::Armed {
+                event_title: event_title.clone(),
+                expected_platform,
+            });
+            self.notify("Recap Armed", &format!("Ready to record: {}", event_title));
+        }
+    }
+
+    /// Disarm the recorder, returning to Idle if currently Armed.
+    pub fn disarm(&mut self) {
+        if matches!(self.state, RecorderState::Armed { .. }) {
+            self.set_state(RecorderState::Idle);
+        }
+    }
+
     /// Handle a meeting detection event.
     pub fn on_meeting_detected(&mut self, process_name: String, pid: u32) {
+        // When Armed, skip the notification and start recording immediately
+        if matches!(self.state, RecorderState::Armed { .. }) {
+            log::info!("Armed auto-record: starting capture for {} (PID {})", process_name, pid);
+            self.set_state(RecorderState::Detected {
+                process_name: process_name.clone(),
+                pid,
+            });
+            let _ = self.start_capture(process_name, pid);
+            return;
+        }
+
         if self.state != RecorderState::Idle {
             return; // Already handling a session.
         }
@@ -153,6 +189,126 @@ impl<R: Runtime> RecorderInner<R> {
         }
     }
 
+    /// Handle a browser-based meeting detection from the extension.
+    pub fn on_browser_meeting_detected(
+        &mut self,
+        url: String,
+        title: String,
+        platform: MeetingPlatform,
+        _tab_id: Option<u32>,
+    ) {
+        // Allow Armed state to proceed (auto-record)
+        if self.state != RecorderState::Idle && !matches!(self.state, RecorderState::Armed { .. }) {
+            log::info!(
+                "Browser meeting detected but already in state {:?}, ignoring",
+                self.state
+            );
+            return;
+        }
+
+        // Find a browser PID from WASAPI audio sessions.
+        let browser_pid = find_browser_audio_pid();
+        match browser_pid {
+            Some(pid) => {
+                log::info!(
+                    "Browser meeting detected: {} ({}) — browser PID {}",
+                    title,
+                    url,
+                    pid
+                );
+                let process_name = format!("{:?} (browser)", platform);
+                self.on_meeting_detected(process_name, pid);
+            }
+            None => {
+                log::warn!(
+                    "Browser meeting detected ({}) but no browser audio session found",
+                    url
+                );
+            }
+        }
+    }
+
+    /// Handle a browser meeting ended event.
+    pub fn on_browser_meeting_ended(&mut self, _tab_id: Option<u32>) {
+        // Only act if we have a session with a browser-based platform.
+        if let Some(ref session) = self.session {
+            match session.platform {
+                MeetingPlatform::GoogleMeet | MeetingPlatform::ZohoMeet | MeetingPlatform::Teams => {}
+                _ => return,
+            }
+        } else {
+            return;
+        }
+
+        if self.state == RecorderState::Recording {
+            log::info!("Browser meeting ended, stopping recording");
+            let _ = self.stop_capture();
+        } else if matches!(self.state, RecorderState::Detected { .. }) {
+            self.set_state(RecorderState::Idle);
+        }
+    }
+
+    /// Handle screen sharing started — switch video to display capture.
+    pub fn on_sharing_started(&mut self) {
+        if self.state != RecorderState::Recording {
+            return;
+        }
+        if let Some(ref mut video) = self.video {
+            let target = CaptureSource::Display {
+                monitor_index: self.config.screen_share_monitor,
+            };
+            match video.switch_source(target) {
+                Ok(()) => log::info!(
+                    "Switched to display capture (monitor {})",
+                    self.config.screen_share_monitor
+                ),
+                Err(e) => log::warn!("Failed to switch to display capture: {}", e),
+            }
+        }
+    }
+
+    /// Handle screen sharing stopped — switch video back to window capture.
+    pub fn on_sharing_stopped(&mut self) {
+        if self.state != RecorderState::Recording {
+            return;
+        }
+        if let Some(ref session) = self.session {
+            let pid = session.pid;
+            if let Some(ref mut video) = self.video {
+                let target = CaptureSource::Window { pid };
+                match video.switch_source(target) {
+                    Ok(()) => log::info!("Switched back to window capture (PID {})", pid),
+                    Err(e) => log::warn!("Failed to switch back to window capture: {}", e),
+                }
+            }
+        }
+    }
+
+    /// Start the share monitor for desktop meeting apps (Zoom/Teams).
+    pub fn start_share_monitor(&mut self, tx: mpsc::Sender<MonitorEvent>) {
+        if let Some(ref session) = self.session {
+            if matches!(
+                session.platform,
+                MeetingPlatform::Zoom | MeetingPlatform::Teams
+            ) {
+                let (handle, stop) =
+                    share_detect::start_share_monitor(tx, session.pid);
+                self.share_monitor_handle = Some(handle);
+                self.share_monitor_stop = Some(stop);
+            }
+        }
+    }
+
+    /// Stop the share monitor if running.
+    pub fn stop_share_monitor(&mut self) {
+        if let Some(stop) = self.share_monitor_stop.take() {
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        if let Some(handle) = self.share_monitor_handle.take() {
+            let _ = handle.join();
+        }
+    }
+
     /// Start capturing audio and video for a detected meeting process.
     pub fn start_capture(
         &mut self,
@@ -198,8 +354,9 @@ impl<R: Runtime> RecorderInner<R> {
         };
 
         self.session = Some(RecordingSession {
-            process_name,
+            process_name: process_name.clone(),
             pid,
+            platform: MeetingPlatform::from_process(&process_name),
             started_at: Instant::now(),
             working_dir,
             remote_audio_path: remote_path,
@@ -218,6 +375,9 @@ impl<R: Runtime> RecorderInner<R> {
 
     /// Stop all capture streams and begin post-processing.
     pub fn stop_capture(&mut self) -> Result<Option<RecordingSession>, String> {
+        // Stop share monitor if running.
+        self.stop_share_monitor();
+
         // Stop all capture streams.
         if let Some(mut audio) = self.remote_audio.take() {
             let _ = audio.stop();
@@ -237,6 +397,8 @@ impl<R: Runtime> RecorderInner<R> {
 
     /// Cancel recording — stop capture, delete temp files, return to idle.
     pub fn cancel_recording(&mut self) {
+        self.stop_share_monitor();
+
         if let Some(mut audio) = self.remote_audio.take() {
             let _ = audio.stop();
         }
@@ -356,18 +518,17 @@ pub fn merge_recording(session: &RecordingSession) -> Result<PathBuf, String> {
 /// Write meeting metadata JSON file.
 pub fn write_meeting_json(
     working_dir: &PathBuf,
-    meeting_info: Option<zoom::ZoomMeetingInfo>,
+    meeting_info: Option<MeetingMetadata>,
 ) -> Result<PathBuf, String> {
     let metadata = match meeting_info {
-        Some(info) => json!({
-            "title": info.title,
+        Some(info) => serde_json::to_value(&info)
+            .map_err(|e| format!("Failed to serialize metadata: {}", e))?,
+        None => json!({
+            "title": "Meeting",
             "date": chrono::Utc::now().format("%Y-%m-%d").to_string(),
-            "participants": info.participants,
-            "user_email": info.user_email,
-            "user_name": info.user_name,
-            "platform": "zoom"
+            "participants": [],
+            "platform": "unknown"
         }),
-        None => zoom::fallback_metadata(),
     };
 
     let path = working_dir.join("meeting.json");
@@ -393,6 +554,334 @@ pub fn write_initial_status(working_dir: &PathBuf) -> Result<(), String> {
     .map_err(|e| format!("Failed to write status.json: {}", e))
 }
 
+/// Known browser process names for meeting audio detection.
+const KNOWN_BROWSER_PROCESSES: &[&str] = &["chrome.exe", "msedge.exe", "firefox.exe"];
+
+/// Scan WASAPI audio sessions for a browser process and return its PID.
+///
+/// Uses the shared WASAPI enumeration helper to look for browser executables.
+/// If multiple browser PIDs are found with active audio, logs a warning and
+/// returns the first match (which may not be the correct meeting browser).
+fn find_browser_audio_pid() -> Option<u32> {
+    let matches = super::monitor::enumerate_audio_sessions_for_processes(KNOWN_BROWSER_PROCESSES);
+
+    if matches.len() > 1 {
+        log::warn!(
+            "Multiple browser PIDs found with active audio: {:?} — using first match (PID {}). \
+             Recording may capture from the wrong browser.",
+            matches, matches[0].1
+        );
+    }
+
+    matches.into_iter().next().map(|(_, pid)| pid)
+}
+
+// ── Enrichment routing ───────────────────────────────────────────────────────
+
+/// Display name for a meeting platform.
+fn platform_display_name(p: &MeetingPlatform) -> &str {
+    match p {
+        MeetingPlatform::Zoom => "Zoom",
+        MeetingPlatform::Teams => "Teams",
+        MeetingPlatform::GoogleMeet => "Google Meet",
+        MeetingPlatform::ZohoMeet => "Zoho Meet",
+        MeetingPlatform::Unknown => "Unknown",
+    }
+}
+
+/// Read provider credentials from the settings store JSON file.
+// TODO: Read credentials from Stronghold instead of settings.json.
+// The settings.json mirroring pattern was established in Phase 3, but credentials
+// should migrate to tauri-plugin-stronghold for secure storage.
+fn read_provider_credentials(
+    app: &tauri::AppHandle,
+    provider: &str,
+) -> Option<(String, String, String, String)> {
+    let store_path = app
+        .path()
+        .app_data_dir()
+        .ok()?
+        .join("settings.json");
+
+    let content = std::fs::read_to_string(&store_path).ok()?;
+    let store: serde_json::Value = serde_json::from_str(&content).ok()?;
+
+    let access_token = store.get(&format!("{}_access_token", provider))?.as_str()?.to_string();
+    let refresh_token = store.get(&format!("{}_refresh_token", provider))?.as_str()?.to_string();
+    let client_id = store.get(&format!("{}_client_id", provider))?.as_str()?.to_string();
+    let client_secret = store.get(&format!("{}_client_secret", provider))?.as_str()?.to_string();
+
+    Some((access_token, refresh_token, client_id, client_secret))
+}
+
+/// Try Zoom API enrichment. Returns None on any error.
+async fn try_zoom_enrichment(
+    app: &tauri::AppHandle,
+    ended_at: chrono::DateTime<chrono::Utc>,
+) -> Option<MeetingMetadata> {
+    let (access_token, refresh_token, client_id, client_secret) =
+        read_provider_credentials(app, "zoom")?;
+
+    let mut client = super::zoom::ZoomClient::new(
+        access_token, refresh_token, client_id, client_secret,
+    );
+
+    match client.fetch_recent_meeting(ended_at).await {
+        Ok(metadata) => metadata,
+        Err(e) => {
+            log::warn!("Zoom enrichment failed: {}", e);
+            None
+        }
+    }
+}
+
+/// Try Google Meet API enrichment. Returns None on any error.
+async fn try_google_meet_enrichment(
+    app: &tauri::AppHandle,
+    ended_at: chrono::DateTime<chrono::Utc>,
+) -> Option<MeetingMetadata> {
+    let (access_token, refresh_token, client_id, client_secret) =
+        read_provider_credentials(app, "google")?;
+
+    let mut client = super::google_meet::GoogleMeetClient::new(
+        access_token, refresh_token, client_id, client_secret,
+    );
+
+    match client.fetch_recent_meeting(ended_at).await {
+        Ok(metadata) => metadata,
+        Err(e) => {
+            log::warn!("Google Meet enrichment failed: {}", e);
+            None
+        }
+    }
+}
+
+/// Try Zoho Meet API enrichment. Returns None on any error.
+async fn try_zoho_meet_enrichment(
+    app: &tauri::AppHandle,
+    ended_at: chrono::DateTime<chrono::Utc>,
+) -> Option<MeetingMetadata> {
+    let (access_token, refresh_token, client_id, client_secret) =
+        read_provider_credentials(app, "zoho")?;
+
+    // Read the Zoho region from settings, defaulting to "com".
+    let region = app
+        .path()
+        .app_data_dir()
+        .ok()
+        .and_then(|p| std::fs::read_to_string(p.join("settings.json")).ok())
+        .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+        .and_then(|s| s.get("zoho_region")?.as_str().map(String::from))
+        .unwrap_or_else(|| "com".to_string());
+
+    let mut client = super::zoho_meet::ZohoMeetClient::new(
+        access_token, refresh_token, client_id, client_secret, region,
+    );
+
+    match client.fetch_recent_meeting(ended_at).await {
+        Ok(metadata) => metadata,
+        Err(e) => {
+            log::warn!("Zoho Meet enrichment failed: {}", e);
+            None
+        }
+    }
+}
+
+/// Find a calendar event overlapping the recording end time.
+async fn find_calendar_match(
+    app: &tauri::AppHandle,
+    ended_at: chrono::DateTime<chrono::Utc>,
+) -> Option<CalendarEvent> {
+    let cache_path = app
+        .path()
+        .app_data_dir()
+        .ok()?
+        .join("calendar_cache.json");
+
+    let content = std::fs::read_to_string(&cache_path).ok()?;
+    let cache: calendar::CalendarCache = serde_json::from_str(&content).ok()?;
+
+    let ended_str = ended_at.to_rfc3339();
+
+    // Find an event that overlaps with the recording end time (within 1 hour window).
+    cache.events.into_iter().find(|event| {
+        calendar::match_event_to_recording(event, &ended_str, Some(3600.0))
+    })
+}
+
+/// Route metadata enrichment based on meeting platform, with cascade fallback.
+///
+/// Priority:
+/// 1. Platform-specific API (Zoom, Google Meet, Zoho Meet, Teams)
+/// 2. Calendar event matching
+/// 3. Minimal metadata (screenshot extraction happens in the Python pipeline)
+async fn enrich_metadata(
+    app: &tauri::AppHandle,
+    platform: &MeetingPlatform,
+    ended_at: chrono::DateTime<chrono::Utc>,
+    pid: Option<u32>,
+) -> MeetingMetadata {
+    // 1. Try platform-specific API
+    let api_result = match platform {
+        MeetingPlatform::Zoom => try_zoom_enrichment(app, ended_at).await,
+        MeetingPlatform::GoogleMeet => try_google_meet_enrichment(app, ended_at).await,
+        MeetingPlatform::ZohoMeet => try_zoho_meet_enrichment(app, ended_at).await,
+        MeetingPlatform::Teams => {
+            // Teams personal: calendar + window title
+            let calendar_match = find_calendar_match(app, ended_at).await;
+            Some(super::teams::build_teams_metadata(
+                calendar_match.as_ref(),
+                pid,
+                &chrono::Utc::now().to_rfc3339(),
+                &ended_at.to_rfc3339(),
+            ))
+        }
+        MeetingPlatform::Unknown => None,
+    };
+
+    if let Some(metadata) = api_result {
+        return metadata;
+    }
+
+    // 2. Fallback: calendar event matching
+    if let Some(event) = find_calendar_match(app, ended_at).await {
+        return MeetingMetadata {
+            title: event.title,
+            platform: platform.clone(),
+            participants: event
+                .participants
+                .iter()
+                .map(|p| Participant {
+                    name: p.name.clone(),
+                    email: p.email.clone(),
+                    join_time: None,
+                    leave_time: None,
+                })
+                .collect(),
+            user_name: String::new(),
+            user_email: String::new(),
+            start_time: event.start,
+            end_time: event.end,
+        };
+    }
+
+    // 3. Minimal metadata (screenshot extraction happens in pipeline)
+    MeetingMetadata {
+        title: format!("{} Meeting", platform_display_name(platform)),
+        platform: platform.clone(),
+        participants: vec![],
+        user_name: String::new(),
+        user_email: String::new(),
+        start_time: String::new(),
+        end_time: ended_at.to_rfc3339(),
+    }
+}
+
+// ── Auto-record periodic check ───────────────────────────────────────────────
+
+/// Check upcoming calendar events and arm/disarm the recorder accordingly.
+///
+/// Called periodically (every 60s) from the setup loop in lib.rs.
+/// Reads the calendar cache and settings store directly rather than going
+/// through IPC commands.
+pub async fn check_auto_record_events(
+    app: &AppHandle<tauri::Wry>,
+    recorder: &Arc<Mutex<RecorderInner<tauri::Wry>>>,
+) {
+    // Read settings from the store (via spawn_blocking to avoid sync I/O in async context)
+    let store_path = match app.path().app_data_dir() {
+        Ok(p) => p.join("settings.json"),
+        Err(_) => return,
+    };
+    let cache_path = match app.path().app_data_dir() {
+        Ok(p) => p.join("calendar_cache.json"),
+        Err(_) => return,
+    };
+
+    let (settings_result, cache_result) = {
+        let sp = store_path.clone();
+        let cp = cache_path.clone();
+        match tokio::task::spawn_blocking(move || {
+            let settings = std::fs::read_to_string(&sp);
+            let cache = std::fs::read_to_string(&cp);
+            (settings, cache)
+        })
+        .await
+        {
+            Ok(r) => r,
+            Err(_) => return,
+        }
+    };
+
+    let content = match settings_result {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    let store: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    let lead_time_minutes = store
+        .get("meetingLeadTimeMinutes")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(10.0);
+    let auto_record_all = store
+        .get("autoRecordAllCalendar")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    let cache_content = match cache_result {
+        Ok(c) => c,
+        Err(_) => return, // No cache yet
+    };
+    let cache: calendar::CalendarCache = match serde_json::from_str(&cache_content) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    let now = chrono::Utc::now();
+    let lead_duration = chrono::Duration::seconds((lead_time_minutes * 60.0) as i64);
+    let horizon = now + lead_duration;
+    let grace = chrono::Duration::minutes(5);
+
+    // Find qualifying events: start within lead time, end not yet passed (+ 5 min grace)
+    let qualifying_event = cache.events.iter().find(|event| {
+        // Must be auto_record enabled, OR auto_record_all is on
+        if !event.auto_record && !auto_record_all {
+            return false;
+        }
+
+        let start_ok = chrono::DateTime::parse_from_rfc3339(&event.start)
+            .map(|dt| dt.with_timezone(&chrono::Utc) <= horizon)
+            .unwrap_or(false);
+        let end_ok = chrono::DateTime::parse_from_rfc3339(&event.end)
+            .map(|dt| dt.with_timezone(&chrono::Utc) + grace >= now)
+            .unwrap_or(false);
+
+        start_ok && end_ok
+    });
+
+    let mut inner = recorder.lock().await;
+
+    match (&inner.state, qualifying_event) {
+        (RecorderState::Idle, Some(event)) => {
+            let expected_platform = event
+                .detected_platform
+                .as_deref()
+                .map(MeetingPlatform::from_platform_str);
+            inner.arm_for_event(event.title.clone(), expected_platform);
+        }
+        (RecorderState::Armed { .. }, None) => {
+            // No qualifying events remain — disarm
+            inner.disarm();
+        }
+        _ => {
+            // Either already armed with events remaining, or in a non-idle/armed state
+        }
+    }
+}
+
 // ── IPC Commands ─────────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -414,8 +903,8 @@ pub async fn start_recording(
         return inner.start_capture(process_name.clone(), pid);
     }
 
-    // If idle, scan for known meeting processes.
-    if inner.state() == RecorderState::Idle {
+    // If idle or armed, scan for known meeting processes.
+    if inner.state() == RecorderState::Idle || matches!(inner.state(), RecorderState::Armed { .. }) {
         // For now, return an error — the monitor should detect processes.
         return Err("No meeting detected. Start a Zoom or Teams meeting first.".to_string());
     }
@@ -439,12 +928,16 @@ pub async fn stop_recording(
             if let Some(session) = inner.stop_capture()? {
                 inner.set_state(RecorderState::Processing);
                 let working_dir = session.working_dir.clone();
+                let platform = session.platform.clone();
+                let session_pid = session.pid;
 
                 // Merge audio/video into final MP4
                 let merged = merge_recording(&session)?;
 
-                // Write meeting metadata JSON
-                let metadata_path = write_meeting_json(&working_dir, None)?;
+                // Enrich metadata via platform API / calendar / fallback
+                let ended_at = chrono::Utc::now();
+                let enriched = enrich_metadata(&app, &platform, ended_at, Some(session_pid)).await;
+                let metadata_path = write_meeting_json(&working_dir, Some(enriched))?;
 
                 // Write initial pipeline status
                 let _ = write_initial_status(&working_dir);
