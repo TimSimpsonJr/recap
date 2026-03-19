@@ -5,6 +5,7 @@ import {
   listMeetings,
   searchMeetings,
   getFilterOptions,
+  invalidateBriefingCache,
   type MeetingSummary,
   type FilterOptions,
 } from "../tauri";
@@ -246,12 +247,21 @@ let unlistenPipeline: (() => void) | null = null;
 
 export async function initMeetingsListener(): Promise<void> {
   if (unlistenPipeline) return;
-  unlistenPipeline = await listen("pipeline-completed", () => {
+  unlistenPipeline = await listen("pipeline-completed", async () => {
     const current = get(meetings);
     if (current.searchQuery) {
-      search(current.searchQuery);
+      await search(current.searchQuery);
     } else {
-      loadMeetings();
+      await loadMeetings();
+    }
+
+    // Invalidate briefing cache for participants of the most recently updated meeting
+    const updated = get(meetings);
+    if (updated.items.length > 0) {
+      const participants = updated.items[0].participants;
+      if (participants.length > 0) {
+        invalidateBriefingCache(participants).catch(() => {});
+      }
     }
   });
 }

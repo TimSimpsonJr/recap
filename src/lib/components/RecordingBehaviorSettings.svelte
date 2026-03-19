@@ -1,19 +1,19 @@
 <script lang="ts">
   import { settings, saveSetting } from "../stores/settings";
 
-  const inputStyle = "width:100%;background:#282826;border:1px solid #262624;border-radius:6px;padding:6px 12px;font-size:15px;color:#D8D5CE;font-family:'DM Sans',sans-serif;outline:none;";
-  const labelStyle = "display:block;font-size:14px;color:#78756E;margin-bottom:4px;font-family:'DM Sans',sans-serif;";
+  const inputStyle = "width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 12px;font-size:15px;color:var(--text);font-family:'DM Sans',sans-serif;outline:none;";
+  const labelStyle = "display:block;font-size:14px;color:var(--text-muted);margin-bottom:4px;font-family:'DM Sans',sans-serif;";
 </script>
 
 <div style="display:flex;flex-direction:column;gap:12px;">
   <!-- Auto-detect toggle -->
   <label style="display:flex;align-items:center;justify-content:space-between;">
-    <span style="font-size:15px;color:#B0ADA5;font-family:'DM Sans',sans-serif;">Auto-detect Zoom meetings</span>
+    <span style="font-size:15px;color:var(--text-secondary);font-family:'DM Sans',sans-serif;">Auto-detect Zoom meetings</span>
     <input
       type="checkbox"
       checked={$settings.autoDetectMeetings}
       onchange={(e) => saveSetting("autoDetectMeetings", e.currentTarget.checked)}
-      style="accent-color:#A8A078;"
+      style="accent-color:var(--gold);"
     />
   </label>
 

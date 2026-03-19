@@ -11,6 +11,8 @@ import type {
   Utterance,
   GraphNode,
   GraphEdge,
+  CalendarEvent,
+  Briefing,
 } from "./tauri";
 
 export const USE_DUMMY_DATA = import.meta.env.VITE_DUMMY_DATA === "true";
@@ -20,14 +22,14 @@ export const USE_DUMMY_DATA = import.meta.env.VITE_DUMMY_DATA === "true";
 // ---------------------------------------------------------------------------
 
 function doneStatus(): PipelineStatus {
-  const done = { completed: true, timestamp: "2026-03-17T10:00:00", error: null };
+  const done = { completed: true, timestamp: "2026-03-17T10:00:00", error: null, waiting: null };
   return { merge: done, frames: done, transcribe: done, diarize: done, analyze: done, export: done };
 }
 
 function failedStatus(stage: string): PipelineStatus {
-  const done = { completed: true, timestamp: "2026-03-17T10:00:00", error: null };
-  const fail = { completed: false, timestamp: null, error: `${stage} failed: CUDA out of memory` };
-  const pending = { completed: false, timestamp: null, error: null };
+  const done = { completed: true, timestamp: "2026-03-17T10:00:00", error: null, waiting: null };
+  const fail = { completed: false, timestamp: null, error: `${stage} failed: CUDA out of memory`, waiting: null };
+  const pending = { completed: false, timestamp: null, error: null, waiting: null };
   const s: any = { merge: done, frames: done, transcribe: done, diarize: done, analyze: done, export: done };
   s[stage] = fail;
   const stages = ["merge", "frames", "transcribe", "diarize", "analyze", "export"];
@@ -37,9 +39,16 @@ function failedStatus(stage: string): PipelineStatus {
 }
 
 function processingStatus(): PipelineStatus {
-  const done = { completed: true, timestamp: "2026-03-17T10:00:00", error: null };
-  const pending = { completed: false, timestamp: null, error: null };
+  const done = { completed: true, timestamp: "2026-03-17T10:00:00", error: null, waiting: null };
+  const pending = { completed: false, timestamp: null, error: null, waiting: null };
   return { merge: done, frames: done, transcribe: pending, diarize: pending, analyze: pending, export: pending };
+}
+
+function waitingForSpeakerReviewStatus(): PipelineStatus {
+  const done = { completed: true, timestamp: "2026-03-17T10:00:00", error: null, waiting: null };
+  const waiting = { completed: false, timestamp: null, error: null, waiting: "speaker_review" };
+  const pending = { completed: false, timestamp: null, error: null, waiting: null };
+  return { merge: done, frames: done, transcribe: done, diarize: done, analyze: waiting, export: pending };
 }
 
 // ---------------------------------------------------------------------------
@@ -55,6 +64,7 @@ export const DUMMY_MEETINGS: MeetingSummary[] = [
   { id: "2026-03-15-investor-update", title: "Investor Update Call", date: "2026-03-15", platform: "zoom", participants: ["Tim", "Jane Smith", "Investor A"], company: null, duration_seconds: 3000, pipeline_status: doneStatus(), has_note: true, has_transcript: true, has_video: true, recording_path: null, note_path: null },
   { id: "2026-03-15-1on1-sarah", title: "1:1 with Sarah", date: "2026-03-15", platform: "zoom", participants: ["Tim", "Sarah"], company: null, duration_seconds: 1800, pipeline_status: doneStatus(), has_note: true, has_transcript: true, has_video: false, recording_path: null, note_path: null },
   { id: "2026-03-14-product-planning", title: "Product Planning Session", date: "2026-03-14", platform: "zoho", participants: ["Tim", "Mike", "Lisa", "Product Team"], company: null, duration_seconds: 5400, pipeline_status: doneStatus(), has_note: true, has_transcript: true, has_video: true, recording_path: null, note_path: null },
+  { id: "2026-03-17-sales-demo", title: "Sales Demo with Initech", date: "2026-03-17", platform: "zoom", participants: [], company: "Initech", duration_seconds: 2100, pipeline_status: waitingForSpeakerReviewStatus(), has_note: false, has_transcript: false, has_video: true, recording_path: "C:/Recordings/2026-03-17-sales-demo/recording.mp4", note_path: null },
 ];
 
 export const DUMMY_FILTER_OPTIONS: FilterOptions = {
@@ -219,4 +229,85 @@ export const DUMMY_GRAPH_DATA = {
     { source: "person:dave-wilson", target: "company:globex", edge_type: "works_at" },
     { source: "person:mike", target: "company:initech", edge_type: "works_at" },
   ] as GraphEdge[],
+};
+
+// ---------------------------------------------------------------------------
+// Calendar events
+// ---------------------------------------------------------------------------
+
+export const DUMMY_CALENDAR_EVENTS: CalendarEvent[] = [
+  {
+    id: "cal-001",
+    title: "Sprint Planning",
+    description: "Bi-weekly sprint planning for Q2 goals",
+    start: "2026-03-19T09:00:00",
+    end: "2026-03-19T10:00:00",
+    participants: [
+      { name: "Tim", email: "tim@example.com" },
+      { name: "Sarah", email: "sarah@example.com" },
+      { name: "Mike", email: "mike@example.com" },
+    ],
+    location: "Zoom",
+  },
+  {
+    id: "cal-002",
+    title: "Acme Corp Follow-up",
+    description: "Review Phase 1 proposal feedback",
+    start: "2026-03-19T14:00:00",
+    end: "2026-03-19T14:45:00",
+    participants: [
+      { name: "Tim", email: "tim@example.com" },
+      { name: "Jane Smith", email: "jane@acme.com" },
+      { name: "Bob Jones", email: "bob@acme.com" },
+    ],
+    location: null,
+  },
+  {
+    id: "cal-003",
+    title: "Project Kickoff with Acme Corp",
+    description: "Q2 infrastructure modernization kickoff",
+    start: "2026-03-17T09:00:00",
+    end: "2026-03-17T09:45:00",
+    participants: [
+      { name: "Tim", email: "tim@example.com" },
+      { name: "Jane Smith", email: "jane@acme.com" },
+      { name: "Bob Jones", email: "bob@acme.com" },
+      { name: "Alice Chen", email: "alice@acme.com" },
+    ],
+    location: "Zoom",
+  },
+  {
+    id: "cal-004",
+    title: "Design Sprint Retro",
+    description: null,
+    start: "2026-03-16T15:00:00",
+    end: "2026-03-16T15:40:00",
+    participants: [
+      { name: "Sarah", email: "sarah@example.com" },
+      { name: "Mike", email: "mike@example.com" },
+      { name: "Lisa", email: "lisa@example.com" },
+      { name: "Tim", email: "tim@example.com" },
+    ],
+    location: "Google Meet",
+  },
+];
+
+// ---------------------------------------------------------------------------
+// Briefing response
+// ---------------------------------------------------------------------------
+
+export const DUMMY_BRIEFING: Briefing = {
+  topics: [
+    "Phase 1 (CI/CD) proposal feedback and timeline",
+    "Jenkins audit scheduling with Acme DevOps team",
+    "AWS account access status from Acme IT",
+  ],
+  action_items: [
+    { assignee: "Tim", description: "Send Phase 1 proposal with detailed timeline by Friday", from_meeting: "Project Kickoff with Acme Corp" },
+    { assignee: "Jane Smith", description: "Review and share Globex migration runbook", from_meeting: "Project Kickoff with Acme Corp" },
+    { assignee: "Bob Jones", description: "Set up GitHub Actions proof-of-concept repo", from_meeting: "Project Kickoff with Acme Corp" },
+  ],
+  context: "Last meeting on March 17 covered Q2 infrastructure modernization. Budget of $45K approved for Phase 1 tooling. Moving from Jenkins to GitHub Actions, then Kubernetes on EKS for Phase 2.",
+  relationship_summary: "Jane is the key technical decision-maker at Acme. Bob defers to her on architecture choices. Alice is new to the team (joined 2 weeks ago).",
+  first_meeting: false,
 };

@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { PipelineStatus } from "../tauri";
-  import { retryProcessing } from "../tauri";
+  import { retryProcessing, getRecordingDir } from "../tauri";
 
   interface Props {
     status: PipelineStatus;
@@ -15,14 +15,10 @@
   let expanded = $state(false);
   let retrying = $state<string | null>(null);
 
-  function getRecordingDir(filePath: string): string {
-    const lastSep = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'));
-    return lastSep > 0 ? filePath.substring(0, lastSep) : filePath;
-  }
-
   let ariaLabel = $derived.by(() => {
     const parts = stages.map((s) => {
       const st = status[s];
+      if (st.waiting) return `${s}: awaiting review`;
       if (st.error) return `${s}: failed`;
       if (st.completed) return `${s}: completed`;
       return `${s}: pending`;
@@ -32,13 +28,19 @@
 
   function dotColor(stage: Stage): string {
     const st = status[stage];
-    if (st.error) return "#D06850";
-    if (st.completed) return "#A8A078";
-    return "#464440";
+    if (st.waiting) return "var(--warning)";
+    if (st.error) return "var(--red)";
+    if (st.completed) return "var(--gold)";
+    return "var(--border)";
+  }
+
+  function isDotPulsing(stage: Stage): boolean {
+    return !!status[stage].waiting;
   }
 
   function stageIcon(stage: Stage): string {
     const st = status[stage];
+    if (st.waiting) return "\u25CB";
     if (st.error) return "\u2717";
     if (st.completed) return "\u2713";
     return "\u2022";
@@ -46,9 +48,10 @@
 
   function stageIconColor(stage: Stage): string {
     const st = status[stage];
-    if (st.error) return "#D06850";
-    if (st.completed) return "#A8A078";
-    return "#585650";
+    if (st.waiting) return "var(--warning)";
+    if (st.error) return "var(--red)";
+    if (st.completed) return "var(--gold)";
+    return "var(--text-faint)";
   }
 
   function formatTimestamp(ts: string | null): string | null {
@@ -74,6 +77,7 @@
 
   function dotTitle(stage: Stage): string {
     const s = status[stage];
+    if (s.waiting) return `${stage}: ${s.waiting}`;
     if (s.error) return `${stage}: ${s.error}`;
     if (s.completed) return `${stage}: done`;
     return `${stage}: pending`;
@@ -121,6 +125,7 @@
     {#each stages as stage}
       <span
         title={dotTitle(stage)}
+        class={isDotPulsing(stage) ? 'pulse' : ''}
         style="
           display: inline-block;
           width: 6px;
@@ -141,7 +146,7 @@
         margin-top: 8px;
         padding: 10px 12px;
         border-radius: 6px;
-        background: #1A1A18;
+        background: var(--bg);
         font-family: 'DM Sans', sans-serif;
         font-size: 12px;
         min-width: 240px;
@@ -171,15 +176,19 @@
 
           <div style="flex: 1; min-width: 0;">
             <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px;">
-              <span style="color: #D8D5CE; text-transform: capitalize;">{stage}</span>
+              <span style="color: var(--text); text-transform: capitalize;">{stage}</span>
               {#if st.completed && st.timestamp}
-                <span style="color: #78756E; font-size: 11px; white-space: nowrap;">
+                <span style="color: var(--text-muted); font-size: 11px; white-space: nowrap;">
                   {formatTimestamp(st.timestamp)}
                 </span>
               {/if}
             </div>
-            {#if st.error}
-              <div style="color: #D06850; font-size: 11px; margin-top: 2px; word-break: break-word;">
+            {#if st.waiting}
+              <div style="color: var(--warning); font-size: 11px; margin-top: 2px; word-break: break-word;">
+                {st.waiting}
+              </div>
+            {:else if st.error}
+              <div style="color: var(--red); font-size: 11px; margin-top: 2px; word-break: break-word;">
                 {st.error}
               </div>
               {#if recordingPath}
@@ -193,7 +202,7 @@
                     border: 1px solid rgba(208,104,80,0.3);
                     border-radius: 3px;
                     background: rgba(208,104,80,0.08);
-                    color: #D06850;
+                    color: var(--red);
                     font-family: 'DM Sans', sans-serif;
                     font-size: 11px;
                     cursor: pointer;
@@ -216,3 +225,13 @@
     </div>
   {/if}
 </div>
+
+<style>
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+  :global(.pulse) {
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+</style>

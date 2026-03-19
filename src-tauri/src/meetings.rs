@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -662,4 +662,60 @@ pub async fn get_graph_data(
     }
 
     Ok(GraphData { nodes, edges })
+}
+
+#[tauri::command]
+pub async fn get_known_participants(
+    recordings_dir: String,
+) -> Result<Vec<String>, String> {
+    let recordings_path = PathBuf::from(&recordings_dir);
+    if !recordings_path.is_dir() {
+        return Err(format!("Recordings directory does not exist: {}", recordings_dir));
+    }
+
+    let mut participants: BTreeSet<String> = BTreeSet::new();
+
+    let entries = std::fs::read_dir(&recordings_path)
+        .map_err(|e| format!("Failed to read recordings directory: {}", e))?;
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_meeting_json = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| n.ends_with(".meeting.json"))
+            .unwrap_or(false);
+        if !is_meeting_json {
+            continue;
+        }
+        let content = match std::fs::read_to_string(&path) {
+            Ok(c) => c,
+            Err(_) => continue,
+        };
+        let meta: MeetingJson = match serde_json::from_str(&content) {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        for p in &meta.participants {
+            if !p.name.is_empty() {
+                participants.insert(p.name.clone());
+            }
+        }
+    }
+
+    Ok(participants.into_iter().collect())
+}
+
+#[tauri::command]
+pub async fn update_speaker_labels(
+    recording_dir: String,
+    corrections: HashMap<String, String>,
+) -> Result<(), String> {
+    let dir = PathBuf::from(&recording_dir);
+    let labels_path = dir.join("speaker_labels.json");
+    let content = serde_json::to_string_pretty(&corrections)
+        .map_err(|e| format!("Failed to serialize corrections: {}", e))?;
+    std::fs::write(&labels_path, content)
+        .map_err(|e| format!("Failed to write speaker_labels.json: {}", e))?;
+    Ok(())
 }

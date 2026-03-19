@@ -14,7 +14,7 @@
   <div class="meeting-notes" style="
     font-family: 'DM Sans', sans-serif;
     font-size: 15px;
-    color: #B0ADA5;
+    color: var(--text-secondary);
     line-height: 1.65;
     padding: 16px 0;
   ">
@@ -26,7 +26,7 @@
     style="
       font-family: 'DM Sans', sans-serif;
       font-size: 15px;
-      color: #585650;
+      color: var(--text-faint);
     "
   >
     No meeting note
@@ -39,7 +39,7 @@
   .meeting-notes :global(h3),
   .meeting-notes :global(h4) {
     font-family: 'Source Serif 4', serif;
-    color: #D8D5CE;
+    color: var(--text);
     margin: 1.2em 0 0.4em;
   }
 
@@ -62,14 +62,14 @@
   }
 
   .meeting-notes :global(code) {
-    background: #282826;
+    background: var(--surface);
     padding: 2px 6px;
     border-radius: 4px;
     font-size: 13.5px;
   }
 
   .meeting-notes :global(pre) {
-    background: #282826;
+    background: var(--surface);
     padding: 12px;
     border-radius: 8px;
     overflow-x: auto;
@@ -77,30 +77,30 @@
   }
 
   .meeting-notes :global(blockquote) {
-    border-left: 3px solid #464440;
+    border-left: 3px solid var(--border);
     margin: 0.5em 0;
     padding-left: 12px;
-    color: #78756E;
+    color: var(--text-muted);
   }
 
   .meeting-notes :global(a) {
-    color: #A8A078;
+    color: var(--gold);
     text-decoration: none;
   }
 
   .meeting-notes :global(a:hover) {
-    color: #B8B088;
+    color: var(--gold-hover);
     text-decoration: underline;
   }
 
   .meeting-notes :global(.wikilink) {
-    color: #A8A078;
+    color: var(--gold);
     text-decoration: none;
     cursor: pointer;
   }
 
   .meeting-notes :global(.wikilink:hover) {
-    color: #B8B088;
+    color: var(--gold-hover);
     text-decoration: underline;
   }
 

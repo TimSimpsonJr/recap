@@ -34,13 +34,13 @@
       style="
         font-family: 'DM Sans', sans-serif;
         font-size: 14px;
-        color: #A8A078;
+        color: var(--gold);
         text-decoration: none;
         display: inline-block;
         margin-bottom: 12px;
       "
-      onmouseenter={(e) => { (e.currentTarget as HTMLElement).style.color = '#B8B088'; }}
-      onmouseleave={(e) => { (e.currentTarget as HTMLElement).style.color = '#A8A078'; }}
+      onmouseenter={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--gold-hover)'; }}
+      onmouseleave={(e) => { (e.currentTarget as HTMLElement).style.color = 'var(--gold)'; }}
     >
       &larr; Back
     </a>
@@ -51,7 +51,7 @@
       font-family: 'Source Serif 4', serif;
       font-size: 24px;
       font-weight: 700;
-      color: #D8D5CE;
+      color: var(--text);
       margin: 0 0 8px 0;
     "
   >
@@ -63,21 +63,21 @@
     style="
       font-family: 'DM Sans', sans-serif;
       font-size: 13.5px;
-      color: #78756E;
+      color: var(--text-muted);
       gap: 0;
     "
   >
     <span>{dateStr}</span>
     {#if meeting.platform}
-      <span style="color: #464440; margin: 0 6px;">&middot;</span>
+      <span style="color: var(--border); margin: 0 6px;">&middot;</span>
       <span>{meeting.platform}</span>
     {/if}
     {#if durationText}
-      <span style="color: #464440; margin: 0 6px;">&middot;</span>
+      <span style="color: var(--border); margin: 0 6px;">&middot;</span>
       <span>{durationText}</span>
     {/if}
     {#if meeting.participants.length}
-      <span style="color: #464440; margin: 0 6px;">&middot;</span>
+      <span style="color: var(--border); margin: 0 6px;">&middot;</span>
       <span>{meeting.participants.join(", ")}</span>
     {/if}
   </div>

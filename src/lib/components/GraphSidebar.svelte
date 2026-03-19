@@ -155,8 +155,8 @@
     right: 0;
     width: 340px;
     height: 100%;
-    background: #1D1D1B;
-    border-left: 1px solid #262624;
+    background: var(--bg);
+    border-left: 1px solid var(--border);
     display: flex;
     flex-direction: column;
     z-index: 20;
@@ -177,7 +177,7 @@
     align-items: center;
     gap: 8px;
     padding: 12px 14px;
-    border-bottom: 1px solid #262624;
+    border-bottom: 1px solid var(--border);
     flex-shrink: 0;
   }
 
@@ -189,16 +189,16 @@
     height: 28px;
     border-radius: 6px;
     border: none;
-    background: #282826;
-    color: #78756E;
+    background: var(--surface);
+    color: var(--text-muted);
     cursor: pointer;
     flex-shrink: 0;
     transition: background 120ms ease, color 120ms ease;
   }
 
   .back-btn:hover {
-    background: #2B2B28;
-    color: #D8D5CE;
+    background: var(--raised);
+    color: var(--text);
   }
 
   .sidebar-title-area {
@@ -210,7 +210,7 @@
     font-family: 'DM Sans', sans-serif;
     font-size: 10px;
     font-weight: 600;
-    color: #585650;
+    color: var(--text-faint);
     text-transform: uppercase;
     letter-spacing: 0.8px;
   }
@@ -219,7 +219,7 @@
     font-family: 'Source Serif 4', serif;
     font-size: 16px;
     font-weight: 600;
-    color: #D8D5CE;
+    color: var(--text);
     margin: 0;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -234,16 +234,16 @@
     height: 28px;
     border-radius: 6px;
     border: none;
-    background: #282826;
-    color: #78756E;
+    background: var(--surface);
+    color: var(--text-muted);
     cursor: pointer;
     flex-shrink: 0;
     transition: background 120ms ease, color 120ms ease;
   }
 
   .close-btn:hover {
-    background: #2B2B28;
-    color: #D8D5CE;
+    background: var(--raised);
+    color: var(--text);
   }
 
   .sidebar-content {
@@ -255,7 +255,7 @@
   .meeting-count {
     font-family: 'DM Sans', sans-serif;
     font-size: 12px;
-    color: #585650;
+    color: var(--text-faint);
     margin-bottom: 8px;
   }
 
@@ -267,7 +267,7 @@
     padding: 10px 12px;
     border-radius: 6px;
     border: none;
-    background: #242422;
+    background: var(--surface);
     cursor: pointer;
     margin-bottom: 4px;
     text-align: left;
@@ -275,7 +275,7 @@
   }
 
   .sidebar-meeting-row:hover {
-    background: #2B2B28;
+    background: var(--raised);
   }
 
   .meeting-dot {
@@ -283,14 +283,14 @@
     width: 8px;
     height: 8px;
     border-radius: 50%;
-    background: #A8A078;
+    background: var(--gold);
     flex-shrink: 0;
   }
 
   .meeting-label {
     font-family: 'DM Sans', sans-serif;
     font-size: 14px;
-    color: #D8D5CE;
+    color: var(--text);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -299,7 +299,7 @@
   .empty-state {
     font-family: 'DM Sans', sans-serif;
     font-size: 14px;
-    color: #585650;
+    color: var(--text-faint);
     text-align: center;
     padding: 24px 0;
   }
@@ -314,7 +314,7 @@
   .error-state {
     font-family: 'DM Sans', sans-serif;
     font-size: 14px;
-    color: #D06850;
+    color: var(--red);
     background: rgba(200,80,60,0.10);
     padding: 12px;
     border-radius: 8px;
@@ -324,26 +324,26 @@
     font-family: 'Source Serif 4', serif;
     font-size: 16px;
     font-weight: 600;
-    color: #D8D5CE;
+    color: var(--text);
     margin: 0 0 4px 0;
   }
 
   .detail-meta {
     font-family: 'DM Sans', sans-serif;
     font-size: 13px;
-    color: #78756E;
+    color: var(--text-muted);
     margin-bottom: 12px;
   }
 
   .meta-dot {
-    color: #464440;
+    color: var(--border);
     margin: 0 4px;
   }
 
   .detail-tabs {
     display: flex;
     gap: 0;
-    border-bottom: 1px solid #262624;
+    border-bottom: 1px solid var(--border);
     margin-bottom: 8px;
   }
 
@@ -355,15 +355,15 @@
     font-family: 'DM Sans', sans-serif;
     font-size: 13px;
     font-weight: 400;
-    color: #585650;
+    color: var(--text-faint);
     border-bottom: 2px solid transparent;
     margin-bottom: -1px;
   }
 
   .detail-tab.active {
     font-weight: 600;
-    color: #A8A078;
-    border-bottom-color: #A8A078;
+    color: var(--gold);
+    border-bottom-color: var(--gold);
   }
 
   .detail-body {
@@ -374,8 +374,8 @@
     display: inline-block;
     width: 20px;
     height: 20px;
-    border: 2px solid #464440;
-    border-top-color: #A8A078;
+    border: 2px solid var(--border);
+    border-top-color: var(--gold);
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
   }
@@ -392,7 +392,7 @@
     background: transparent;
   }
   .sidebar-content::-webkit-scrollbar-thumb {
-    background: #464440;
+    background: var(--border);
     border-radius: 2px;
   }
 </style>

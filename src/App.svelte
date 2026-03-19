@@ -4,16 +4,56 @@
   import { listen } from "@tauri-apps/api/event";
   import Settings from "./routes/Settings.svelte";
   import Dashboard from "./routes/Dashboard.svelte";
+  import Calendar from "./routes/Calendar.svelte";
   import GraphView from "./routes/GraphView.svelte";
   import { loadCredentials, credentials, saveTokens } from "./lib/stores/credentials";
   import type { ProviderName } from "./lib/stores/credentials";
-  import { loadSettings, settings } from "./lib/stores/settings";
-  import { exchangeOAuthCode } from "./lib/tauri";
+  import { loadSettings, settings, saveSetting } from "./lib/stores/settings";
+  import { exchangeOAuthCode, syncCalendar } from "./lib/tauri";
+
+  function setZoom(level: number) {
+    const clamped = Math.round(Math.min(2.0, Math.max(0.5, level)) * 10) / 10;
+    document.documentElement.style.zoom = String(clamped);
+    saveSetting("zoomLevel", clamped);
+  }
+
+  function handleKeydown(e: KeyboardEvent) {
+    if (!e.ctrlKey) return;
+    if (e.key === "=" || e.key === "+") {
+      e.preventDefault();
+      setZoom((get(settings).zoomLevel ?? 1.0) + 0.1);
+    } else if (e.key === "-") {
+      e.preventDefault();
+      setZoom((get(settings).zoomLevel ?? 1.0) - 0.1);
+    } else if (e.key === "0") {
+      e.preventDefault();
+      setZoom(1.0);
+    }
+  }
+
+  function handleWheel(e: WheelEvent) {
+    if (!e.ctrlKey) return;
+    e.preventDefault();
+    const current = get(settings).zoomLevel ?? 1.0;
+    setZoom(current + (e.deltaY < 0 ? 0.1 : -0.1));
+  }
 
   let currentRoute = $state("dashboard");
   let meetingId = $state<string | null>(null);
   let filterParticipant = $state<string | null>(null);
   let initialized = $state(false);
+
+  // D5: Auto-sync calendar on window focus, debounced to once per 15 min
+  let lastCalendarSync = $state(0);
+
+  function handleWindowFocus() {
+    const now = Date.now();
+    const fifteenMinutes = 15 * 60 * 1000;
+    if (now - lastCalendarSync > fifteenMinutes) {
+      lastCalendarSync = now;
+      syncCalendar().catch(() => {}); // silent background sync
+    }
+  }
 
   onMount(async () => {
     try {
@@ -27,6 +67,12 @@
       console.error("Failed to load settings:", err);
     }
     initialized = true;
+
+    // Apply persisted zoom level
+    const savedZoom = get(settings).zoomLevel;
+    if (savedZoom && savedZoom !== 1.0) {
+      document.documentElement.style.zoom = String(savedZoom);
+    }
 
     const updateRoute = () => {
       const hash = window.location.hash.slice(1) || "dashboard";
@@ -90,11 +136,14 @@
   });
 </script>
 
-<div class="flex flex-col h-screen" style="background: #1D1D1B;">
+<svelte:window onkeydown={handleKeydown} onfocus={handleWindowFocus} />
+
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div class="flex flex-col h-screen" style="background: var(--bg);" onwheel={handleWheel}>
   {#if !initialized}
     <div
       class="flex items-center justify-center h-screen"
-      style="font-family: 'DM Sans', sans-serif; color: #585650;"
+      style="font-family: 'DM Sans', sans-serif; color: var(--text-faint);"
     >
       Loading...
     </div>
@@ -105,8 +154,8 @@
       style="
         height: 48px;
         padding: 0 28px;
-        background: #1A1A18;
-        border-bottom: 1px solid #262624;
+        background: var(--bg);
+        border-bottom: 1px solid var(--border);
         font-family: 'DM Sans', sans-serif;
         gap: 24px;
       "
@@ -116,7 +165,7 @@
           font-family: 'Source Serif 4', serif;
           font-size: 18px;
           font-weight: 700;
-          color: #D8D5CE;
+          color: var(--text);
           margin-right: 12px;
         "
       >
@@ -128,18 +177,28 @@
           font-size: 14.5px;
           text-decoration: none;
           padding: 10px 0;
-          border-bottom: 2px solid {currentRoute === 'dashboard' ? '#A8A078' : 'transparent'};
-          color: {currentRoute === 'dashboard' ? '#A8A078' : '#585650'};
+          border-bottom: 2px solid {currentRoute === 'dashboard' ? 'var(--gold)' : 'transparent'};
+          color: {currentRoute === 'dashboard' ? 'var(--gold)' : 'var(--text-faint)'};
         "
       >Meetings</a>
+      <a
+        href="#calendar"
+        style="
+          font-size: 14.5px;
+          text-decoration: none;
+          padding: 10px 0;
+          border-bottom: 2px solid {currentRoute === 'calendar' ? 'var(--gold)' : 'transparent'};
+          color: {currentRoute === 'calendar' ? 'var(--gold)' : 'var(--text-faint)'};
+        "
+      >Calendar</a>
       <a
         href="#graph"
         style="
           font-size: 14.5px;
           text-decoration: none;
           padding: 10px 0;
-          border-bottom: 2px solid {currentRoute === 'graph' ? '#A8A078' : 'transparent'};
-          color: {currentRoute === 'graph' ? '#A8A078' : '#585650'};
+          border-bottom: 2px solid {currentRoute === 'graph' ? 'var(--gold)' : 'transparent'};
+          color: {currentRoute === 'graph' ? 'var(--gold)' : 'var(--text-faint)'};
         "
       >Graph</a>
       <a
@@ -148,8 +207,8 @@
           font-size: 14.5px;
           text-decoration: none;
           padding: 10px 0;
-          border-bottom: 2px solid {currentRoute === 'settings' ? '#A8A078' : 'transparent'};
-          color: {currentRoute === 'settings' ? '#A8A078' : '#585650'};
+          border-bottom: 2px solid {currentRoute === 'settings' ? 'var(--gold)' : 'transparent'};
+          color: {currentRoute === 'settings' ? 'var(--gold)' : 'var(--text-faint)'};
         "
       >Settings</a>
     </nav>
@@ -158,6 +217,8 @@
     <div class="flex-1 overflow-hidden">
       {#if currentRoute === "settings"}
         <Settings />
+      {:else if currentRoute === "calendar"}
+        <Calendar />
       {:else if currentRoute === "graph"}
         <GraphView />
       {:else}
