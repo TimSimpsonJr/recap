@@ -1,5 +1,6 @@
 <script lang="ts">
   import { settings, saveSetting } from "../stores/settings";
+  import SettingsTooltip from "./SettingsTooltip.svelte";
 </script>
 
 <div style="display:flex;flex-direction:column;gap:12px;">
@@ -14,7 +15,7 @@
   </label>
   <label style="display:flex;align-items:center;gap:8px;font-size:15px;color:var(--text-secondary);font-family:'DM Sans',sans-serif;">
     <input type="checkbox" checked={$settings.meetingNotifications} onchange={(e) => saveSetting("meetingNotifications", e.currentTarget.checked)} style="accent-color:var(--gold);" />
-    Pre-meeting notifications
+    Pre-meeting notifications<SettingsTooltip text="How many minutes before a meeting to show a notification." />
   </label>
   {#if $settings.meetingNotifications}
     <div style="display:flex;align-items:center;gap:8px;margin-left:28px;">

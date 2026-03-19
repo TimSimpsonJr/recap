@@ -1,5 +1,6 @@
 <script lang="ts">
   import { settings, saveSetting } from "../stores/settings";
+  import SettingsTooltip from "./SettingsTooltip.svelte";
 
   let newType = $state("");
   let newProject = $state("");
@@ -26,7 +27,7 @@
 
 <div style="display:flex;flex-direction:column;gap:12px;">
   <label style="display:block;">
-    <span style={labelStyle}>Project</span>
+    <span style="display:flex;align-items:center;font-size:14px;color:var(--text-muted);margin-bottom:4px;font-family:'DM Sans',sans-serif;">Project<SettingsTooltip text="Default Todoist project for task creation from meetings." /></span>
     <input type="text" value={$settings.todoistProject} onblur={(e) => saveSetting("todoistProject", e.currentTarget.value)} style={inputStyle} placeholder="Project name for meeting tasks" />
   </label>
   <label style="display:block;">

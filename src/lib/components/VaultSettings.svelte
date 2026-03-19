@@ -2,6 +2,7 @@
   import { settings, saveSetting } from "../stores/settings";
   import { resetMeetings } from "../stores/meetings";
   import { open } from "@tauri-apps/plugin-dialog";
+  import SettingsTooltip from "./SettingsTooltip.svelte";
 
   async function browseVaultPath() {
     const selected = await open({ directory: true, multiple: false });
@@ -17,7 +18,7 @@
 
 <div style="display:flex;flex-direction:column;gap:12px;">
   <label style="display:block;">
-    <span style={labelStyle}>Vault Path</span>
+    <span style="display:flex;align-items:center;font-size:14px;color:var(--text-muted);margin-bottom:4px;font-family:'DM Sans',sans-serif;">Vault Path<SettingsTooltip text="Path to your Obsidian vault where meeting notes are created." /></span>
     <div style="display:flex;gap:8px;">
       <input
         type="text"
