@@ -95,6 +95,7 @@ pub fn run() {
             calendar::fetch_calendar_events,
             calendar::get_upcoming_meetings,
             calendar::sync_calendar,
+            calendar::get_calendar_last_synced,
             calendar::get_calendar_matches,
             briefing::generate_briefing,
             briefing::invalidate_briefing_cache,
