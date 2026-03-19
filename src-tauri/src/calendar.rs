@@ -20,6 +20,11 @@ pub struct CalendarEvent {
     pub end: String,    // ISO 8601
     pub participants: Vec<CalendarParticipant>,
     pub location: Option<String>,
+    #[serde(default)]
+    pub auto_record: bool,
+    pub recurring_series_id: Option<String>,
+    pub meeting_url: Option<String>,
+    pub detected_platform: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -60,6 +65,65 @@ struct ZohoDateAndTime {
 struct ZohoAttendee {
     name: Option<String>,
     email: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Meeting URL detection
+// ---------------------------------------------------------------------------
+
+/// Known meeting URL patterns and their platform names.
+const MEETING_URL_PATTERNS: &[(&str, &str)] = &[
+    ("zoom.us/j/", "zoom"),
+    ("meet.google.com/", "google_meet"),
+    ("teams.microsoft.com/", "teams"),
+    ("meeting.tranzpay.io/", "zoho_meet"),
+    ("meeting.zoho.com/meeting/", "zoho_meet"),
+    ("meeting.zoho.eu/meeting/", "zoho_meet"),
+    ("meeting.zoho.in/meeting/", "zoho_meet"),
+    ("meeting.zoho.com.au/meeting/", "zoho_meet"),
+    ("meeting.zoho.jp/meeting/", "zoho_meet"),
+];
+
+/// Scan text for a known meeting URL. Returns (url, platform) if found.
+fn parse_meeting_url(text: &str) -> Option<(String, String)> {
+    for (pattern, platform) in MEETING_URL_PATTERNS {
+        if let Some(start_idx) = text.find(pattern) {
+            // Walk backwards to find the start of the URL (https:// or http://)
+            let before = &text[..start_idx];
+            let url_start = before.rfind("https://")
+                .or_else(|| before.rfind("http://"))
+                .unwrap_or(start_idx);
+            // Walk forward to find end of URL (whitespace or common delimiters)
+            let url_region = &text[url_start..];
+            let url_end = url_region
+                .find(|c: char| c.is_whitespace() || c == '"' || c == '\'' || c == '>' || c == ')' || c == ']')
+                .unwrap_or(url_region.len());
+            let url = &url_region[..url_end];
+            return Some((url.to_string(), platform.to_string()));
+        }
+    }
+    None
+}
+
+/// Enrich a CalendarEvent with meeting URL and detected platform by scanning
+/// its description and location fields.
+fn enrich_meeting_url(event: &mut CalendarEvent) {
+    // Check description first, then location
+    let text_to_scan: Vec<&str> = [
+        event.description.as_deref(),
+        event.location.as_deref(),
+    ]
+    .iter()
+    .filter_map(|s| *s)
+    .collect();
+
+    for text in text_to_scan {
+        if let Some((url, platform)) = parse_meeting_url(text) {
+            event.meeting_url = Some(url);
+            event.detected_platform = Some(platform);
+            return;
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -136,7 +200,7 @@ fn parse_zoho_events(response: ZohoEventsResponse) -> Vec<CalendarEvent> {
         .into_iter()
         .filter_map(|e| {
             let dt = e.dateandtime?;
-            Some(CalendarEvent {
+            let mut event = CalendarEvent {
                 id: e.uid.unwrap_or_default(),
                 title: e.title.unwrap_or_else(|| "Untitled".to_string()),
                 description: e.description,
@@ -152,7 +216,13 @@ fn parse_zoho_events(response: ZohoEventsResponse) -> Vec<CalendarEvent> {
                     })
                     .collect(),
                 location: e.location,
-            })
+                auto_record: false,
+                recurring_series_id: None,
+                meeting_url: None,
+                detected_platform: None,
+            };
+            enrich_meeting_url(&mut event);
+            Some(event)
         })
         .collect()
 }
@@ -436,4 +506,92 @@ pub async fn get_calendar_matches(
     }
 
     Ok(matches)
+}
+
+// ---------------------------------------------------------------------------
+// Auto-record IPC commands
+// ---------------------------------------------------------------------------
+
+/// Set the auto_record flag on a single calendar event.
+#[tauri::command]
+pub async fn set_auto_record(
+    app: tauri::AppHandle,
+    event_id: String,
+    auto_record: bool,
+) -> Result<(), String> {
+    let cp = cache_path(&app);
+    let mut cache = read_cache(&cp)?;
+
+    let found = cache.events.iter_mut().find(|e| e.id == event_id);
+    match found {
+        Some(event) => {
+            event.auto_record = auto_record;
+            write_cache(&cp, &cache)?;
+            Ok(())
+        }
+        None => Err(format!("Event not found: {}", event_id)),
+    }
+}
+
+/// Set the auto_record flag on all events sharing the same recurring_series_id.
+#[tauri::command]
+pub async fn set_series_auto_record(
+    app: tauri::AppHandle,
+    series_id: String,
+    auto_record: bool,
+) -> Result<(), String> {
+    let cp = cache_path(&app);
+    let mut cache = read_cache(&cp)?;
+
+    let mut count = 0;
+    for event in cache.events.iter_mut() {
+        if event.recurring_series_id.as_deref() == Some(&series_id) {
+            event.auto_record = auto_record;
+            count += 1;
+        }
+    }
+
+    if count == 0 {
+        return Err(format!("No events found for series: {}", series_id));
+    }
+
+    write_cache(&cp, &cache)?;
+    Ok(())
+}
+
+/// Return calendar events that have auto_record enabled and start within
+/// `hours_ahead` hours from now (or have already started but not yet ended).
+#[tauri::command]
+pub async fn get_auto_record_events(
+    app: tauri::AppHandle,
+    hours_ahead: f64,
+) -> Result<Vec<CalendarEvent>, String> {
+    let cp = cache_path(&app);
+    if !cp.exists() {
+        return Ok(Vec::new());
+    }
+    let cache = read_cache(&cp)?;
+
+    let now = Utc::now();
+    let horizon = now + Duration::seconds((hours_ahead * 3600.0) as i64);
+
+    let events: Vec<CalendarEvent> = cache
+        .events
+        .into_iter()
+        .filter(|event| {
+            if !event.auto_record {
+                return false;
+            }
+            // Event must start before the horizon and end after now
+            let start_ok = DateTime::parse_from_rfc3339(&event.start)
+                .map(|dt| dt.with_timezone(&Utc) <= horizon)
+                .unwrap_or(false);
+            let end_ok = DateTime::parse_from_rfc3339(&event.end)
+                .map(|dt| dt.with_timezone(&Utc) >= now)
+                .unwrap_or(false);
+            start_ok && end_ok
+        })
+        .collect();
+
+    Ok(events)
 }

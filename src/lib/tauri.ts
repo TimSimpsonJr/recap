@@ -147,6 +147,7 @@ export interface GraphData {
 // Recorder state — discriminated union matching Rust RecorderState
 export type RecorderState =
   | "idle"
+  | { armed: { event_title: string; expected_platform: string | null } }
   | { detected: { process_name: string; pid: number } }
   | "recording"
   | "processing"
@@ -262,6 +263,10 @@ export interface CalendarEvent {
   end: string;
   participants: CalendarParticipant[];
   location: string | null;
+  auto_record: boolean;
+  recurring_series_id: string | null;
+  meeting_url: string | null;
+  detected_platform: string | null;
 }
 
 export interface CalendarCache {
@@ -295,6 +300,19 @@ export async function getCalendarMatches(
   recordingsDir: string
 ): Promise<Record<string, string>> {
   return invoke("get_calendar_matches", { recordingsDir });
+}
+
+// Auto-record IPC
+export async function setAutoRecord(eventId: string, autoRecord: boolean): Promise<void> {
+  return invoke("set_auto_record", { eventId, autoRecord });
+}
+
+export async function setSeriesAutoRecord(seriesId: string, autoRecord: boolean): Promise<void> {
+  return invoke("set_series_auto_record", { seriesId, autoRecord });
+}
+
+export async function getAutoRecordEvents(hoursAhead: number): Promise<CalendarEvent[]> {
+  return invoke("get_auto_record_events", { hoursAhead });
 }
 
 // Briefing types (matches Rust Briefing, BriefingActionItem)
