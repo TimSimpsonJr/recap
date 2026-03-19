@@ -10,27 +10,9 @@ Multi-platform recording (Teams, Google Meet, Zoho Meet), browser extension for 
 
 First-run onboarding wizard (4-step full-screen flow for required config), inline dashboard checklist for optional integrations (OAuth providers, browser extension), Rust-side config.yaml generation from settings store, secret management via Stronghold + env vars, Claude model/CLI settings, and actionable pipeline error messages are all implemented.
 
-## Phase 8: Polish
+## ~~Phase 8: Polish~~ (Complete — except Light Mode)
 
-### Responsive Layout
-
-**Deferred from:** Phase 5a
-
-At narrow widths, the detail view player stacks above the tabbed content (no side-by-side). At wider widths, player could sit alongside transcript. Currently fixed layout only.
-
-### Bulk Operations
-
-**Deferred from:** Phase 5b
-
-- Delete multiple meetings at once (checkbox select + bulk delete)
-- Reprocess all failed meetings in one action
-- Bulk speaker label correction (apply corrections across multiple meetings)
-
-### Todoist Completion Sync
-
-**Deferred from:** Phase 2 (core pipeline design)
-
-Sync task completion status back from Todoist to vault notes. Currently one-way only (vault → Todoist).
+Responsive layout, bulk operations (delete, reprocess, speaker rename), Todoist bidirectional sync with project grouping, and comprehensive animation/UI polish are all implemented. Light mode remains deferred.
 
 ### Light Mode
 
