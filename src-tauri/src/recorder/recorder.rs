@@ -4,7 +4,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use serde_json::json;
-use tauri::{AppHandle, Emitter, Runtime};
+use tauri::{AppHandle, Emitter, Manager, Runtime};
 use tauri_plugin_notification::NotificationExt;
 use tokio::sync::{mpsc, Mutex};
 
@@ -12,9 +12,10 @@ use super::capture::{AudioCapture, CaptureError, VideoCapture};
 use super::monitor::{self, MonitorEvent};
 use super::share_detect;
 use super::types::{
-    CaptureSource, DetectionAction, MeetingMetadata, MeetingPlatform, PipelineStatus,
+    CaptureSource, DetectionAction, MeetingMetadata, MeetingPlatform, Participant, PipelineStatus,
     RecorderState, RecordingConfig, RecordingSession, TimeoutAction,
 };
+use crate::calendar::{self, CalendarEvent};
 
 /// Shared recorder handle stored in Tauri managed state.
 pub struct RecorderHandle<R: Runtime> {
@@ -618,6 +619,204 @@ fn find_browser_audio_pid() -> Option<u32> {
     }
 }
 
+// ── Enrichment routing ───────────────────────────────────────────────────────
+
+/// Display name for a meeting platform.
+fn platform_display_name(p: &MeetingPlatform) -> &str {
+    match p {
+        MeetingPlatform::Zoom => "Zoom",
+        MeetingPlatform::Teams => "Teams",
+        MeetingPlatform::GoogleMeet => "Google Meet",
+        MeetingPlatform::ZohoMeet => "Zoho Meet",
+        MeetingPlatform::Unknown => "Unknown",
+    }
+}
+
+/// Read provider credentials from the settings store JSON file.
+fn read_provider_credentials(
+    app: &tauri::AppHandle,
+    provider: &str,
+) -> Option<(String, String, String, String)> {
+    let store_path = app
+        .path()
+        .app_data_dir()
+        .ok()?
+        .join("settings.json");
+
+    let content = std::fs::read_to_string(&store_path).ok()?;
+    let store: serde_json::Value = serde_json::from_str(&content).ok()?;
+
+    let access_token = store.get(&format!("{}_access_token", provider))?.as_str()?.to_string();
+    let refresh_token = store.get(&format!("{}_refresh_token", provider))?.as_str()?.to_string();
+    let client_id = store.get(&format!("{}_client_id", provider))?.as_str()?.to_string();
+    let client_secret = store.get(&format!("{}_client_secret", provider))?.as_str()?.to_string();
+
+    Some((access_token, refresh_token, client_id, client_secret))
+}
+
+/// Try Zoom API enrichment. Returns None on any error.
+async fn try_zoom_enrichment(
+    app: &tauri::AppHandle,
+    ended_at: chrono::DateTime<chrono::Utc>,
+) -> Option<MeetingMetadata> {
+    let (access_token, refresh_token, client_id, client_secret) =
+        read_provider_credentials(app, "zoom")?;
+
+    let mut client = super::zoom::ZoomClient::new(
+        access_token, refresh_token, client_id, client_secret,
+    );
+
+    match client.fetch_recent_meeting(ended_at).await {
+        Ok(metadata) => metadata,
+        Err(e) => {
+            log::warn!("Zoom enrichment failed: {}", e);
+            None
+        }
+    }
+}
+
+/// Try Google Meet API enrichment. Returns None on any error.
+async fn try_google_meet_enrichment(
+    app: &tauri::AppHandle,
+    ended_at: chrono::DateTime<chrono::Utc>,
+) -> Option<MeetingMetadata> {
+    let (access_token, refresh_token, client_id, client_secret) =
+        read_provider_credentials(app, "google")?;
+
+    let mut client = super::google_meet::GoogleMeetClient::new(
+        access_token, refresh_token, client_id, client_secret,
+    );
+
+    match client.fetch_recent_meeting(ended_at).await {
+        Ok(metadata) => metadata,
+        Err(e) => {
+            log::warn!("Google Meet enrichment failed: {}", e);
+            None
+        }
+    }
+}
+
+/// Try Zoho Meet API enrichment. Returns None on any error.
+async fn try_zoho_meet_enrichment(
+    app: &tauri::AppHandle,
+    ended_at: chrono::DateTime<chrono::Utc>,
+) -> Option<MeetingMetadata> {
+    let (access_token, refresh_token, client_id, client_secret) =
+        read_provider_credentials(app, "zoho")?;
+
+    // Read the Zoho region from settings, defaulting to "com".
+    let region = app
+        .path()
+        .app_data_dir()
+        .ok()
+        .and_then(|p| std::fs::read_to_string(p.join("settings.json")).ok())
+        .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
+        .and_then(|s| s.get("zoho_region")?.as_str().map(String::from))
+        .unwrap_or_else(|| "com".to_string());
+
+    let mut client = super::zoho_meet::ZohoMeetClient::new(
+        access_token, refresh_token, client_id, client_secret, region,
+    );
+
+    match client.fetch_recent_meeting(ended_at).await {
+        Ok(metadata) => metadata,
+        Err(e) => {
+            log::warn!("Zoho Meet enrichment failed: {}", e);
+            None
+        }
+    }
+}
+
+/// Find a calendar event overlapping the recording end time.
+async fn find_calendar_match(
+    app: &tauri::AppHandle,
+    ended_at: chrono::DateTime<chrono::Utc>,
+) -> Option<CalendarEvent> {
+    let cache_path = app
+        .path()
+        .app_data_dir()
+        .ok()?
+        .join("calendar_cache.json");
+
+    let content = std::fs::read_to_string(&cache_path).ok()?;
+    let cache: calendar::CalendarCache = serde_json::from_str(&content).ok()?;
+
+    let ended_str = ended_at.to_rfc3339();
+
+    // Find an event that overlaps with the recording end time (within 1 hour window).
+    cache.events.into_iter().find(|event| {
+        calendar::match_event_to_recording(event, &ended_str, Some(3600.0))
+    })
+}
+
+/// Route metadata enrichment based on meeting platform, with cascade fallback.
+///
+/// Priority:
+/// 1. Platform-specific API (Zoom, Google Meet, Zoho Meet, Teams)
+/// 2. Calendar event matching
+/// 3. Minimal metadata (screenshot extraction happens in the Python pipeline)
+async fn enrich_metadata(
+    app: &tauri::AppHandle,
+    platform: &MeetingPlatform,
+    ended_at: chrono::DateTime<chrono::Utc>,
+    pid: Option<u32>,
+) -> MeetingMetadata {
+    // 1. Try platform-specific API
+    let api_result = match platform {
+        MeetingPlatform::Zoom => try_zoom_enrichment(app, ended_at).await,
+        MeetingPlatform::GoogleMeet => try_google_meet_enrichment(app, ended_at).await,
+        MeetingPlatform::ZohoMeet => try_zoho_meet_enrichment(app, ended_at).await,
+        MeetingPlatform::Teams => {
+            // Teams personal: calendar + window title
+            let calendar_match = find_calendar_match(app, ended_at).await;
+            Some(super::teams::build_teams_metadata(
+                calendar_match.as_ref(),
+                pid,
+                &chrono::Utc::now().to_rfc3339(),
+                &ended_at.to_rfc3339(),
+            ))
+        }
+        MeetingPlatform::Unknown => None,
+    };
+
+    if let Some(metadata) = api_result {
+        return metadata;
+    }
+
+    // 2. Fallback: calendar event matching
+    if let Some(event) = find_calendar_match(app, ended_at).await {
+        return MeetingMetadata {
+            title: event.title,
+            platform: platform.clone(),
+            participants: event
+                .participants
+                .iter()
+                .map(|p| Participant {
+                    name: p.name.clone(),
+                    email: p.email.clone(),
+                    join_time: None,
+                    leave_time: None,
+                })
+                .collect(),
+            user_name: String::new(),
+            user_email: String::new(),
+            start_time: event.start,
+            end_time: event.end,
+        };
+    }
+
+    // 3. Minimal metadata (screenshot extraction happens in pipeline)
+    MeetingMetadata {
+        title: format!("{} Meeting", platform_display_name(platform)),
+        platform: platform.clone(),
+        participants: vec![],
+        user_name: String::new(),
+        user_email: String::new(),
+        start_time: String::new(),
+        end_time: ended_at.to_rfc3339(),
+    }
+}
+
 // ── IPC Commands ─────────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -664,12 +863,16 @@ pub async fn stop_recording(
             if let Some(session) = inner.stop_capture()? {
                 inner.set_state(RecorderState::Processing);
                 let working_dir = session.working_dir.clone();
+                let platform = session.platform.clone();
+                let session_pid = session.pid;
 
                 // Merge audio/video into final MP4
                 let merged = merge_recording(&session)?;
 
-                // Write meeting metadata JSON
-                let metadata_path = write_meeting_json(&working_dir, None)?;
+                // Enrich metadata via platform API / calendar / fallback
+                let ended_at = chrono::Utc::now();
+                let enriched = enrich_metadata(&app, &platform, ended_at, Some(session_pid)).await;
+                let metadata_path = write_meeting_json(&working_dir, Some(enriched))?;
 
                 // Write initial pipeline status
                 let _ = write_initial_status(&working_dir);
