@@ -781,9 +781,12 @@ use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetWindowThreadProcessId, IsWindowVisible, GetWindowRect,
 };
 use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT, TRUE};
+use windows::Win32::Graphics::Gdi::{EnumDisplayMonitors, HDC, HMONITOR};
 use windows::Graphics::Capture::GraphicsCaptureItem;
 use windows::Graphics::DirectX::DirectXPixelFormat;
 use windows::Graphics::DirectX::Direct3D11::IDirect3DDevice;
+
+use super::types::CaptureSource;
 
 /// Wrapper around HWND raw pointer so it can be sent across threads.
 /// SAFETY: HWND is just a handle value — safe to send between threads.
@@ -794,6 +797,9 @@ unsafe impl Send for SendableHwnd {}
 pub struct VideoCapture {
     stop: Arc<AtomicBool>,
     handle: Option<JoinHandle<Result<(), CaptureError>>>,
+    source_tx: Option<std::sync::mpsc::Sender<CaptureSource>>,
+    /// The currently active capture source.
+    pub current_source: CaptureSource,
 }
 
 impl VideoCapture {
@@ -812,20 +818,27 @@ impl VideoCapture {
         let stop = Arc::new(AtomicBool::new(false));
         let stop_clone = stop.clone();
 
+        let (source_tx, source_rx) = std::sync::mpsc::channel::<CaptureSource>();
+
         let handle = thread::spawn(move || -> Result<(), CaptureError> {
             let hwnd = HWND(sendable.0 as *mut _);
-            capture_window_video(hwnd, output_path, &stop_clone)
+            capture_window_video(hwnd, output_path, &stop_clone, source_rx)
         });
 
         Ok(VideoCapture {
             stop,
             handle: Some(handle),
+            source_tx: Some(source_tx),
+            current_source: CaptureSource::Window { pid },
         })
     }
 
     /// Stop capture, close ffmpeg stdin, wait for encoding to finish.
     pub fn stop(&mut self) -> Result<(), CaptureError> {
         self.stop.store(true, Ordering::Relaxed);
+
+        // Drop the source channel so the thread doesn't block on it.
+        self.source_tx.take();
 
         if let Some(handle) = self.handle.take() {
             match handle.join() {
@@ -836,6 +849,22 @@ impl VideoCapture {
             }
         } else {
             Ok(())
+        }
+    }
+
+    /// Switch the capture source while recording continues.
+    ///
+    /// Sends a message to the capture thread to tear down the current frame pool
+    /// and create a new one for the given source. The ffmpeg pipe stays open so
+    /// all frames are written to the same output file.
+    pub fn switch_source(&mut self, new_source: CaptureSource) -> Result<(), CaptureError> {
+        if let Some(ref tx) = self.source_tx {
+            tx.send(new_source.clone())
+                .map_err(|_| CaptureError::VideoError("Capture thread is no longer running".to_string()))?;
+            self.current_source = new_source;
+            Ok(())
+        } else {
+            Err(CaptureError::VideoError("No active capture to switch".to_string()))
         }
     }
 
@@ -932,16 +961,19 @@ fn build_ffmpeg_command(width: u32, height: u32, output_path: &PathBuf) -> Resul
 }
 
 /// Capture video from a window using Graphics Capture API, piping frames to ffmpeg.
+/// Listens on `source_rx` for source-switch commands to tear down and recreate the
+/// frame pool mid-recording without restarting ffmpeg.
 fn capture_window_video(
     hwnd: HWND,
     output_path: PathBuf,
     stop: &AtomicBool,
+    source_rx: std::sync::mpsc::Receiver<CaptureSource>,
 ) -> Result<(), CaptureError> {
     unsafe {
         let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
     }
 
-    let result = capture_window_video_inner(hwnd, output_path, stop);
+    let result = capture_window_video_inner(hwnd, output_path, stop, source_rx);
 
     unsafe {
         CoUninitialize();
@@ -950,61 +982,101 @@ fn capture_window_video(
     result
 }
 
+/// Resolved capture state: frame pool + session + staging resources for the current source.
+struct ActiveCapture {
+    frame_pool: windows::Graphics::Capture::Direct3D11CaptureFramePool,
+    session: windows::Graphics::Capture::GraphicsCaptureSession,
+    staging: StagingResources,
+    width: u32,
+    height: u32,
+}
+
+impl ActiveCapture {
+    /// Create a new capture session for the given `GraphicsCaptureItem`.
+    fn new(item: &GraphicsCaptureItem, d3d_device: &IDirect3DDevice, target_width: u32, target_height: u32) -> Result<Self, CaptureError> {
+        let frame_pool = windows::Graphics::Capture::Direct3D11CaptureFramePool::CreateFreeThreaded(
+            d3d_device,
+            DirectXPixelFormat::B8G8R8A8UIntNormalized,
+            1,
+            item.Size().map_err(|e| CaptureError::VideoError(format!("Item size: {}", e)))?,
+        )
+        .map_err(|e| CaptureError::VideoError(format!("CreateFramePool: {}", e)))?;
+
+        let session = frame_pool
+            .CreateCaptureSession(item)
+            .map_err(|e| CaptureError::VideoError(format!("CreateCaptureSession: {}", e)))?;
+
+        let _ = session.SetIsCursorCaptureEnabled(false);
+
+        session
+            .StartCapture()
+            .map_err(|e| CaptureError::VideoError(format!("StartCapture: {}", e)))?;
+
+        let staging = create_staging_resources(target_width, target_height)?;
+
+        Ok(ActiveCapture {
+            frame_pool,
+            session,
+            staging,
+            width: target_width,
+            height: target_height,
+        })
+    }
+
+    /// Cleanly close the frame pool and session.
+    fn close(self) {
+        let _ = self.session.Close();
+        let _ = self.frame_pool.Close();
+    }
+}
+
 fn capture_window_video_inner(
     hwnd: HWND,
     output_path: PathBuf,
     stop: &AtomicBool,
+    source_rx: std::sync::mpsc::Receiver<CaptureSource>,
 ) -> Result<(), CaptureError> {
-    // Get window dimensions for frame size.
-    let (width, height) = unsafe {
-        let mut rect = RECT::default();
-        GetWindowRect(hwnd, &mut rect)
-            .map_err(|e| CaptureError::VideoError(format!("GetWindowRect: {}", e)))?;
-        (
-            (rect.right - rect.left).max(1) as u32,
-            (rect.bottom - rect.top).max(1) as u32,
-        )
-    };
+    // Fixed output dimensions — all frames are scaled to 1920x1080.
+    let output_width: u32 = 1920;
+    let output_height: u32 = 1080;
 
-    // Start ffmpeg encoder subprocess.
-    let mut ffmpeg = build_ffmpeg_command(width, height, &output_path)?;
+    // Start ffmpeg encoder subprocess at fixed output size.
+    let mut ffmpeg = build_ffmpeg_command(output_width, output_height, &output_path)?;
     let mut stdin = ffmpeg.stdin.take()
         .ok_or_else(|| CaptureError::VideoError("Failed to open ffmpeg stdin".to_string()))?;
 
-    // Create the Graphics Capture item from the window handle.
-    let item = create_capture_item_for_window(hwnd)?;
-
-    // Create D3D11 device for frame pool.
+    // Create D3D11 device for frame pool (shared across source switches).
     let d3d_device = create_d3d_device()?;
 
-    // Create frame pool and session.
-    let frame_pool = windows::Graphics::Capture::Direct3D11CaptureFramePool::CreateFreeThreaded(
-        &d3d_device,
-        DirectXPixelFormat::B8G8R8A8UIntNormalized,
-        1,
-        item.Size().map_err(|e| CaptureError::VideoError(format!("Item size: {}", e)))?,
-    )
-    .map_err(|e| CaptureError::VideoError(format!("CreateFramePool: {}", e)))?;
-
-    let session = frame_pool
-        .CreateCaptureSession(&item)
-        .map_err(|e| CaptureError::VideoError(format!("CreateCaptureSession: {}", e)))?;
-
-    let _ = session.SetIsCursorCaptureEnabled(false);
-
-    session
-        .StartCapture()
-        .map_err(|e| CaptureError::VideoError(format!("StartCapture: {}", e)))?;
-
-    // Pre-create staging resources for efficient frame readback
-    let staging = create_staging_resources(width, height)?;
+    // Create initial capture from the window handle.
+    let item = create_capture_item_for_window(hwnd)?;
+    let mut active = ActiveCapture::new(&item, &d3d_device, output_width, output_height)?;
 
     let frame_interval = std::time::Duration::from_millis(33); // ~30fps
 
     while !stop.load(Ordering::Relaxed) {
-        if let Ok(frame) = frame_pool.TryGetNextFrame() {
+        // Check for source-switch commands (non-blocking).
+        if let Ok(new_source) = source_rx.try_recv() {
+            log::info!("Switching capture source to {:?}", new_source);
+            active.close();
+
+            let new_item = match new_source {
+                CaptureSource::Window { pid } => {
+                    let new_hwnd = find_window_for_pid(pid)
+                        .ok_or_else(|| CaptureError::VideoError(format!("No window found for PID {}", pid)))?;
+                    create_capture_item_for_window(new_hwnd)?
+                }
+                CaptureSource::Display { monitor_index } => {
+                    create_capture_item_for_monitor(monitor_index)?
+                }
+            };
+
+            active = ActiveCapture::new(&new_item, &d3d_device, output_width, output_height)?;
+        }
+
+        if let Ok(frame) = active.frame_pool.TryGetNextFrame() {
             if let Ok(surface) = frame.Surface() {
-                if let Ok(data) = read_surface_pixels_staged(&surface, &staging, width, height) {
+                if let Ok(data) = read_surface_pixels_staged(&surface, &active.staging, active.width, active.height) {
                     if stdin.write_all(&data).is_err() {
                         log::warn!("ffmpeg stdin write failed — encoder may have exited");
                         break;
@@ -1019,8 +1091,7 @@ fn capture_window_video_inner(
     drop(stdin);
     let _ = ffmpeg.wait();
 
-    let _ = session.Close();
-    let _ = frame_pool.Close();
+    active.close();
 
     Ok(())
 }
@@ -1038,6 +1109,67 @@ fn create_capture_item_for_window(hwnd: HWND) -> Result<GraphicsCaptureItem, Cap
             .CreateForWindow(hwnd)
             .map_err(|e| CaptureError::VideoError(format!("CreateForWindow: {}", e)))
     }
+}
+
+/// Create a GraphicsCaptureItem from a monitor index using HMONITOR interop.
+fn create_capture_item_for_monitor(monitor_index: u32) -> Result<GraphicsCaptureItem, CaptureError> {
+    use windows::Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemInterop;
+
+    let hmonitor = get_monitor_by_index(monitor_index)
+        .ok_or_else(|| CaptureError::VideoError(format!("No monitor found at index {}", monitor_index)))?;
+
+    unsafe {
+        let interop: IGraphicsCaptureItemInterop =
+            windows::core::factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()
+                .map_err(|e| CaptureError::VideoError(format!("CaptureItem interop: {}", e)))?;
+
+        interop
+            .CreateForMonitor(hmonitor)
+            .map_err(|e| CaptureError::VideoError(format!("CreateForMonitor: {}", e)))
+    }
+}
+
+/// Get the HMONITOR handle for a monitor by its zero-based index.
+fn get_monitor_by_index(target_index: u32) -> Option<HMONITOR> {
+    struct EnumState {
+        target_index: u32,
+        current_index: u32,
+        result: Option<HMONITOR>,
+    }
+
+    let mut state = EnumState {
+        target_index,
+        current_index: 0,
+        result: None,
+    };
+
+    unsafe extern "system" fn enum_callback(
+        hmonitor: HMONITOR,
+        _hdc: HDC,
+        _rect: *mut RECT,
+        lparam: LPARAM,
+    ) -> BOOL {
+        let state = &mut *(lparam.0 as *mut EnumState);
+
+        if state.current_index == state.target_index {
+            state.result = Some(hmonitor);
+            return BOOL(0); // Stop enumerating.
+        }
+
+        state.current_index += 1;
+        TRUE
+    }
+
+    unsafe {
+        let _ = EnumDisplayMonitors(
+            HDC::default(),
+            None,
+            Some(enum_callback),
+            LPARAM(&mut state as *mut EnumState as isize),
+        );
+    }
+
+    state.result
 }
 
 /// Create a Direct3D 11 device for the frame pool.

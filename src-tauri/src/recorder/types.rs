@@ -49,6 +49,14 @@ impl MeetingPlatform {
     }
 }
 
+/// Source for video capture — either a specific window or a display monitor.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CaptureSource {
+    Window { pid: u32 },
+    Display { monitor_index: u32 },
+}
+
 /// What to do when a meeting is detected.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -76,6 +84,8 @@ pub struct RecordingConfig {
     pub detection_action: DetectionAction,
     pub timeout_action: TimeoutAction,
     pub timeout_seconds: u64,
+    /// Monitor index for screen share capture (0 = primary).
+    pub screen_share_monitor: u32,
 }
 
 impl Default for RecordingConfig {
@@ -85,6 +95,7 @@ impl Default for RecordingConfig {
             detection_action: DetectionAction::Ask,
             timeout_action: TimeoutAction::Record,
             timeout_seconds: 60,
+            screen_share_monitor: 0,
         }
     }
 }
