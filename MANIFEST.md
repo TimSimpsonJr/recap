@@ -4,7 +4,7 @@
 
 - **Desktop app:** Tauri v2 (Rust backend) + Svelte 5 + Tailwind CSS 4
 - **ML pipeline:** Python (WhisperX, Pyannote 3.1, Claude via CLI)
-- **Integrations:** Zoom, Google Meet, Teams, Zoho Meet (OAuth); Todoist (task sync)
+- **Integrations:** Zoom, Google Meet, Teams, Zoho Meet (OAuth via localhost:8399); Todoist (task sync)
 - **Capture:** Windows WASAPI + Graphics Capture API + ffmpeg H.265 NVENC
 - **Browser extension:** Chrome/Edge MV3 for meeting URL detection + screen share signaling
 
@@ -20,9 +20,10 @@
 │       ├── assets.ts / markdown.ts        # Asset URLs + Obsidian-flavored markdown → HTML
 │       ├── dummy-data.ts                  # Dev-only mock data (VITE_DUMMY_DATA)
 │       ├── stores/                        # credentials, settings, meetings, recorder
-│       └── components/                    # 30+ Svelte components including:
+│       └── components/                    # 32 Svelte components including:
 │           ├── Onboarding.svelte          # 4-step first-run wizard (storage, vault, pipeline)
 │           ├── SetupChecklist.svelte      # Dashboard checklist for optional integrations
+│           ├── ProviderCard.svelte        # Provider OAuth modal with setup guides
 │           └── ClaudeSettings.svelte      # Claude model + CLI path settings
 ├── extension/                             # MV3 meeting detector (manifest, background, content, options)
 ├── recap/                                 # Python ML pipeline
@@ -38,7 +39,8 @@
 │   ├── meetings.rs                        # Filesystem scanning, list/detail/search/filter/graph
 │   ├── calendar.rs                        # Zoho Calendar API, cache, event-recording matching
 │   ├── briefing.rs                        # Claude CLI briefing generation with caching
-│   ├── oauth.rs / credentials.rs          # 5-provider OAuth + Stronghold credential store
+│   ├── oauth.rs                           # 5-provider OAuth with localhost:8399 redirect
+│   ├── credentials.rs                     # AES-256-GCM encrypted SecretStore (save/get/delete IPC)
 │   ├── config_gen.rs                      # Generates config.yaml from settings store + drive check
 │   ├── sidecar.rs / diagnostics.rs        # Pipeline invocation + NVENC/ffmpeg checks
 │   ├── display.rs / notifications.rs      # Monitor enumeration + pre-meeting notifications
@@ -51,7 +53,7 @@
 │       └── zoom.rs / google_meet.rs / zoho_meet.rs / teams.rs  # Per-platform metadata
 ├── prompts/                               # Claude prompt templates (analysis + briefing)
 ├── docs/plans/                            # Design specs + implementation plans per phase
-├── tests/                                 # Pytest: pipeline, transcribe, vault, errors
+├── tests/                                 # Pytest: pipeline, transcribe, vault, errors, and more
 │   └── test_errors.py                     # Tests for actionable error message mapping
 ├── scripts/build-sidecar.py               # Packages Python pipeline as Tauri sidecar
 ├── config.example.yaml                    # Pipeline config template
@@ -62,8 +64,11 @@
 ## Key Relationships
 
 - `App.svelte` routes to Dashboard, MeetingDetail, Calendar, GraphView, Settings; auto-syncs calendar on focus
-- `Onboarding.svelte` gates app behind `onboardingComplete` setting; saves to settings store + Stronghold
-- `SetupChecklist.svelte` derives completion from credentials store; opens same modals as Settings
+- `Onboarding.svelte` gates app behind `onboardingComplete` setting; saves to settings store + SecretStore
+- `SetupChecklist.svelte` derives completion from credentials store; opens `ProviderCard` modals
+- `ProviderCard.svelte` handles OAuth connect/disconnect + inline setup guides per provider
+- `credentials.rs` encrypts secrets with AES-256-GCM (machine-derived key via SHA-256); replaces Stronghold
+- `oauth.rs` redirects all providers to `localhost:8399`; tokens stored via `credentials.rs` IPC commands
 - `config_gen.rs` generates `config.yaml` from settings store before sidecar launch; secrets as env vars
 - `sidecar.rs` passes `HUGGINGFACE_TOKEN` and `TODOIST_API_TOKEN` as env vars to pipeline
 - `errors.py` maps pipeline exceptions to actionable messages referencing Settings sections
@@ -73,6 +78,5 @@
 - `pipeline.py` writes `status.json` per stage; `--from`/`--only` enable retry from any stage
 - Calendar `auto_record` flags arm `recorder.rs` via periodic 60s check in `lib.rs`
 - `MeetingTranscript` timestamp clicks seek `MeetingPlayer` (Vidstack) via shared time binding
-- `markdown.ts` renders `[[wikilinks]]` as participant filter links
 - **config.yaml:** auto-generated from settings store; secrets via env vars, not written to file
 - **status.json:** per-meeting pipeline progress; stages: merge→frames→transcribe→diarize→analyze→export
