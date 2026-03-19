@@ -10,6 +10,7 @@
   import type { ProviderName } from "./lib/stores/credentials";
   import { loadSettings, settings, saveSetting } from "./lib/stores/settings";
   import { exchangeOAuthCode, syncCalendar } from "./lib/tauri";
+  import Onboarding from "./lib/components/Onboarding.svelte";
 
   function setZoom(level: number) {
     const clamped = Math.round(Math.min(2.0, Math.max(0.5, level)) * 10) / 10;
@@ -148,6 +149,9 @@
       Loading...
     </div>
   {:else}
+    {#if !$settings.onboardingComplete}
+      <Onboarding />
+    {:else}
     <!-- Nav bar -->
     <nav
       class="flex items-center shrink-0"
@@ -225,5 +229,6 @@
         <Dashboard initialMeetingId={meetingId} initialFilterParticipant={filterParticipant} />
       {/if}
     </div>
+    {/if}
   {/if}
 </div>
