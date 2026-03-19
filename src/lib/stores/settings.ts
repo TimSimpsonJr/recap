@@ -24,6 +24,12 @@ export interface AppSettings {
   meetingLeadTimeMinutes: number;
   screenShareMonitor: number;
   autoRecordAllCalendar: boolean;
+  onboardingComplete: boolean;
+  userName: string;
+  claudeModel: string;
+  claudeCommand: string;
+  todoistProjectMap: Record<string, string>;
+  extensionInstalled: boolean;
 }
 
 const defaults: AppSettings = {
@@ -49,6 +55,12 @@ const defaults: AppSettings = {
   meetingLeadTimeMinutes: 10,
   screenShareMonitor: 0,
   autoRecordAllCalendar: false,
+  onboardingComplete: false,
+  userName: "",
+  claudeModel: "sonnet",
+  claudeCommand: "claude",
+  todoistProjectMap: {},
+  extensionInstalled: false,
 };
 
 export const settings = writable<AppSettings>({ ...defaults });
