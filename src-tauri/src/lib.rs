@@ -324,8 +324,16 @@ pub fn run() {
         .on_window_event(|window, event| {
             // Closing the window hides it instead of quitting
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                // Save window state before hiding (plugin won't save on hide)
-                let _ = window.app_handle().save_window_state(StateFlags::all());
+                // Save window state before hiding (plugin won't save on hide).
+                // Use the same flags as restore — exclude DECORATIONS so it
+                // doesn't interfere with our forced set_decorations(false).
+                let _ = window.app_handle().save_window_state(
+                    StateFlags::POSITION
+                        | StateFlags::SIZE
+                        | StateFlags::MAXIMIZED
+                        | StateFlags::VISIBLE
+                        | StateFlags::FULLSCREEN,
+                );
                 let _ = window.hide();
                 api.prevent_close();
             }

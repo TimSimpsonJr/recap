@@ -272,11 +272,57 @@ fn build_prompt(
     prompt
 }
 
-fn call_claude(prompt: &str) -> Result<Briefing, String> {
+/// Resolve the Claude CLI executable path.
+///
+/// 1. If the user configured a custom path in settings, use that.
+/// 2. Try bare "claude" (works if it's on the system PATH).
+/// 3. Look for Claude Code Desktop at %APPDATA%/Claude/claude-code/<version>/claude.exe
+fn resolve_claude_command(configured: &str) -> String {
+    // If user set an explicit absolute path, trust it
+    if configured != "claude" {
+        return configured.to_string();
+    }
+
+    // Check if bare "claude" is on PATH
+    if Command::new("claude")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .is_ok()
+    {
+        return "claude".to_string();
+    }
+
+    // Look for Claude Code Desktop installation
+    if let Some(appdata) = std::env::var_os("APPDATA") {
+        let claude_code_dir = PathBuf::from(appdata).join("Claude").join("claude-code");
+        if claude_code_dir.is_dir() {
+            // Find the latest version directory containing claude.exe
+            if let Ok(entries) = std::fs::read_dir(&claude_code_dir) {
+                let mut versions: Vec<PathBuf> = entries
+                    .flatten()
+                    .filter(|e| e.path().join("claude.exe").exists())
+                    .map(|e| e.path())
+                    .collect();
+                // Sort by name descending to pick latest version
+                versions.sort();
+                if let Some(latest) = versions.last() {
+                    return latest.join("claude.exe").display().to_string();
+                }
+            }
+        }
+    }
+
+    configured.to_string()
+}
+
+fn call_claude(prompt: &str, claude_command: &str) -> Result<Briefing, String> {
     use std::io::{Read, Write};
     use std::time::{Duration, Instant};
 
-    let mut child = Command::new("claude")
+    let resolved = resolve_claude_command(claude_command);
+    let mut child = Command::new(&resolved)
         .args(["--print", "--output-format", "json"])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -320,7 +366,19 @@ fn call_claude(prompt: &str) -> Result<Briefing, String> {
     }
 
     if !status.success() {
-        return Err(format!("Claude CLI returned error: {}", stderr_buf));
+        // Try to extract a human-readable message from JSON stdout
+        let detail = if !stdout_buf.trim().is_empty() {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(stdout_buf.trim()) {
+                v.get("result").and_then(|r| r.as_str()).unwrap_or(stdout_buf.trim()).to_string()
+            } else {
+                stdout_buf.trim().to_string()
+            }
+        } else if !stderr_buf.trim().is_empty() {
+            stderr_buf.trim().to_string()
+        } else {
+            format!("exit code {:?}", status.code())
+        };
+        return Err(detail);
     }
 
     let stdout = std::borrow::Cow::Borrowed(stdout_buf.as_str());
@@ -415,6 +473,16 @@ pub async fn generate_briefing(
         }
     };
 
+    // Read claudeCommand from settings store (default to "claude")
+    let claude_command = app
+        .path()
+        .app_data_dir()
+        .ok()
+        .and_then(|dir| std::fs::read_to_string(dir.join("settings.json")).ok())
+        .and_then(|content| serde_json::from_str::<serde_json::Value>(&content).ok())
+        .and_then(|v| v.get("claudeCommand")?.as_str().map(|s| s.to_string()))
+        .unwrap_or_else(|| "claude".to_string());
+
     // Build prompt and call Claude
     let prompt = build_prompt(
         &template,
@@ -425,7 +493,7 @@ pub async fn generate_briefing(
         event_description.as_deref(),
     );
 
-    let briefing = tokio::task::spawn_blocking(move || call_claude(&prompt))
+    let briefing = tokio::task::spawn_blocking(move || call_claude(&prompt, &claude_command))
         .await
         .map_err(|e| format!("Briefing generation task failed: {}", e))?
         .map_err(|e| format!("Briefing generation failed: {}", e))?;

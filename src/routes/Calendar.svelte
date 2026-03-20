@@ -172,32 +172,22 @@
       zohoConnected = creds.zoho.status === "connected";
     });
 
-    if (!zohoConnected) {
-      loading = false;
-      return;
-    }
-
     try {
-      // Read cached sync timestamp to decide whether to sync or just load
+      // Always load cached events first so UI populates immediately
       lastSynced = await getCalendarLastSynced();
-
-      if (lastSynced) {
-        const diff = Date.now() - new Date(lastSynced).getTime();
-        if (diff > 15 * 60 * 1000) {
-          // Stale cache — sync (which loads events after syncing)
-          await doSync();
-        } else {
-          // Fresh cache — just load events from cache
-          await loadEvents();
-        }
-      } else {
-        // No cache — sync now (which loads events after syncing)
-        await doSync();
-      }
+      await loadEvents();
     } catch (err) {
-      error = String(err);
+      console.warn("Failed to load cached events:", err);
     } finally {
       loading = false;
+    }
+
+    // Then sync in the background if connected and cache is stale
+    if (zohoConnected) {
+      const needsSync = !lastSynced || (Date.now() - new Date(lastSynced).getTime() > 15 * 60 * 1000);
+      if (needsSync) {
+        doSync();
+      }
     }
 
     return () => unsub();
