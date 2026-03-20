@@ -35,6 +35,8 @@
   import SetupChecklist from "../lib/components/SetupChecklist.svelte";
   import BulkActionBar from "../lib/components/BulkActionBar.svelte";
   import BulkSpeakerModal from "../lib/components/BulkSpeakerModal.svelte";
+  import { fly } from "svelte/transition";
+  import { reducedMotion, motionParams } from "../lib/reduced-motion";
 
   interface Props {
     initialMeetingId?: string | null;
@@ -357,15 +359,23 @@
         {/if}
       </div>
 
-      <!-- Detail panel -->
-      {#if selectedMeetingId && !$selectMode}
-        <div class="detail-panel-wrapper">
-          {#key selectedMeetingId}
-            <DetailPanel
-              meetingId={selectedMeetingId}
-              onClose={handleCloseDetail}
-            />
-          {/key}
+      <!-- Detail panel — always present, content slides in -->
+      {#if !$selectMode}
+        <div class="detail-panel-wrapper" class:has-content={!!selectedMeetingId}>
+          {#if selectedMeetingId}
+            {#key selectedMeetingId}
+              <div in:fly={motionParams({ x: -40, duration: 200 }, $reducedMotion)}>
+                <DetailPanel
+                  meetingId={selectedMeetingId}
+                  onClose={handleCloseDetail}
+                />
+              </div>
+            {/key}
+          {:else}
+            <div class="empty-detail">
+              <span style="color: var(--text-faint); font-size: 14px;">Select a meeting to view details</span>
+            </div>
+          {/if}
         </div>
       {/if}
     </div>
@@ -400,19 +410,19 @@
   }
 
   .detail-panel-wrapper {
-    flex: 1;
+    flex: 0 0 0px;
     overflow: hidden;
-    animation: slide-in 400ms cubic-bezier(0.4, 0, 0.2, 1);
+    transition: flex-basis 300ms cubic-bezier(0.4, 0, 0.2, 1);
   }
 
-  @keyframes slide-in {
-    from {
-      transform: translateX(40px);
-      opacity: 0;
-    }
-    to {
-      transform: translateX(0);
-      opacity: 1;
-    }
+  .detail-panel-wrapper.has-content {
+    flex: 1;
+  }
+
+  .empty-detail {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
   }
 </style>
