@@ -13,6 +13,7 @@ mod display;
 mod meetings;
 mod notifications;
 mod oauth;
+mod participants;
 mod recorder;
 mod sidecar;
 mod tray;
@@ -113,6 +114,9 @@ pub fn run() {
         .setup(|app| {
             // Encrypted credential store (AES-256-GCM, key derived from machine identity)
             credentials::init_secret_store(app)?;
+
+            // Participant index managed state
+            app.manage(participants::ParticipantIndexState::new(participants::ParticipantIndex::new()));
 
             // Deep link plugin
             app.handle().plugin(tauri_plugin_deep_link::init())?;
