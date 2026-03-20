@@ -108,11 +108,6 @@
         "
       >
         First meeting with these participants
-        {#if eventDescription}
-          <div style="color: var(--text-muted); margin-top: 6px; font-size: 12.5px;">
-            {eventDescription}
-          </div>
-        {/if}
       </div>
     {/if}
 
