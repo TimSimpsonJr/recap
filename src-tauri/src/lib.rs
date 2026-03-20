@@ -324,6 +324,8 @@ pub fn run() {
             config_gen::generate_pipeline_config,
             config_gen::check_drive_type,
             trigger_todoist_sync,
+            participants::get_participant_info,
+            participants::update_participant_index,
         ])
         .on_window_event(|window, event| {
             // Closing the window hides it instead of quitting
