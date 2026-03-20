@@ -16,6 +16,8 @@
   import { getGraphData, type GraphNode, type GraphEdge } from "../lib/tauri";
   import { COMPANY_COLORS } from "../lib/theme";
   import { USE_DUMMY_DATA, DUMMY_GRAPH_DATA } from "../lib/dummy-data";
+  import { fly } from "svelte/transition";
+  import { reducedMotion, motionParams } from "../lib/reduced-motion";
   import GraphControls from "../lib/components/GraphControls.svelte";
   import GraphSidebar from "../lib/components/GraphSidebar.svelte";
 
@@ -692,13 +694,15 @@
 
     <!-- Graph sidebar for person/company nodes -->
     {#if sidebarNode}
-      <GraphSidebar
-        nodeId={sidebarNode.id}
-        nodeLabel={sidebarNode.label}
-        nodeType={sidebarNode.node_type}
-        connectedMeetings={sidebarConnectedMeetings}
-        onClose={() => sidebarNode = null}
-      />
+      <div transition:fly={motionParams({ x: 340, duration: 200 }, $reducedMotion)}>
+        <GraphSidebar
+          nodeId={sidebarNode.id}
+          nodeLabel={sidebarNode.label}
+          nodeType={sidebarNode.node_type}
+          connectedMeetings={sidebarConnectedMeetings}
+          onClose={() => sidebarNode = null}
+        />
+      </div>
     {/if}
 
     <!-- Legend -->
