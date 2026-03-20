@@ -416,15 +416,22 @@ pub async fn fetch_calendar_events(
         Err(e) => return Err(e),
     };
 
-    let events = parse_zoho_events(zoho_response);
+    let all_events = parse_zoho_events(zoho_response);
 
-    // Write to cache
-    let cache = CalendarCache {
-        events: events.clone(),
-        last_synced: Utc::now().to_rfc3339(),
-    };
-    let cp = cache_path(&app);
-    write_cache(&cp, &cache)?;
+    // Zoho's range filter is unreliable — filter events client-side.
+    let range_start = DateTime::parse_from_rfc3339(&start_date).ok();
+    let range_end = DateTime::parse_from_rfc3339(&end_date).ok();
+    let events: Vec<CalendarEvent> = all_events
+        .into_iter()
+        .filter(|e| {
+            if let (Some(rs), Some(re)) = (&range_start, &range_end) {
+                if let Ok(es) = DateTime::parse_from_rfc3339(&e.start) {
+                    return es >= *rs && es <= *re;
+                }
+            }
+            true // keep if we can't parse
+        })
+        .collect();
 
     Ok(events)
 }
@@ -470,12 +477,15 @@ pub async fn sync_calendar(
 
     let events = fetch_calendar_events(app.clone(), start_date, end_date).await?;
 
-    // Build the CalendarCache directly from the fetched events instead of
-    // re-reading the cache file that fetch_calendar_events just wrote.
-    Ok(CalendarCache {
-        events,
+    // Write upcoming events to cache (used by get_upcoming_meetings)
+    let cache = CalendarCache {
+        events: events.clone(),
         last_synced: Utc::now().to_rfc3339(),
-    })
+    };
+    let cp = cache_path(&app);
+    write_cache(&cp, &cache)?;
+
+    Ok(cache)
 }
 
 // ---------------------------------------------------------------------------
