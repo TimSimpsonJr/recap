@@ -408,6 +408,34 @@ export async function triggerTodoistSync(): Promise<string> {
   return invoke<string>("trigger_todoist_sync");
 }
 
+// Participant types (matches Rust ParticipantInfo, ParticipantMeeting)
+export interface ParticipantMeeting {
+  id: string;
+  title: string;
+  date: string;
+}
+
+export interface ParticipantInfo {
+  name: string;
+  email: string | null;
+  company: string | null;
+  recent_meetings: ParticipantMeeting[];
+}
+
+// Participant IPC
+export async function getParticipantInfo(
+  name: string,
+  email: string | null
+): Promise<ParticipantInfo> {
+  return invoke("get_participant_info", { name, email });
+}
+
+export async function updateParticipantIndex(
+  meetingId: string
+): Promise<void> {
+  return invoke("update_participant_index", { meetingId });
+}
+
 // Shared utilities
 
 export function getRecordingDir(filePath: string): string {
