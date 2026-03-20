@@ -365,6 +365,8 @@
           {#each upcoming as event}
             {@const matchedId = matches[event.id]}
             {@const isExpanded = expandedEventId === event.id}
+            {@const visible = getVisibleParticipants(event)}
+            {@const overflow = getOverflowCount(event)}
             <div
               style="
                 background: var(--surface);
@@ -479,8 +481,6 @@
                       >{event.auto_record ? "Disable all in series" : "Enable all in series"}</span>
                     {/if}
                   </div>
-                  {@const visible = getVisibleParticipants(event)}
-                  {@const overflow = getOverflowCount(event)}
                   {#if visible.length > 0}
                     <div style="font-size: 12.5px; color: var(--text-faint); margin-top: 3px; display: flex; flex-wrap: wrap; gap: 0;">
                       {#each visible as participant, i}
@@ -568,6 +568,8 @@
         <div style="display: flex; flex-direction: column; gap: 6px;">
           {#each past as event}
             {@const matchedId = matches[event.id]}
+            {@const visible = getVisibleParticipants(event)}
+            {@const overflow = getOverflowCount(event)}
             <div
               style="
                 background: var(--surface);
@@ -616,8 +618,6 @@
                 <div style="font-size: 13px; color: var(--text-muted); margin-top: 2px;">
                   {formatDate(event.start)} &middot; {formatTimeRange(event.start, event.end)}
                 </div>
-                {@const visible = getVisibleParticipants(event)}
-                {@const overflow = getOverflowCount(event)}
                 {#if visible.length > 0}
                   <div style="font-size: 12.5px; color: var(--text-faint); margin-top: 2px; display: flex; flex-wrap: wrap; gap: 0;">
                     {#each visible as participant, i}
