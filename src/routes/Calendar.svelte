@@ -14,6 +14,8 @@
     type CalendarCache,
   } from "../lib/tauri";
   import BriefingPanel from "../lib/components/BriefingPanel.svelte";
+  import ParticipantPopover from "../lib/components/ParticipantPopover.svelte";
+  import { openUrl } from "@tauri-apps/plugin-opener";
 
   let upcoming: CalendarEvent[] = $state([]);
   let past: CalendarEvent[] = $state([]);
@@ -27,9 +29,45 @@
   let expandedEventId: string | null = $state(null);
   let windowWidth = $state(window.innerWidth);
   let narrow = $derived(windowWidth < 900);
+  let popoverParticipant: { name: string; email: string | null; rect: DOMRect } | null = $state(null);
+  let showAllParticipants: Record<string, boolean> = $state({});
 
   function handleResize() {
     windowWidth = window.innerWidth;
+  }
+
+  function openPopover(name: string, email: string | null, e: MouseEvent) {
+    e.stopPropagation();
+    const target = e.currentTarget as HTMLElement;
+    popoverParticipant = { name, email, rect: target.getBoundingClientRect() };
+  }
+
+  function closePopover() {
+    popoverParticipant = null;
+  }
+
+  function getVisibleParticipants(event: CalendarEvent): { name: string; email: string | null }[] {
+    const s = get(settings);
+    const userName = (s.userName || "").toLowerCase();
+    const filtered = event.participants.filter(
+      (p) => p.name.toLowerCase() !== userName
+    );
+    if (showAllParticipants[event.id]) return filtered;
+    return filtered.slice(0, 4);
+  }
+
+  function getOverflowCount(event: CalendarEvent): number {
+    const s = get(settings);
+    const userName = (s.userName || "").toLowerCase();
+    const total = event.participants.filter(
+      (p) => p.name.toLowerCase() !== userName
+    ).length;
+    return Math.max(0, total - 4);
+  }
+
+  function openMeetingLink(url: string, e: MouseEvent) {
+    e.stopPropagation();
+    openUrl(url);
   }
 
   function toggleBriefing(eventId: string) {
@@ -389,6 +427,21 @@
                         "
                       >{platformLabel(event.detected_platform)}</span>
                     {/if}
+                    {#if event.meeting_url}
+                      <button
+                        onclick={(e) => openMeetingLink(event.meeting_url!, e)}
+                        title="Join meeting"
+                        style="
+                          background: none;
+                          border: none;
+                          padding: 0;
+                          cursor: pointer;
+                          font-size: 13px;
+                          color: var(--blue, var(--gold));
+                          flex-shrink: 0;
+                        "
+                      >↗</button>
+                    {/if}
                     {#if matchedId}
                       <a
                         href="#meeting/{matchedId}"
@@ -426,9 +479,43 @@
                       >{event.auto_record ? "Disable all in series" : "Enable all in series"}</span>
                     {/if}
                   </div>
-                  {#if event.participants.length > 0}
-                    <div style="font-size: 12.5px; color: var(--text-faint); margin-top: 3px;">
-                      {event.participants.map(p => p.name).join(", ")}
+                  {@const visible = getVisibleParticipants(event)}
+                  {@const overflow = getOverflowCount(event)}
+                  {#if visible.length > 0}
+                    <div style="font-size: 12.5px; color: var(--text-faint); margin-top: 3px; display: flex; flex-wrap: wrap; gap: 0;">
+                      {#each visible as participant, i}
+                        <button
+                          onclick={(e) => openPopover(participant.name, participant.email, e)}
+                          style="
+                            background: none;
+                            border: none;
+                            padding: 0;
+                            cursor: pointer;
+                            font-family: 'DM Sans', sans-serif;
+                            font-size: 12.5px;
+                            color: var(--text-faint);
+                            text-decoration: underline;
+                            text-decoration-color: transparent;
+                            text-underline-offset: 2px;
+                          "
+                          onmouseenter={(e) => { (e.currentTarget as HTMLElement).style.textDecorationColor = 'var(--text-faint)'; }}
+                          onmouseleave={(e) => { (e.currentTarget as HTMLElement).style.textDecorationColor = 'transparent'; }}
+                        >{participant.name}{i < visible.length - 1 || overflow > 0 ? ',\u00A0' : ''}</button>
+                      {/each}
+                      {#if overflow > 0 && !showAllParticipants[event.id]}
+                        <button
+                          onclick={(e) => { e.stopPropagation(); showAllParticipants = { ...showAllParticipants, [event.id]: true }; }}
+                          style="
+                            background: none;
+                            border: none;
+                            padding: 0;
+                            cursor: pointer;
+                            font-family: 'DM Sans', sans-serif;
+                            font-size: 12.5px;
+                            color: var(--text-muted);
+                          "
+                        >+{overflow} more</button>
+                      {/if}
                     </div>
                   {/if}
                 </button>
@@ -498,6 +585,21 @@
                   <span style="font-size: 14px; font-weight: 500; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;">
                     {event.title}
                   </span>
+                  {#if event.meeting_url}
+                    <button
+                      onclick={(e) => openMeetingLink(event.meeting_url!, e)}
+                      title="Join meeting"
+                      style="
+                        background: none;
+                        border: none;
+                        padding: 0;
+                        cursor: pointer;
+                        font-size: 13px;
+                        color: var(--blue, var(--gold));
+                        flex-shrink: 0;
+                      "
+                    >↗</button>
+                  {/if}
                   {#if matchedId}
                     <a
                       href="#meeting/{matchedId}"
@@ -514,9 +616,43 @@
                 <div style="font-size: 13px; color: var(--text-muted); margin-top: 2px;">
                   {formatDate(event.start)} &middot; {formatTimeRange(event.start, event.end)}
                 </div>
-                {#if event.participants.length > 0}
-                  <div style="font-size: 12.5px; color: var(--text-faint); margin-top: 2px;">
-                    {event.participants.map(p => p.name).join(", ")}
+                {@const visible = getVisibleParticipants(event)}
+                {@const overflow = getOverflowCount(event)}
+                {#if visible.length > 0}
+                  <div style="font-size: 12.5px; color: var(--text-faint); margin-top: 2px; display: flex; flex-wrap: wrap; gap: 0;">
+                    {#each visible as participant, i}
+                      <button
+                        onclick={(e) => openPopover(participant.name, participant.email, e)}
+                        style="
+                          background: none;
+                          border: none;
+                          padding: 0;
+                          cursor: pointer;
+                          font-family: 'DM Sans', sans-serif;
+                          font-size: 12.5px;
+                          color: var(--text-faint);
+                          text-decoration: underline;
+                          text-decoration-color: transparent;
+                          text-underline-offset: 2px;
+                        "
+                        onmouseenter={(e) => { (e.currentTarget as HTMLElement).style.textDecorationColor = 'var(--text-faint)'; }}
+                        onmouseleave={(e) => { (e.currentTarget as HTMLElement).style.textDecorationColor = 'transparent'; }}
+                      >{participant.name}{i < visible.length - 1 || overflow > 0 ? ',\u00A0' : ''}</button>
+                    {/each}
+                    {#if overflow > 0 && !showAllParticipants[event.id]}
+                      <button
+                        onclick={(e) => { e.stopPropagation(); showAllParticipants = { ...showAllParticipants, [event.id]: true }; }}
+                        style="
+                          background: none;
+                          border: none;
+                          padding: 0;
+                          cursor: pointer;
+                          font-family: 'DM Sans', sans-serif;
+                          font-size: 12.5px;
+                          color: var(--text-muted);
+                        "
+                      >+{overflow} more</button>
+                    {/if}
                   </div>
                 {/if}
               </div>
@@ -528,3 +664,12 @@
   {/if}
   {/if}
 </div>
+
+{#if popoverParticipant}
+  <ParticipantPopover
+    name={popoverParticipant.name}
+    email={popoverParticipant.email}
+    anchorRect={popoverParticipant.rect}
+    onclose={closePopover}
+  />
+{/if}
