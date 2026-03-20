@@ -108,6 +108,23 @@ No backend changes. All data comes from existing IPC commands:
 - `setAutoRecord(eventId, bool)` / `setSeriesAutoRecord(seriesId, bool)` — toggle persistence
 - `generateBriefing(...)` — briefing generation (called by BriefingPanel)
 
+### Calendar Store (new)
+
+Create `src/lib/stores/calendar.ts` to hold event state across tab switches. Currently, Calendar.svelte reloads from cache on every mount, making the app feel sluggish.
+
+The store holds:
+- `events: CalendarEvent[]` — full event list from cache
+- `matches: Record<string, string>` — event-to-recording map
+- `lastSynced: string | null` — cache timestamp
+- `loaded: boolean` — whether initial load has completed
+
+Behavior:
+- **First load**: fetches from cache via IPC, sets `loaded = true`
+- **Subsequent tab switches**: reads from store instantly (no IPC call, no loading state)
+- **Background sync**: updates store reactively when sync completes
+- **Manual "Sync Now"**: triggers sync, updates store on completion
+- **Auto-record toggle**: updates the event in the store directly (optimistic)
+
 View state (current date, active view mode) is local component state, not persisted.
 
 Cache holds 14 days forward. Navigating outside the cache window shows empty cells (past meetings are accessible via the Meetings dashboard).
