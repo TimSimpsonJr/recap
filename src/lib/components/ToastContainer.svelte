@@ -1,6 +1,7 @@
 <script lang="ts">
   import { fly } from "svelte/transition";
   import { toasts, removeToast } from "../stores/toasts";
+  import { reducedMotion, motionParams } from "../reduced-motion";
 
   function borderColor(type: "success" | "error" | "info"): string {
     if (type === "error") return "var(--red)";
@@ -24,7 +25,8 @@
   >
     {#each $toasts as toast (toast.id)}
       <div
-        transition:fly={{ x: 100, duration: 300 }}
+        in:fly={motionParams({ x: 100, duration: 300 }, $reducedMotion)}
+        out:fly={motionParams({ x: 100, duration: 200 }, $reducedMotion)}
         style="
           pointer-events: auto;
           max-width: 360px;
