@@ -49,3 +49,7 @@ config.yaml
 
 # Recap data
 recap-data/
+
+# Design mockups (brainstorming artifacts)
+mockups/
+docs/mockups/
