@@ -16,9 +16,12 @@
     relativeTime,
   } from "../lib/calendar-utils";
   import ParticipantPopover from "../lib/components/ParticipantPopover.svelte";
+  import EventPopover from "../lib/components/calendar/EventPopover.svelte";
+  import EventSidePanel from "../lib/components/calendar/EventSidePanel.svelte";
   import WeekView from "../lib/components/calendar/WeekView.svelte";
   import DayView from "../lib/components/calendar/DayView.svelte";
   import MonthView from "../lib/components/calendar/MonthView.svelte";
+  import type { CalendarEvent } from "../lib/tauri";
 
   type ViewMode = "day" | "week" | "month";
 
@@ -38,6 +41,9 @@
     rect: DOMRect;
   } | null = $state(null);
 
+  let popoverEvent: { event: CalendarEvent; rect: DOMRect } | null = $state(null);
+  let sidePanelEvent: CalendarEvent | null = $state(null);
+
   function handleResize() {
     windowWidth = window.innerWidth;
   }
@@ -49,6 +55,28 @@
   function closePopover() {
     popoverParticipant = null;
   }
+
+  function openSidePanel() {
+    if (popoverEvent) {
+      sidePanelEvent = popoverEvent.event;
+      popoverEvent = null;
+    }
+  }
+
+  function closeSidePanel() {
+    sidePanelEvent = null;
+  }
+
+  function closeEventPopover() {
+    popoverEvent = null;
+  }
+
+  // Close event popover on navigation
+  $effect(() => {
+    currentDate;
+    viewMode;
+    popoverEvent = null;
+  });
 
   // Navigation
   function goToday() {
@@ -308,7 +336,7 @@
       events={$calendarStore.events}
       matches={$calendarStore.matches}
       {currentDate}
-      onEventPopover={(event, rect) => {}}
+      onEventPopover={(event, rect) => { popoverEvent = { event, rect }; }}
       onOpenPopover={openPopover}
     />
   {:else if effectiveView === "day"}
@@ -316,7 +344,7 @@
       events={$calendarStore.events}
       matches={$calendarStore.matches}
       {currentDate}
-      onEventPopover={(event, rect) => {}}
+      onEventPopover={(event, rect) => { popoverEvent = { event, rect }; }}
       onOpenPopover={openPopover}
     />
   {:else if effectiveView === "month"}
@@ -335,5 +363,25 @@
     email={popoverParticipant.email}
     anchorRect={popoverParticipant.rect}
     onclose={closePopover}
+  />
+{/if}
+
+{#if popoverEvent}
+  <EventPopover
+    event={popoverEvent.event}
+    matchedId={$calendarStore.matches[popoverEvent.event.id] ?? null}
+    anchorRect={popoverEvent.rect}
+    onClose={closeEventPopover}
+    onOpenSidePanel={openSidePanel}
+    onOpenPopover={openPopover}
+  />
+{/if}
+
+{#if sidePanelEvent}
+  <EventSidePanel
+    event={sidePanelEvent}
+    matchedId={$calendarStore.matches[sidePanelEvent.id] ?? null}
+    onClose={closeSidePanel}
+    onOpenPopover={openPopover}
   />
 {/if}
