@@ -14,8 +14,20 @@
   import { exchangeOAuthCode, syncCalendar } from "./lib/tauri";
   import Onboarding from "./lib/components/Onboarding.svelte";
   import ToastContainer from "./lib/components/ToastContainer.svelte";
-  import { fade } from "svelte/transition";
+  import { fly } from "svelte/transition";
+  import { cubicOut } from "svelte/easing";
+  import { reducedMotion, motionParams } from "./lib/reduced-motion";
   import logoSvg from "./lib/assets/logo.svg";
+
+  const ROUTE_ORDER: Record<string, number> = {
+    dashboard: 0,
+    calendar: 1,
+    graph: 2,
+    settings: 3,
+  };
+
+  let prevRouteIndex = $state(0);
+  let slideDirection = $state(1); // 1 = right, -1 = left
 
   const appWindow = getCurrentWindow();
   const webview = getCurrentWebview();
@@ -114,19 +126,28 @@
       const hash = window.location.hash.slice(1) || "dashboard";
       const meetingMatch = hash.match(/^meeting\/(.+)$/);
       const filterMatch = hash.match(/^filter\/participant\/(.+)$/);
+
+      let nextRoute: string;
       if (meetingMatch) {
-        currentRoute = "dashboard";
+        nextRoute = "dashboard";
         meetingId = meetingMatch[1];
         filterParticipant = null;
       } else if (filterMatch) {
-        currentRoute = "dashboard";
+        nextRoute = "dashboard";
         meetingId = null;
         filterParticipant = decodeURIComponent(filterMatch[1]);
       } else {
-        currentRoute = hash;
+        nextRoute = hash;
         meetingId = null;
         filterParticipant = null;
       }
+
+      const nextIndex = ROUTE_ORDER[nextRoute] ?? 0;
+      if (nextRoute !== currentRoute) {
+        slideDirection = nextIndex > prevRouteIndex ? 1 : -1;
+        prevRouteIndex = nextIndex;
+      }
+      currentRoute = nextRoute;
     };
     window.addEventListener("hashchange", updateRoute);
     updateRoute();
@@ -342,7 +363,11 @@
 
     <!-- Route content -->
     {#key currentRoute}
-      <div class="flex-1 overflow-hidden flex flex-col" transition:fade={{ duration: 150 }}>
+      <div
+        class="flex-1 overflow-hidden flex flex-col"
+        in:fly={motionParams({ x: slideDirection * 60, duration: 200, easing: cubicOut }, $reducedMotion)}
+        out:fly={motionParams({ x: slideDirection * -60, duration: 200, easing: cubicOut }, $reducedMotion)}
+      >
         {#if currentRoute === "settings"}
           <Settings />
         {:else if currentRoute === "calendar"}
