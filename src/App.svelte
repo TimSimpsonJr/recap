@@ -3,6 +3,7 @@
   import { get } from "svelte/store";
   import { listen } from "@tauri-apps/api/event";
   import { getCurrentWindow } from "@tauri-apps/api/window";
+  import { getCurrentWebview } from "@tauri-apps/api/webview";
   import Settings from "./routes/Settings.svelte";
   import Dashboard from "./routes/Dashboard.svelte";
   import Calendar from "./routes/Calendar.svelte";
@@ -17,10 +18,11 @@
   import logoSvg from "./lib/assets/logo.svg";
 
   const appWindow = getCurrentWindow();
+  const webview = getCurrentWebview();
 
   function setZoom(level: number) {
     const clamped = Math.round(Math.min(2.0, Math.max(0.5, level)) * 10) / 10;
-    document.documentElement.style.zoom = String(clamped);
+    webview.setZoom(clamped);
     saveSetting("zoomLevel", clamped);
   }
 
@@ -102,10 +104,10 @@
       console.error("Failed to load credentials:", err);
     });
 
-    // Apply persisted zoom level
+    // Apply persisted zoom level via native webview zoom
     const savedZoom = get(settings).zoomLevel;
     if (savedZoom && savedZoom !== 1.0) {
-      document.documentElement.style.zoom = String(savedZoom);
+      webview.setZoom(savedZoom);
     }
 
     const updateRoute = () => {
@@ -340,7 +342,7 @@
 
     <!-- Route content -->
     {#key currentRoute}
-      <div class="flex-1 overflow-hidden" transition:fade={{ duration: 150 }}>
+      <div class="flex-1 overflow-hidden flex flex-col" transition:fade={{ duration: 150 }}>
         {#if currentRoute === "settings"}
           <Settings />
         {:else if currentRoute === "calendar"}

@@ -32,12 +32,14 @@
     let l = anchorRect.left;
 
     // Flip up if not enough space below
-    if (t + rect.height > viewportH - 16) {
-      t = anchorRect.top - rect.height - 6;
+    const popH = rect.height;
+    const popW = rect.width;
+    if (t + popH > viewportH - 16) {
+      t = anchorRect.top - popH - 6;
     }
     // Clamp horizontally
-    if (l + rect.width > viewportW - 16) {
-      l = viewportW - rect.width - 16;
+    if (l + popW > viewportW - 16) {
+      l = viewportW - popW - 16;
     }
     if (l < 16) l = 16;
 
@@ -145,7 +147,7 @@
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 16px;
-    z-index: 300;
+    z-index: 1100;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
     font-family: 'DM Sans', sans-serif;
   "

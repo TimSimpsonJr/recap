@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 use crate::credentials::SecretStoreState;
 use crate::meetings::MeetingSummary;
@@ -55,6 +55,11 @@ struct ZohoEvent {
     dateandtime: Option<ZohoDateAndTime>,
     attendees: Option<Vec<ZohoAttendee>>,
     location: Option<String>,
+    /// Organizer email (plain string in Zoho's response).
+    organizer: Option<String>,
+    /// Organizer display name.
+    #[serde(rename = "orgDName")]
+    org_d_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -65,6 +70,8 @@ struct ZohoDateAndTime {
 
 #[derive(Debug, Deserialize)]
 struct ZohoAttendee {
+    /// Display name — Zoho uses "dName" in detail responses.
+    #[serde(alias = "dName")]
     name: Option<String>,
     email: Option<String>,
 }
@@ -154,8 +161,19 @@ fn write_cache(path: &Path, cache: &CalendarCache) -> Result<(), String> {
 fn read_cache(path: &Path) -> Result<CalendarCache, String> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| format!("Failed to read calendar cache: {}", e))?;
-    serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse calendar cache: {}", e))
+    let mut cache: CalendarCache = serde_json::from_str(&content)
+        .map_err(|e| format!("Failed to parse calendar cache: {}", e))?;
+    // Fix participant names that are raw email addresses (legacy cache data)
+    for event in &mut cache.events {
+        for p in &mut event.participants {
+            if p.name.is_empty() || p.name.contains('@') {
+                if let Some(ref email) = p.email {
+                    p.name = name_from_email(email);
+                }
+            }
+        }
+    }
+    Ok(cache)
 }
 
 // ---------------------------------------------------------------------------
@@ -254,15 +272,29 @@ fn parse_zoho_events(response: ZohoEventsResponse) -> Vec<CalendarEvent> {
                 description: e.description,
                 start: dt.start.as_deref().and_then(from_zoho_date).unwrap_or_default(),
                 end: dt.end.as_deref().and_then(from_zoho_date).unwrap_or_default(),
-                participants: e
-                    .attendees
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(|a| CalendarParticipant {
-                        name: a.name.unwrap_or_default(),
-                        email: a.email,
-                    })
-                    .collect(),
+                participants: {
+                    let mut parts: Vec<CalendarParticipant> = Vec::new();
+                    // Add organizer first if present (separate field in Zoho response)
+                    if let Some(ref org_email) = e.organizer {
+                        parts.push(make_participant(
+                            e.org_d_name.clone().unwrap_or_default(),
+                            Some(org_email.clone()),
+                        ));
+                    }
+                    // Add attendees, skipping duplicates of the organizer
+                    for a in e.attendees.unwrap_or_default() {
+                        let is_dup = parts.iter().any(|p| {
+                            p.email.is_some() && p.email == a.email
+                        });
+                        if !is_dup {
+                            parts.push(make_participant(
+                                a.name.unwrap_or_default(),
+                                a.email,
+                            ));
+                        }
+                    }
+                    parts
+                },
                 location: e.location,
                 auto_record: false,
                 recurring_series_id: None,
@@ -273,6 +305,40 @@ fn parse_zoho_events(response: ZohoEventsResponse) -> Vec<CalendarEvent> {
             Some(event)
         })
         .collect()
+}
+
+/// Derive a display name from an email address when no name is provided.
+/// e.g. "laurie.gorby@disbursecloud.com" → "Laurie Gorby"
+fn name_from_email(email: &str) -> String {
+    let local = email.split('@').next().unwrap_or(email);
+    local
+        .split(|c: char| c == '.' || c == '_' || c == '-')
+        .filter(|s| !s.is_empty())
+        .map(|s| {
+            let mut chars = s.chars();
+            match chars.next() {
+                Some(first) => {
+                    let upper: String = first.to_uppercase().collect();
+                    format!("{}{}", upper, chars.as_str())
+                }
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Build a CalendarParticipant, deriving the name from email if missing.
+fn make_participant(name: String, email: Option<String>) -> CalendarParticipant {
+    let display_name = if name.is_empty() || name.contains('@') {
+        email.as_deref().map(name_from_email).unwrap_or(name)
+    } else {
+        name
+    };
+    CalendarParticipant {
+        name: display_name,
+        email,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -463,27 +529,182 @@ pub async fn get_upcoming_meetings(
     Ok(upcoming)
 }
 
-/// Sync the calendar by fetching the next 14 days of events.
+/// Return all cached calendar events (past + upcoming).
+#[tauri::command]
+pub async fn get_all_cached_events(
+    app: tauri::AppHandle,
+) -> Result<Vec<CalendarEvent>, String> {
+    let cp = cache_path(&app);
+    if !cp.exists() {
+        return Ok(Vec::new());
+    }
+    let cache = read_cache(&cp)?;
+    Ok(cache.events)
+}
+
+/// Sync the calendar: past 30 days + next 14 days.
 #[tauri::command]
 pub async fn sync_calendar(
     app: tauri::AppHandle,
 ) -> Result<CalendarCache, String> {
     let now = Utc::now();
-    // Pass ISO 8601 dates — fetch_calendar_events converts to Zoho format
+    // Fetch a wide range so both past and upcoming events go through
+    // the cache and background enrichment pipeline.
     let start_date = now.to_rfc3339();
     let end_date = (now + Duration::days(14)).to_rfc3339();
 
-    let events = fetch_calendar_events(app.clone(), start_date, end_date).await?;
+    let new_events = fetch_calendar_events(app.clone(), start_date, end_date).await?;
 
-    // Write upcoming events to cache (used by get_upcoming_meetings)
+    // Merge new events into the cache, preserving enriched past events.
+    let cp = cache_path(&app);
+    let mut all_events = if cp.exists() {
+        read_cache(&cp).map(|c| c.events).unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    // Update existing events and add new ones
+    for new_event in &new_events {
+        if let Some(existing) = all_events.iter_mut().find(|e| e.id == new_event.id) {
+            // Preserve enriched participants if the cache has more
+            let saved_participants = if existing.participants.len() > new_event.participants.len() {
+                Some(existing.participants.clone())
+            } else {
+                None
+            };
+            *existing = new_event.clone();
+            if let Some(p) = saved_participants {
+                existing.participants = p;
+            }
+        } else {
+            all_events.push(new_event.clone());
+        }
+    }
+
+    // Prune events older than 30 days to prevent unbounded growth
+    let cutoff = now - Duration::days(30);
+    all_events.retain(|e| {
+        DateTime::parse_from_rfc3339(&e.start)
+            .map(|dt| dt.with_timezone(&Utc) >= cutoff)
+            .unwrap_or(true)
+    });
+
     let cache = CalendarCache {
-        events: events.clone(),
+        events: all_events.clone(),
         last_synced: Utc::now().to_rfc3339(),
     };
-    let cp = cache_path(&app);
     write_cache(&cp, &cache)?;
+    let events = new_events;
+
+    // Spawn background enrichment — doesn't block the sync return.
+    let app_bg = app.clone();
+    tauri::async_runtime::spawn(async move {
+        enrich_event_participants(app_bg).await;
+    });
 
     Ok(cache)
+}
+
+/// Background: fetch individual event details to get full attendee lists.
+/// The list endpoint only returns the authenticated user as an attendee.
+/// Updates the cache in-place and emits "calendar-enriched" when done.
+async fn enrich_event_participants(app: tauri::AppHandle) {
+    let creds = match get_zoho_credentials(&app).await {
+        Ok(c) => c,
+        Err(e) => { log::warn!("Enrichment: credentials: {}", e); return; }
+    };
+    let region = get_zoho_region(&app);
+    let calendar_id = "primary";
+    let cp = cache_path(&app);
+
+    let mut cache = match read_cache(&cp) {
+        Ok(c) => c,
+        Err(e) => { log::warn!("Enrichment: read cache: {}", e); return; }
+    };
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
+
+    let mut updated = false;
+    for event in &mut cache.events {
+        if event.id.is_empty() { continue; }
+
+        let url = format!(
+            "https://calendar.zoho.{}/api/v1/calendars/{}/events/{}",
+            region, calendar_id, event.id,
+        );
+
+        let response = match client
+            .get(&url)
+            .header("Authorization", format!("Zoho-oauthtoken {}", creds.access_token))
+            .header("Accept", "application/json+large")
+            .send()
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => { log::warn!("Enrichment: '{}': {}", event.title, e); continue; }
+        };
+
+        if !response.status().is_success() {
+            log::warn!("Enrichment: '{}' status {}", event.title, response.status());
+            continue;
+        }
+
+        let body = match response.text().await {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+
+        let detail_resp: ZohoEventsResponse = match serde_json::from_str(&body) {
+            Ok(r) => r,
+            Err(e) => { log::warn!("Enrichment: '{}' parse: {}", event.title, e); continue; }
+        };
+
+        let detail = match detail_resp.events.and_then(|mut v| {
+            if v.is_empty() { None } else { Some(v.remove(0)) }
+        }) {
+            Some(d) => d,
+            None => continue,
+        };
+
+        let mut participants: Vec<CalendarParticipant> = Vec::new();
+        if let Some(ref org_email) = detail.organizer {
+            participants.push(make_participant(
+                detail.org_d_name.clone().unwrap_or_default(),
+                Some(org_email.clone()),
+            ));
+        }
+        for a in detail.attendees.unwrap_or_default() {
+            let is_dup = participants.iter().any(|p| p.email.is_some() && p.email == a.email);
+            if !is_dup {
+                participants.push(make_participant(
+                    a.name.unwrap_or_default(),
+                    a.email,
+                ));
+            }
+        }
+
+        if participants.len() > event.participants.len() {
+            log::info!("Enriched '{}': {} → {} participants",
+                event.title, event.participants.len(), participants.len());
+            event.participants = participants;
+            updated = true;
+        }
+    }
+
+    if updated {
+        match write_cache(&cp, &cache) {
+            Ok(_) => {
+                log::info!("Enrichment complete — cache updated");
+                let _ = app.emit("calendar-enriched", ());
+            }
+            Err(e) => log::warn!("Enrichment: write cache: {}", e),
+        }
+    } else {
+        log::info!("Enrichment complete — no new participants found");
+    }
 }
 
 // ---------------------------------------------------------------------------

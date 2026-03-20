@@ -316,6 +316,7 @@ pub fn run() {
             meetings::relink_vault_notes,
             calendar::fetch_calendar_events,
             calendar::get_upcoming_meetings,
+            calendar::get_all_cached_events,
             calendar::sync_calendar,
             calendar::get_calendar_last_synced,
             calendar::get_calendar_matches,

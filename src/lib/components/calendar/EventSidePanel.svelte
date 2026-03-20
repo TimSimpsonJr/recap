@@ -25,13 +25,23 @@
 
   let { event, matchedId, onClose, onOpenPopover }: Props = $props();
 
-  // Participants filtered to exclude current user
+  // Participants filtered to exclude current user (check name and email against userName)
   let visibleParticipants = $derived.by(() => {
     const userName = get(settings).userName?.toLowerCase() ?? "";
-    return event.participants.filter(
-      (p) => p.name.toLowerCase() !== userName
-    );
+    if (!userName) return event.participants;
+    return event.participants.filter((p) => {
+      if (p.name.toLowerCase() === userName) return false;
+      if (p.email && p.email.toLowerCase() === userName) return false;
+      return true;
+    });
   });
+
+  const COLLAPSED_COUNT = 4;
+  let participantsExpanded = $state(false);
+  let shownParticipants = $derived(
+    participantsExpanded ? visibleParticipants : visibleParticipants.slice(0, COLLAPSED_COUNT)
+  );
+  let hiddenCount = $derived(Math.max(0, visibleParticipants.length - COLLAPSED_COUNT));
 
   // Description: show only if non-empty and not boilerplate
   let showDescription = $derived(
@@ -139,6 +149,7 @@
           flex-shrink: 0;
         "
       ></button>
+      <span style="font-size: 12px; color: var(--text-muted);">Auto-record</span>
 
       <!-- Series toggle link -->
       {#if event.recurring_series_id}
@@ -166,16 +177,16 @@
       {#if event.meeting_url}
         <button
           onclick={() => openUrl(event.meeting_url!)}
-          title="Join meeting"
           style="
             background: none;
             border: none;
-            padding: 0;
-            font-size: 15px;
+            padding: 2px 8px;
+            font-size: 12px;
             cursor: pointer;
-            color: var(--text-muted);
+            color: var(--blue, #58a6ff);
+            font-family: 'DM Sans', sans-serif;
           "
-        >&#8599;</button>
+        >Join &#8599;</button>
       {/if}
 
       <!-- Recording link -->
@@ -198,35 +209,69 @@
     <!-- Participants -->
     {#if visibleParticipants.length > 0}
       <div style="margin-bottom: 16px;">
-        <h4
+        <button
+          onclick={() => { if (hiddenCount > 0) participantsExpanded = !participantsExpanded; }}
           style="
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            width: 100%;
             font-size: 12px;
             font-weight: 600;
             color: var(--text-muted);
             text-transform: uppercase;
             letter-spacing: 0.05em;
             margin: 0 0 8px 0;
+            background: none;
+            border: none;
+            padding: 0;
+            cursor: {hiddenCount > 0 ? 'pointer' : 'default'};
+            font-family: 'DM Sans', sans-serif;
           "
-        >Participants</h4>
-        <div style="display: flex; flex-direction: column; gap: 2px;">
-          {#each visibleParticipants as p}
+        >
+          Participants ({visibleParticipants.length})
+          {#if hiddenCount > 0}
+            <span style="
+              font-size: 10px;
+              margin-left: auto;
+              transition: transform 0.15s;
+              transform: rotate({participantsExpanded ? '-90deg' : '0deg'});
+            ">&#9664;</span>
+          {/if}
+        </button>
+        <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+          {#each shownParticipants as p}
             <button
               onclick={(e) => handleParticipantClick(p, e)}
               style="
-                background: none;
-                border: none;
-                padding: 4px 0;
-                font-size: 13px;
+                background: var(--surface-hover, rgba(255,255,255,0.06));
+                border: 1px solid var(--border);
+                border-radius: 14px;
+                padding: 4px 10px;
+                font-size: 12px;
                 color: var(--text);
                 cursor: pointer;
                 font-family: 'DM Sans', sans-serif;
-                text-align: left;
-                text-decoration: underline;
-                text-decoration-color: var(--border);
-                text-underline-offset: 2px;
+                white-space: nowrap;
               "
-            >{p.name}{#if p.email}<span style="color: var(--text-muted); margin-left: 6px; font-size: 12px; text-decoration: none;">{p.email}</span>{/if}</button>
+            >{p.name}</button>
           {/each}
+          {#if !participantsExpanded && hiddenCount > 0}
+            <button
+              onclick={() => participantsExpanded = true}
+              style="
+                background: none;
+                border: 1px dashed var(--border);
+                border-radius: 14px;
+                padding: 4px 10px;
+                font-size: 12px;
+                color: var(--text-muted);
+                cursor: pointer;
+                font-family: 'DM Sans', sans-serif;
+                white-space: nowrap;
+              "
+            >+{hiddenCount} more</button>
+          {/if}
         </div>
       </div>
     {/if}

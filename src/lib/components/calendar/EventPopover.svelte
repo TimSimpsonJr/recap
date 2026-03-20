@@ -35,12 +35,14 @@
     let l = anchorRect.left;
 
     // Flip above if not enough space below
-    if (t + rect.height > viewportH - 16) {
-      t = anchorRect.top - rect.height - 6;
+    const popH = rect.height;
+    const popW = rect.width;
+    if (t + popH > viewportH - 16) {
+      t = anchorRect.top - popH - 6;
     }
     // Clamp horizontally
-    if (l + rect.width > viewportW - 16) {
-      l = viewportW - rect.width - 16;
+    if (l + popW > viewportW - 16) {
+      l = viewportW - popW - 16;
     }
     if (l < 16) l = 16;
 
@@ -51,15 +53,18 @@
   // Participants filtered to exclude current user
   let visibleParticipants = $derived.by(() => {
     const userName = get(settings).userName?.toLowerCase() ?? "";
-    const filtered = event.participants.filter(
-      (p) => p.name.toLowerCase() !== userName
-    );
-    return filtered;
+    if (!userName) return event.participants;
+    return event.participants.filter((p) => {
+      if (p.name.toLowerCase() === userName) return false;
+      if (p.email && p.email.toLowerCase() === userName) return false;
+      return true;
+    });
   });
 
-  let shownParticipants = $derived(visibleParticipants.slice(0, 4));
+  // Show up to 8 in popover, rest as overflow
+  let shownParticipants = $derived(visibleParticipants.slice(0, 8));
   let overflowCount = $derived(
-    Math.max(0, visibleParticipants.length - 4)
+    Math.max(0, visibleParticipants.length - 8)
   );
 
   // Dismiss handlers
@@ -107,43 +112,43 @@
     position: fixed;
     top: {top}px;
     left: {left}px;
-    min-width: 280px;
-    max-width: 360px;
+    min-width: 300px;
+    max-width: 380px;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: 8px;
-    padding: 14px 18px;
+    padding: 16px 18px;
     z-index: 1000;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
     font-family: 'DM Sans', sans-serif;
   "
 >
-  <!-- Title -->
-  <div style="font-size: 15px; font-weight: 700; color: var(--text);">
-    {event.title}
+  <!-- Header: Title + platform -->
+  <div style="display: flex; align-items: flex-start; gap: 8px;">
+    <div style="flex: 1; min-width: 0;">
+      <div style="font-size: 15px; font-weight: 700; color: var(--text);">
+        {event.title}
+      </div>
+      <div style="font-size: 13px; color: var(--text-muted); margin-top: 2px;">
+        {formatTimeRange(event.start, event.end)}
+      </div>
+    </div>
+    {#if event.detected_platform}
+      <span
+        style="
+          flex-shrink: 0;
+          padding: 2px 8px;
+          font-size: 11px;
+          font-weight: 600;
+          color: var(--text-muted);
+          background: var(--surface-hover, rgba(255,255,255,0.06));
+          border: 1px solid var(--border);
+          border-radius: 10px;
+          margin-top: 2px;
+        "
+      >{platformLabel(event.detected_platform)}</span>
+    {/if}
   </div>
-
-  <!-- Time range -->
-  <div style="font-size: 13px; color: var(--text-muted); margin-top: 2px;">
-    {formatTimeRange(event.start, event.end)}
-  </div>
-
-  <!-- Platform badge -->
-  {#if event.detected_platform}
-    <span
-      style="
-        display: inline-block;
-        margin-top: 6px;
-        padding: 2px 8px;
-        font-size: 11px;
-        font-weight: 600;
-        color: var(--text-muted);
-        background: var(--surface-hover, rgba(255,255,255,0.06));
-        border: 1px solid var(--border);
-        border-radius: 10px;
-      "
-    >{platformLabel(event.detected_platform)}</span>
-  {/if}
 
   <!-- Divider -->
   <div style="border-top: 1px solid var(--border); margin: 10px 0;"></div>
@@ -165,6 +170,7 @@
         flex-shrink: 0;
       "
     ></button>
+    <span style="font-size: 12px; color: var(--text-muted);">Auto-record</span>
 
     <!-- Series toggle link -->
     {#if event.recurring_series_id}
@@ -192,16 +198,16 @@
     {#if event.meeting_url}
       <button
         onclick={() => openUrl(event.meeting_url!)}
-        title="Join meeting"
         style="
           background: none;
           border: none;
-          padding: 0;
-          font-size: 15px;
+          padding: 2px 8px;
+          font-size: 12px;
           cursor: pointer;
-          color: var(--text-muted);
+          color: var(--blue, #58a6ff);
+          font-family: 'DM Sans', sans-serif;
         "
-      >&#8599;</button>
+      >Join &#8599;</button>
     {/if}
 
     <!-- Recording link -->
@@ -220,29 +226,42 @@
 
   <!-- Participants -->
   {#if shownParticipants.length > 0}
-    <div style="margin-top: 10px; display: flex; flex-wrap: wrap; gap: 4px;">
-      {#each shownParticipants as p}
-        <button
-          onclick={(e) => handleParticipantClick(p, e)}
-          style="
-            background: none;
-            border: none;
-            padding: 2px 0;
-            font-size: 13px;
-            color: var(--text);
-            cursor: pointer;
-            font-family: 'DM Sans', sans-serif;
-            text-decoration: underline;
-            text-decoration-color: var(--border);
-            text-underline-offset: 2px;
-          "
-        >{p.name}</button>
-      {/each}
-      {#if overflowCount > 0}
-        <span style="font-size: 12px; color: var(--text-muted); align-self: center;">
-          +{overflowCount} more
-        </span>
-      {/if}
+    <div style="margin-top: 12px;">
+      <div style="font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px;">
+        Participants ({visibleParticipants.length})
+      </div>
+      <div style="display: flex; flex-direction: column; gap: 1px;">
+        {#each shownParticipants as p}
+          <button
+            onclick={(e) => handleParticipantClick(p, e)}
+            style="
+              background: none;
+              border: none;
+              padding: 3px 0;
+              font-size: 13px;
+              color: var(--text);
+              cursor: pointer;
+              font-family: 'DM Sans', sans-serif;
+              text-align: left;
+            "
+          >{p.name}</button>
+        {/each}
+        {#if overflowCount > 0}
+          <button
+            onclick={onOpenSidePanel}
+            style="
+              background: none;
+              border: none;
+              padding: 3px 0;
+              font-size: 12px;
+              color: var(--text-muted);
+              cursor: pointer;
+              font-family: 'DM Sans', sans-serif;
+              text-align: left;
+            "
+          >+{overflowCount} more</button>
+        {/if}
+      </div>
     </div>
   {/if}
 
@@ -251,7 +270,7 @@
     onclick={onOpenSidePanel}
     style="
       display: block;
-      margin-top: 10px;
+      margin-top: 12px;
       background: none;
       border: none;
       padding: 0;

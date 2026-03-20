@@ -291,6 +291,10 @@ export async function getUpcomingMeetings(
   return invoke("get_upcoming_meetings", { hoursAhead });
 }
 
+export async function getAllCachedEvents(): Promise<CalendarEvent[]> {
+  return invoke("get_all_cached_events");
+}
+
 export async function syncCalendar(): Promise<CalendarCache> {
   return invoke("sync_calendar");
 }

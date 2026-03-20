@@ -22,6 +22,7 @@
     "shell:default",
     "dialog:default",
     "notification:default",
-    "clipboard-manager:allow-write-text"
+    "clipboard-manager:allow-write-text",
+    "core:webview:allow-set-webview-zoom"
   ]
 }

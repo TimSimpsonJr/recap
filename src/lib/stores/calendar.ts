@@ -1,8 +1,10 @@
 import { writable, get } from "svelte/store";
+import { listen } from "@tauri-apps/api/event";
 import { settings } from "./settings";
 import {
   syncCalendar,
   getUpcomingMeetings,
+  getAllCachedEvents,
   getCalendarMatches,
   getCalendarLastSynced,
   fetchCalendarEvents,
@@ -10,6 +12,27 @@ import {
   setSeriesAutoRecord,
   type CalendarEvent,
 } from "../tauri";
+
+// When background enrichment completes, patch participant data from the
+// enriched cache into the current store (both past and upcoming events).
+listen("calendar-enriched", async () => {
+  try {
+    const enriched = await getAllCachedEvents();
+    const enrichedMap = new Map(enriched.map((e) => [e.id, e]));
+    calendarStore.update((s) => ({
+      ...s,
+      events: s.events.map((e) => {
+        const updated = enrichedMap.get(e.id);
+        if (updated && updated.participants.length > e.participants.length) {
+          return { ...e, participants: updated.participants };
+        }
+        return e;
+      }),
+    }));
+  } catch (err) {
+    console.warn("Failed to apply enriched participants:", err);
+  }
+});
 
 export interface CalendarState {
   events: CalendarEvent[];

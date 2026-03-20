@@ -118,43 +118,34 @@ export function platformLabel(platform: string): string {
 export const BUSINESS_START = 7;
 export const BUSINESS_END = 19;
 
-/** Row heights in pixels. */
-export const BUSINESS_HOUR_HEIGHT = 60;
-export const OFF_HOUR_HEIGHT = 20;
+/** Row height in pixels (uniform for all hours). */
+export const HOUR_HEIGHT = 60;
+
+/** Check if an hour falls within business hours. */
+export function isBusinessHour(hour: number): boolean {
+  return hour >= BUSINESS_START && hour < BUSINESS_END;
+}
 
 /** Get the Y offset in pixels for a given hour (0-23). */
 export function hourToY(hour: number): number {
-  let y = 0;
-  for (let h = 0; h < hour; h++) {
-    y += h >= BUSINESS_START && h < BUSINESS_END
-      ? BUSINESS_HOUR_HEIGHT
-      : OFF_HOUR_HEIGHT;
-  }
-  return y;
+  return hour * HOUR_HEIGHT;
 }
 
 /** Get the Y offset for a specific time (hour + fractional minutes). */
 export function timeToY(date: Date): number {
   const hour = date.getHours();
   const minuteFraction = date.getMinutes() / 60;
-  const baseY = hourToY(hour);
-  const rowHeight =
-    hour >= BUSINESS_START && hour < BUSINESS_END
-      ? BUSINESS_HOUR_HEIGHT
-      : OFF_HOUR_HEIGHT;
-  return baseY + minuteFraction * rowHeight;
+  return (hour + minuteFraction) * HOUR_HEIGHT;
 }
 
 /** Total height of the 24-hour grid. */
 export function totalGridHeight(): number {
-  return hourToY(24);
+  return 24 * HOUR_HEIGHT;
 }
 
 /** Get the row height for a given hour. */
-export function hourHeight(hour: number): number {
-  return hour >= BUSINESS_START && hour < BUSINESS_END
-    ? BUSINESS_HOUR_HEIGHT
-    : OFF_HOUR_HEIGHT;
+export function hourHeight(_hour: number): number {
+  return HOUR_HEIGHT;
 }
 
 // ─── Event positioning ──────────────────────────────────────────

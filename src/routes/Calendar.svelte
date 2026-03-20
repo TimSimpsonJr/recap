@@ -165,10 +165,9 @@
 </script>
 
 <div
-  class="h-full overflow-y-auto"
   style="font-family: 'DM Sans', sans-serif; padding: {narrow
-    ? '24px 16px'
-    : '32px 40px'}; overflow-x: hidden; display: flex; flex-direction: column;"
+    ? '24px 16px 0 16px'
+    : '32px 40px 0 40px'}; overflow: hidden; display: flex; flex-direction: column; flex: 1; min-height: 0; box-sizing: border-box;"
 >
   <!-- Header -->
   <div

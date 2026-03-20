@@ -15,7 +15,9 @@
     eventColor,
     EVENT_COLORS,
     formatTime,
+    isBusinessHour,
     BUSINESS_START,
+    HOUR_HEIGHT,
   } from "../../calendar-utils";
 
   interface Props {
@@ -29,6 +31,7 @@
 
   const DAY_ABBREVS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
   const hours = Array.from({ length: 24 }, (_, i) => i);
+  const LABEL_OFFSET = 7; // px above grid line where label text sits
 
   let days = $derived(Array.from({ length: 7 }, (_, i) => addDays(weekStart(currentDate), i)));
 
@@ -36,7 +39,11 @@
 
   let nowY = $state(timeToY(new Date()));
   let gridContainer: HTMLDivElement | undefined = $state();
+  let headerEl: HTMLDivElement | undefined = $state();
   let timer: ReturnType<typeof setInterval> | undefined;
+
+  let headerHeight = $state(53);
+  let bottomEdgeHour = $state(-1);
 
   function formatHour(hour: number): string {
     if (hour === 0) return "12 AM";
@@ -50,27 +57,46 @@
     onEventPopover(event, target.getBoundingClientRect());
   }
 
+  function handleScroll() {
+    if (!gridContainer) return;
+    const st = gridContainer.scrollTop;
+    const ch = gridContainer.clientHeight;
+
+    // Grid Y at the visible bottom edge
+    const bottomGridY = st + ch - headerHeight;
+
+    // Next hour line at or just past the visible bottom
+    const nextHour = Math.ceil(bottomGridY / HOUR_HEIGHT);
+    bottomEdgeHour = (nextHour >= 1 && nextHour <= 23) ? nextHour : -1;
+  }
+
   onMount(() => {
     timer = setInterval(() => {
       nowY = timeToY(new Date());
     }, 60_000);
 
-    // Auto-scroll to current time or business start
+    if (headerEl) {
+      headerHeight = headerEl.getBoundingClientRect().height;
+    }
+
     if (gridContainer) {
       const now = new Date();
       const scrollTarget = now.getHours() < BUSINESS_START
         ? hourToY(BUSINESS_START) - 100
         : timeToY(now) - 100;
       gridContainer.scrollTop = Math.max(0, scrollTarget);
+      gridContainer.addEventListener("scroll", handleScroll);
+      handleScroll();
     }
   });
 
   onDestroy(() => {
     if (timer) clearInterval(timer);
+    gridContainer?.removeEventListener("scroll", handleScroll);
   });
 </script>
 
-<div style="display: flex; flex-direction: column; flex: 1; min-height: 0;">
+<div style="display: flex; flex-direction: column; flex: 1; min-height: 0; position: relative;">
   <!-- All-day banner -->
   {#if hasAllDay}
     <div style="display: flex; border-bottom: 1px solid var(--border); flex-shrink: 0;">
@@ -105,43 +131,61 @@
     </div>
   {/if}
 
-  <!-- Day headers row -->
-  <div style="display: flex; flex-shrink: 0; border-bottom: 1px solid var(--border);">
-    <div style="width: 60px; flex-shrink: 0;"></div>
-    {#each days as day, i}
-      <div style="
-        flex: 1;
-        text-align: center;
-        padding: 8px 0 6px;
-        border-left: 1px solid var(--border);
-      ">
-        <div style="font-size: 11px; color: var(--text-muted); letter-spacing: 0.5px;">{DAY_ABBREVS[i]}</div>
-        <div style="
-          font-size: 18px;
-          font-weight: 600;
-          margin-top: 2px;
-          color: {isToday(day) ? 'var(--gold)' : 'var(--text)'};
-        ">{day.getDate()}</div>
-      </div>
-    {/each}
-  </div>
-
   <!-- Scrollable time grid -->
-  <div bind:this={gridContainer} style="flex: 1; overflow-y: auto; min-height: 0;">
-    <div style="display: flex; position: relative; height: {totalGridHeight()}px;">
-      <!-- Time labels column -->
-      <div style="width: 60px; position: relative; flex-shrink: 0;">
-        {#each hours as hour}
+  <div bind:this={gridContainer} style="flex: 1; min-height: 0; overflow-y: auto;">
+    <!-- Day headers row (sticky inside scroll container for alignment) -->
+    <div bind:this={headerEl} style="display: flex; border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 20; background: var(--bg);">
+      <div style="width: 60px; flex-shrink: 0;"></div>
+      {#each days as day, i}
+        <div style="
+          flex: 1;
+          text-align: center;
+          padding: 8px 0 6px;
+          border-left: 1px solid var(--border);
+        ">
+          <div style="font-size: 11px; color: var(--text-muted); letter-spacing: 0.5px;">{DAY_ABBREVS[i]}</div>
           <div style="
-            position: absolute;
-            top: {hourToY(hour)}px;
-            right: 8px;
-            font-size: 11px;
-            color: var(--text-muted);
-            transform: translateY(-7px);
-            white-space: nowrap;
-          ">{formatHour(hour)}</div>
+            font-size: 18px;
+            font-weight: 600;
+            margin-top: 2px;
+            color: {isToday(day) ? 'var(--gold)' : 'var(--text)'};
+          ">{day.getDate()}</div>
+        </div>
+      {/each}
+    </div>
+
+    <div style="display: flex; position: relative; height: {totalGridHeight()}px;">
+      <!-- Time labels column — each hour in its own containing block for CSS sticky -->
+      <div style="width: 60px; flex-shrink: 0; position: relative;">
+        {#each hours as hour}
+          <div style="height: {HOUR_HEIGHT}px;">
+            <div style="
+              position: sticky;
+              top: {headerHeight + LABEL_OFFSET}px;
+              bottom: 0;
+              font-size: 11px;
+              color: var(--text-muted);
+              text-align: right;
+              padding-right: 8px;
+              transform: translateY(-{LABEL_OFFSET}px);
+              background: var(--bg);
+              width: fit-content;
+              margin-left: auto;
+              white-space: nowrap;
+              z-index: 2;
+            ">{formatHour(hour)}</div>
+          </div>
         {/each}
+        <!-- Midnight label at the very bottom of the grid -->
+        <div style="
+          position: absolute;
+          top: {totalGridHeight()}px;
+          right: 8px;
+          font-size: 11px;
+          color: var(--text-muted);
+          transform: translateY(-{LABEL_OFFSET}px);
+          white-space: nowrap;
+        ">12 AM</div>
       </div>
 
       <!-- Day columns -->
@@ -156,6 +200,7 @@
               width: 100%;
               border-bottom: 1px solid var(--border);
               box-sizing: border-box;
+              background: {isBusinessHour(hour) ? 'transparent' : 'rgba(255, 255, 255, 0.03)'};
             "></div>
           {/each}
 
@@ -229,4 +274,21 @@
       {/each}
     </div>
   </div>
+
+  <!-- Bottom edge hour label (overlay) -->
+  {#if bottomEdgeHour >= 0}
+    <div style="
+      position: absolute;
+      bottom: 2px;
+      left: 0;
+      width: 52px;
+      font-size: 11px;
+      color: var(--text-muted);
+      text-align: right;
+      padding-right: 8px;
+      background: var(--bg);
+      z-index: 25;
+      pointer-events: none;
+    ">{formatHour(bottomEdgeHour)}</div>
+  {/if}
 </div>
