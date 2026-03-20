@@ -1,7 +1,9 @@
 <script lang="ts">
   import { fly } from "svelte/transition";
+  import { onMount } from "svelte";
   import type { MeetingSummary } from "../tauri";
   import { selectedIds, selectAll } from "../stores/selection";
+  import { reducedMotion, motionParams } from "../reduced-motion";
   import MeetingRow from "./MeetingRow.svelte";
 
   interface Props {
@@ -25,6 +27,14 @@
     selectMode = false,
     onToggleCheck,
   }: Props = $props();
+
+  let initialLoad = $state(true);
+
+  onMount(() => {
+    requestAnimationFrame(() => {
+      initialLoad = false;
+    });
+  });
 
   interface DateGroup {
     label: string;
@@ -155,7 +165,11 @@
         {group.label}
       </div>
       {#each group.meetings as meeting, i (meeting.id)}
-        <div transition:fly={{ y: 10, duration: 200, delay: i * 30 }}>
+        <div
+          in:fly={initialLoad
+            ? motionParams({ y: 20, duration: 250, delay: Math.min(i, 10) * 50 }, $reducedMotion)
+            : { duration: 0 }}
+        >
           <MeetingRow
             {meeting}
             isSelected={selectedId === meeting.id}
