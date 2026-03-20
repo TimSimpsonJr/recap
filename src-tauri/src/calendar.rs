@@ -371,8 +371,6 @@ async fn zoho_calendar_request(
         .text()
         .await
         .map_err(|e| format!("Failed to read Zoho Calendar response: {}", e))?;
-    eprintln!("[Zoho Calendar] Response (first 1000 chars): {}", &body[..body.len().min(1000)]);
-
     serde_json::from_str(&body)
         .map_err(|e| format!("Failed to parse Zoho Calendar response: {} — body: {}", e, &body[..body.len().min(300)]))
 }
