@@ -161,7 +161,6 @@
     flex-direction: column;
     z-index: 20;
   }
-  }
 
   .sidebar-header {
     display: flex;
