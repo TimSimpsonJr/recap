@@ -7,6 +7,7 @@ use tauri_plugin_deep_link::DeepLinkExt;
 pub struct OAuthCallbackPayload {
     pub provider: String,
     pub code: String,
+    pub state: String,
 }
 
 /// Register deep link handler and process any URLs the app was opened with.
@@ -50,11 +51,17 @@ fn handle_deep_link_url(app: &tauri::AppHandle, url: &str) {
                         .query_pairs()
                         .find(|(key, _)| key == "code")
                         .map(|(_, value)| value.to_string());
+                    let state = parsed
+                        .query_pairs()
+                        .find(|(key, _)| key == "state")
+                        .map(|(_, value)| value.to_string())
+                        .unwrap_or_default();
                     if let Some(code) = code {
                         log::info!("OAuth callback for {}: code received", provider);
                         let payload = OAuthCallbackPayload {
                             provider,
                             code,
+                            state,
                         };
                         if let Err(e) = app.emit("oauth-callback", &payload) {
                             log::error!("Failed to emit oauth-callback event: {}", e);

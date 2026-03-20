@@ -20,11 +20,12 @@ export interface TokenResponse {
 export async function exchangeOAuthCode(
   provider: string,
   code: string,
+  state: string,
   clientId: string,
   clientSecret: string,
   zohoRegion?: string
 ): Promise<TokenResponse> {
-  return invoke("exchange_oauth_code", { provider, code, clientId, clientSecret, zohoRegion });
+  return invoke("exchange_oauth_code", { provider, code, state, clientId, clientSecret, zohoRegion });
 }
 
 // Sidecar

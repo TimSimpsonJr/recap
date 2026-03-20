@@ -116,6 +116,9 @@ pub fn run() {
             // Encrypted credential store (AES-256-GCM, key derived from machine identity)
             credentials::init_secret_store(app)?;
 
+            // OAuth state store for CSRF verification
+            app.manage(oauth::OAuthStateStoreState::new());
+
             // Participant index managed state
             app.manage(participants::ParticipantIndexState::new(participants::ParticipantIndex::new()));
 

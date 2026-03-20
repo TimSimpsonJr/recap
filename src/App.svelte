@@ -131,7 +131,7 @@
 
     // Deep link flow (Zoom, Zoho, Todoist): receives auth code, exchanges for tokens
     await listen("oauth-callback", async (event: any) => {
-      const { provider, code } = event.payload;
+      const { provider, code, state } = event.payload;
       const creds = get(credentials);
       const providerState = creds[provider as ProviderName];
 
@@ -141,6 +141,7 @@
           const tokens = await exchangeOAuthCode(
             provider,
             code,
+            state,
             providerState.clientId,
             providerState.clientSecret,
             zohoRegion
