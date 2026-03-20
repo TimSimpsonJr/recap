@@ -1,3 +1,7 @@
+<script module lang="ts">
+  let persistedMeetingId: string | null = null;
+</script>
+
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
   import {
@@ -36,7 +40,20 @@
   import BulkActionBar from "../lib/components/BulkActionBar.svelte";
   import BulkSpeakerModal from "../lib/components/BulkSpeakerModal.svelte";
   import { fly } from "svelte/transition";
+  import { cubicOut } from "svelte/easing";
   import { reducedMotion, motionParams } from "../lib/reduced-motion";
+
+  function drawerSlide(node: HTMLElement, { duration = 400, easing = cubicOut }: { duration?: number; easing?: (t: number) => number } = {}) {
+    const width = node.offsetWidth;
+    return {
+      duration,
+      easing,
+      css: (t: number) => {
+        const offset = (1 - t) * width;
+        return `clip-path: inset(0 0 0 ${offset}px); transform: translateX(${offset}px);`;
+      },
+    };
+  }
 
   interface Props {
     initialMeetingId?: string | null;
@@ -46,7 +63,7 @@
   let { initialMeetingId = null, initialFilterParticipant = null }: Props = $props();
 
   let filtersExpanded = $state(false);
-  let selectedMeetingId = $state<string | null>(null);
+  let selectedMeetingId = $state<string | null>(persistedMeetingId);
   let windowWidth = $state(window.innerWidth);
   let showSpeakerModal = $state(false);
 
@@ -112,10 +129,12 @@
 
   function handleSelectMeeting(id: string) {
     selectedMeetingId = id;
+    persistedMeetingId = id;
   }
 
   function handleCloseDetail() {
     selectedMeetingId = null;
+    persistedMeetingId = null;
   }
 
   function handleToggleSelectMode() {
@@ -205,8 +224,7 @@
       <!-- Meeting list panel -->
       <div
         class="meeting-list-panel"
-        class:has-detail={selectedMeetingId !== null}
-        class:narrow-mode={windowWidth < 900 && !selectedMeetingId}
+        class:narrow-mode={windowWidth < 900}
       >
         <div
           style="
@@ -359,25 +377,46 @@
         {/if}
       </div>
 
-      <!-- Detail panel — always present, content slides in -->
-      {#if !$selectMode}
-        <div class="detail-panel-wrapper" class:has-content={!!selectedMeetingId}>
-          {#if selectedMeetingId}
+      <!-- Landing / Detail panel -->
+      <div class="detail-area">
+        <div class="landing-screen">
+          <div class="landing-hero">
+            <svg viewBox="0 0 100 100" width="72" height="72" class="landing-logo">
+              <circle cx="44" cy="38" r="32" fill="none" stroke="var(--gold)" stroke-width="5"/>
+              <circle cx="44" cy="38" r="12" fill="var(--gold)"/>
+              <circle cx="22" cy="84" r="5" fill="var(--text-faint)"/>
+              <circle cx="44" cy="84" r="5" fill="var(--gold)"/>
+              <circle cx="66" cy="84" r="5" fill="var(--text-faint)"/>
+            </svg>
+            <h2 class="landing-heading">Recap</h2>
+            <p class="landing-tagline">Your meetings, distilled.</p>
+          </div>
+          <div class="landing-hint">
+            <span>Choose a meeting from the list to view its details, notes, and transcript.</span>
+          </div>
+        </div>
+
+        {#if !$selectMode && selectedMeetingId}
+          <div
+            class="detail-panel-wrapper"
+            in:drawerSlide={$reducedMotion ? { duration: 0 } : { duration: 400 }}
+            out:drawerSlide={$reducedMotion ? { duration: 0 } : { duration: 500 }}
+          >
             {#key selectedMeetingId}
-              <div in:fly={motionParams({ x: -40, duration: 200 }, $reducedMotion)}>
+              <div
+                class="detail-content"
+                in:fly={motionParams({ x: -40, duration: 350, delay: 50 }, $reducedMotion)}
+                out:fly={motionParams({ x: 40, duration: 200 }, $reducedMotion)}
+              >
                 <DetailPanel
                   meetingId={selectedMeetingId}
                   onClose={handleCloseDetail}
                 />
               </div>
             {/key}
-          {:else}
-            <div class="empty-detail">
-              <span style="color: var(--text-faint); font-size: 14px;">Select a meeting to view details</span>
-            </div>
-          {/if}
-        </div>
-      {/if}
+          </div>
+        {/if}
+      </div>
     </div>
   {/if}
 </div>
@@ -391,38 +430,81 @@
 
 <style>
   .meeting-list-panel {
-    flex: 1;
+    flex: 0 0 320px;
     overflow-y: auto;
-    padding: 0 28px;
-    transition: flex 400ms cubic-bezier(0.4, 0, 0.2, 1);
+    padding: 0 16px;
     position: relative;
   }
 
   .meeting-list-panel.narrow-mode {
-    padding: 0 16px;
+    flex: 1;
+    min-width: 0;
   }
 
-  .meeting-list-panel.has-detail {
-    flex: 0 0 320px;
-    min-width: 320px;
-    max-width: 320px;
-    padding: 0 16px;
+  .detail-area {
+    flex: 1;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .landing-screen {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    font-family: 'DM Sans', sans-serif;
+  }
+
+  .landing-hero {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 48px;
+  }
+
+  .landing-logo {
+    margin-bottom: 8px;
+  }
+
+  .landing-heading {
+    font-family: 'Source Serif 4', serif;
+    font-size: 32px;
+    font-weight: 700;
+    color: var(--text);
+    margin: 0;
+  }
+
+  .landing-tagline {
+    font-size: 15px;
+    color: var(--text-muted);
+    margin: 0;
+    letter-spacing: 0.02em;
+  }
+
+  .landing-hint {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--text-faint);
+    max-width: 260px;
+    text-align: center;
+    line-height: 1.5;
   }
 
   .detail-panel-wrapper {
-    flex: 0 0 0px;
+    position: absolute;
+    inset: 0;
     overflow: hidden;
-    transition: flex-basis 300ms cubic-bezier(0.4, 0, 0.2, 1);
+    background: var(--bg);
   }
 
-  .detail-panel-wrapper.has-content {
-    flex: 1;
-  }
-
-  .empty-detail {
-    display: flex;
-    align-items: center;
-    justify-content: center;
+  .detail-content {
     height: 100%;
+    min-width: 0;
   }
 </style>

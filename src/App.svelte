@@ -320,8 +320,8 @@
 
         "
       >
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="8" cy="8" r="2.5"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"/>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/>
         </svg>
         <span style="display:{windowWidth >= 900 ? 'inline' : 'none'};">Settings</span>
       </a>
@@ -362,24 +362,55 @@
     </nav>
 
     <!-- Route content -->
-    {#key currentRoute}
-      <div
-        class="flex-1 overflow-hidden flex flex-col"
-        in:fly={motionParams({ x: slideDirection * 60, duration: 200, easing: cubicOut }, $reducedMotion)}
-        out:fly={motionParams({ x: slideDirection * -60, duration: 200, easing: cubicOut }, $reducedMotion)}
-      >
-        {#if currentRoute === "settings"}
-          <Settings />
-        {:else if currentRoute === "calendar"}
-          <Calendar />
-        {:else if currentRoute === "graph"}
-          <GraphView />
-        {:else}
-          <Dashboard initialMeetingId={meetingId} initialFilterParticipant={filterParticipant} />
-        {/if}
-      </div>
-    {/key}
+    <div class="route-container">
+      {#key currentRoute}
+        <div
+          class="route-page"
+          in:fly={motionParams({ x: slideDirection * 60, duration: 200, easing: cubicOut }, $reducedMotion)}
+          out:fly={motionParams({ x: slideDirection * -60, duration: 200, easing: cubicOut }, $reducedMotion)}
+        >
+          {#if currentRoute === "settings"}
+            <Settings />
+          {:else if currentRoute === "calendar"}
+            <Calendar />
+          {:else if currentRoute === "graph"}
+            <GraphView />
+          {:else}
+            <Dashboard initialMeetingId={meetingId} initialFilterParticipant={filterParticipant} />
+          {/if}
+        </div>
+      {/key}
+    </div>
     {/if}
   {/if}
   <ToastContainer />
 </div>
+
+<style>
+  .route-container {
+    display: grid;
+    flex: 1;
+    min-height: 0;
+    position: relative;
+  }
+
+  .route-container::after {
+    content: '';
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: 30%;
+    background: linear-gradient(to bottom, transparent 0%, rgba(77, 156, 245, 0.06) 100%);
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  .route-page {
+    grid-area: 1 / 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    min-height: 0;
+  }
+</style>
