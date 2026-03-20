@@ -1,7 +1,10 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
+  import { scale } from "svelte/transition";
+  import { cubicOut } from "svelte/easing";
   import { get } from "svelte/store";
   import { settings } from "../../stores/settings";
+  import { reducedMotion, motionParams } from "../../reduced-motion";
   import {
     toggleEventAutoRecord,
     toggleSeriesAutoRecord,
@@ -108,6 +111,8 @@
 
 <div
   bind:this={popoverEl}
+  in:scale={motionParams({ start: 0.9, duration: 150, easing: cubicOut }, $reducedMotion)}
+  out:scale={motionParams({ start: 0.95, duration: 100 }, $reducedMotion)}
   style="
     position: fixed;
     top: {top}px;
@@ -121,6 +126,7 @@
     z-index: 1000;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
     font-family: 'DM Sans', sans-serif;
+    transform-origin: {anchorRect.left < window.innerWidth / 2 ? 'top left' : 'top right'};
   "
 >
   <!-- Header: Title + platform -->
