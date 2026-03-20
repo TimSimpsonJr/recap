@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
+  import { fly, fade } from "svelte/transition";
   import { get } from "svelte/store";
+  import { reducedMotion, motionParams } from "../../reduced-motion";
   import { settings } from "../../stores/settings";
   import {
     toggleEventAutoRecord,
@@ -80,10 +82,11 @@
 <div
   class="backdrop"
   onclick={onClose}
+  transition:fade={motionParams({ duration: 150 }, $reducedMotion)}
 ></div>
 
 <!-- Panel -->
-<div class="side-panel">
+<div class="side-panel" transition:fly={motionParams({ x: 400, duration: 200 }, $reducedMotion)}>
   <!-- Close button -->
   <button
     onclick={onClose}
@@ -314,7 +317,7 @@
     right: 0;
     bottom: 0;
     background: rgba(0, 0, 0, 0.3);
-    z-index: 1000;
+    z-index: 40;
   }
 
   .side-panel {
@@ -325,17 +328,7 @@
     height: 100%;
     background: var(--surface);
     border-left: 1px solid var(--border);
-    z-index: 1001;
+    z-index: 41;
     font-family: 'DM Sans', sans-serif;
-    animation: slide-in 0.2s ease forwards;
-  }
-
-  @keyframes slide-in {
-    from {
-      transform: translateX(100%);
-    }
-    to {
-      transform: translateX(0);
-    }
   }
 </style>
