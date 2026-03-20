@@ -3,6 +3,7 @@
   import { get } from "svelte/store";
   import { settings } from "../stores/settings";
   import { generateBriefing, type Briefing } from "../tauri";
+  import { looksLikeMeetingInvite } from "../calendar-utils";
 
   interface Props {
     eventId: string;
@@ -13,19 +14,6 @@
   }
 
   let { eventId, title, participants, time, eventDescription }: Props = $props();
-
-  function looksLikeMeetingInvite(desc: string): boolean {
-    const lower = desc.toLowerCase();
-    const signals = [
-      "join zoom", "zoom.us/j/", "meeting id:", "dial by your location",
-      "join microsoft teams", "teams.microsoft.com", "click here to join",
-      "meet.google.com/", "join with google meet",
-      "zoho.com/meeting", "join meeting",
-      "passcode:", "one tap mobile", "dial-in", "phone number",
-    ];
-    const hits = signals.filter(s => lower.includes(s)).length;
-    return hits >= 2;
-  }
 
   let briefing: Briefing | null = $state(null);
   let loading = $state(true);
