@@ -1,6 +1,8 @@
 <script lang="ts">
+  import { slide } from "svelte/transition";
   import { settings, saveSetting } from "../stores/settings";
   import { triggerTodoistSync } from "../tauri";
+  import { reducedMotion, motionParams } from "../reduced-motion";
   import SettingsTooltip from "./SettingsTooltip.svelte";
 
   let newType = $state("");
@@ -85,10 +87,10 @@
       {/if}
     </div>
     {#if syncError}
-      <p style="margin:6px 0 0;font-size:13px;color:var(--red);font-family:'DM Sans',sans-serif;">{syncError}</p>
+      <p transition:slide={motionParams({ duration: 200 }, $reducedMotion)} style="margin:6px 0 0;font-size:13px;color:var(--red);font-family:'DM Sans',sans-serif;">{syncError}</p>
     {/if}
     {#if lastSyncResult && !syncError}
-      <p style="margin:6px 0 0;font-size:13px;color:var(--green);font-family:'DM Sans',sans-serif;">{lastSyncResult}</p>
+      <p transition:slide={motionParams({ duration: 200 }, $reducedMotion)} style="margin:6px 0 0;font-size:13px;color:var(--green);font-family:'DM Sans',sans-serif;">{lastSyncResult}</p>
     {/if}
   </div>
 

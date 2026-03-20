@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
+  import { slide } from "svelte/transition";
   import { get } from "svelte/store";
+  import { reducedMotion, motionParams } from "../lib/reduced-motion";
   import { credentials } from "../lib/stores/credentials";
   import {
     calendarStore,
@@ -284,6 +286,7 @@
   <!-- Error banner -->
   {#if $calendarStore.error}
     <div
+      transition:slide={motionParams({ duration: 200 }, $reducedMotion)}
       style="
         background: var(--surface);
         border: 1px solid var(--border);

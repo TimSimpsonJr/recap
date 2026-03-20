@@ -1,8 +1,10 @@
 <script lang="ts">
   import { onMount, onDestroy } from "svelte";
+  import { fade } from "svelte/transition";
   import { getParticipantInfo, type ParticipantInfo } from "../tauri";
   import { writeText } from "@tauri-apps/plugin-clipboard-manager";
   import { activeFilters } from "../stores/meetings";
+  import { reducedMotion, motionParams } from "../reduced-motion";
 
   interface Props {
     name: string;
@@ -203,6 +205,7 @@
           {copied ? "✓" : "⧉"}
           {#if copied}
             <span
+              transition:fade={motionParams({ duration: 100 }, $reducedMotion)}
               style="
                 position: absolute;
                 top: -24px;
