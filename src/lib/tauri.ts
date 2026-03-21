@@ -20,11 +20,12 @@ export interface TokenResponse {
 export async function exchangeOAuthCode(
   provider: string,
   code: string,
+  state: string,
   clientId: string,
   clientSecret: string,
   zohoRegion?: string
 ): Promise<TokenResponse> {
-  return invoke("exchange_oauth_code", { provider, code, clientId, clientSecret, zohoRegion });
+  return invoke("exchange_oauth_code", { provider, code, state, clientId, clientSecret, zohoRegion });
 }
 
 // Sidecar
@@ -290,6 +291,10 @@ export async function getUpcomingMeetings(
   return invoke("get_upcoming_meetings", { hoursAhead });
 }
 
+export async function getAllCachedEvents(): Promise<CalendarEvent[]> {
+  return invoke("get_all_cached_events");
+}
+
 export async function syncCalendar(): Promise<CalendarCache> {
   return invoke("sync_calendar");
 }
@@ -375,6 +380,65 @@ export async function listMonitors(): Promise<MonitorInfo[]> {
 // Drive type check (for SSD warning during onboarding)
 export async function checkDriveType(path: string): Promise<string> {
   return invoke<string>("check_drive_type", { path });
+}
+
+// Bulk operations IPC
+export async function deleteMeetings(ids: string[]): Promise<string[]> {
+  return invoke<string[]>("delete_meetings", { ids });
+}
+
+export async function reprocessMeetings(ids: string[]): Promise<void> {
+  return invoke<void>("reprocess_meetings", { ids });
+}
+
+export async function bulkRenameSpeaker(oldName: string, newName: string, meetingIds: string[]): Promise<number> {
+  return invoke<number>("bulk_rename_speaker", { oldName, newName, meetingIds });
+}
+
+export async function getSpeakersForMeetings(ids: string[]): Promise<[string, number][]> {
+  return invoke<[string, number][]>("get_speakers_for_meetings", { ids });
+}
+
+// Vault note relinking
+export async function relinkVaultNotes(
+  foundPath: string,
+  expectedPath: string,
+  otherMissing: string[]
+): Promise<[string, string][]> {
+  return invoke<[string, string][]>("relink_vault_notes", { foundPath, expectedPath, otherMissing });
+}
+
+// Todoist sync
+export async function triggerTodoistSync(): Promise<string> {
+  return invoke<string>("trigger_todoist_sync");
+}
+
+// Participant types (matches Rust ParticipantInfo, ParticipantMeeting)
+export interface ParticipantMeeting {
+  id: string;
+  title: string;
+  date: string;
+}
+
+export interface ParticipantInfo {
+  name: string;
+  email: string | null;
+  company: string | null;
+  recent_meetings: ParticipantMeeting[];
+}
+
+// Participant IPC
+export async function getParticipantInfo(
+  name: string,
+  email: string | null
+): Promise<ParticipantInfo> {
+  return invoke("get_participant_info", { name, email });
+}
+
+export async function updateParticipantIndex(
+  meetingId: string
+): Promise<void> {
+  return invoke("update_participant_index", { meetingId });
 }
 
 // Shared utilities

@@ -10,9 +10,13 @@
 
   interface Props {
     expanded: boolean;
+    narrowMode?: boolean;
   }
 
-  let { expanded }: Props = $props();
+  let { expanded, narrowMode = false }: Props = $props();
+
+  // In narrow mode, force collapsed state regardless of expanded prop
+  let effectiveExpanded = $derived(narrowMode ? false : expanded);
 
   let companiesOpen = $state(true);
   let participantsOpen = $state(true);
@@ -29,21 +33,22 @@
 <div
   class="filter-sidebar"
   style="
-    width: {expanded ? '200px' : '0px'};
-    min-width: {expanded ? '200px' : '0px'};
+    width: {effectiveExpanded ? '200px' : '0px'};
+    min-width: {effectiveExpanded ? '200px' : '0px'};
     overflow: hidden;
-    transition: width 200ms ease, min-width 200ms ease;
+    transition: width 300ms cubic-bezier(0.4, 0, 0.2, 1), min-width 300ms cubic-bezier(0.4, 0, 0.2, 1), padding 300ms cubic-bezier(0.4, 0, 0.2, 1);
     background: var(--bg);
-    border-right: {expanded ? '1px solid var(--border)' : 'none'};
+    border-right: {effectiveExpanded ? '1px solid var(--border)' : 'none'};
     height: 100%;
     flex-shrink: 0;
   "
 >
-  {#if expanded}
     <div
       style="
         padding: 14px 14px 8px 14px;
         font-family: 'DM Sans', sans-serif;
+        opacity: {effectiveExpanded ? '1' : '0'};
+        transition: opacity 200ms ease {effectiveExpanded ? '100ms' : '0ms'};
       "
     >
       <!-- Header -->
@@ -296,7 +301,6 @@
         </div>
       {/if}
     </div>
-  {/if}
 </div>
 
 <style>

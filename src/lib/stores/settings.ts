@@ -13,6 +13,7 @@ export interface AppSettings {
   whisperxLanguage: string;
   todoistProject: string;
   todoistLabels: string;
+  todoistProjectGrouping: "company" | "meeting" | "single";
   zohoRegion: string;
   showNotificationOnComplete: boolean;
   autoDetectMeetings: boolean;
@@ -29,7 +30,9 @@ export interface AppSettings {
   claudeModel: string;
   claudeCommand: string;
   todoistProjectMap: Record<string, string>;
+  todoistSyncInterval: number;  // minutes, default 15
   extensionInstalled: boolean;
+  setupChecklistDismissed: boolean;
 }
 
 const defaults: AppSettings = {
@@ -44,6 +47,7 @@ const defaults: AppSettings = {
   whisperxLanguage: "en",
   todoistProject: "",
   todoistLabels: "",
+  todoistProjectGrouping: "company",
   zohoRegion: "com",
   showNotificationOnComplete: true,
   autoDetectMeetings: true,
@@ -60,7 +64,9 @@ const defaults: AppSettings = {
   claudeModel: "sonnet",
   claudeCommand: "claude",
   todoistProjectMap: {},
+  todoistSyncInterval: 15,
   extensionInstalled: false,
+  setupChecklistDismissed: false,
 };
 
 export const settings = writable<AppSettings>({ ...defaults });

@@ -2,6 +2,7 @@
   import { settings, saveSetting } from "../stores/settings";
   import { saveHuggingFaceToken, getHuggingFaceToken } from "../stores/credentials";
   import { onMount } from "svelte";
+  import SettingsTooltip from "./SettingsTooltip.svelte";
 
   let hfToken = $state("");
 
@@ -20,7 +21,7 @@
 
 <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
   <label style="display:block;">
-    <span style={labelStyle}>Model</span>
+    <span style="display:flex;align-items:center;font-size:14px;color:var(--text-muted);margin-bottom:4px;font-family:'DM Sans',sans-serif;">Model<SettingsTooltip text="Larger models are more accurate but slower. large-v3 recommended for best results." /></span>
     <select value={$settings.whisperxModel} onchange={(e) => saveSetting("whisperxModel", e.currentTarget.value)} style={inputStyle}>
       <option value="large-v3">large-v3</option>
       <option value="medium">medium</option>

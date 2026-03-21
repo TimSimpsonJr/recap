@@ -17,6 +17,7 @@
         "width": 1400,
         "height": 900,
         "visible": false,
+        "decorations": false,
         "backgroundColor": "#1D1D1B"
       }
     ],

@@ -2,6 +2,7 @@
   import { settings, saveSetting } from "../stores/settings";
   import { resetMeetings } from "../stores/meetings";
   import { open } from "@tauri-apps/plugin-dialog";
+  import SettingsTooltip from "./SettingsTooltip.svelte";
 
   async function browseRecordingsFolder() {
     const selected = await open({ directory: true, multiple: false });
@@ -13,7 +14,7 @@
 </script>
 
 <label style="display:block;">
-  <span style="display:block;font-size:14px;color:var(--text-muted);margin-bottom:4px;font-family:'DM Sans',sans-serif;">Recordings Folder</span>
+  <span style="display:flex;align-items:center;font-size:14px;color:var(--text-muted);margin-bottom:4px;font-family:'DM Sans',sans-serif;">Recordings Folder<SettingsTooltip text="Where meeting recordings are stored. SSD recommended for multi-stream capture." /></span>
   <div style="display:flex;gap:8px;">
     <input
       type="text"

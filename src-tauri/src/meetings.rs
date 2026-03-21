@@ -2,6 +2,7 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use tauri_plugin_store::StoreExt;
 
 use crate::recorder::types::PipelineStatus;
 
@@ -718,4 +719,218 @@ pub async fn update_speaker_labels(
     std::fs::write(&labels_path, content)
         .map_err(|e| format!("Failed to write speaker_labels.json: {}", e))?;
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Bulk operation commands
+// ---------------------------------------------------------------------------
+
+/// Helper to read the recordings folder path from the settings store.
+fn get_recordings_folder(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let store = app.store("store.json").map_err(|e| e.to_string())?;
+    let folder: String = store
+        .get("recordingsFolder")
+        .and_then(|v| v.as_str().map(String::from))
+        .ok_or("No recordings folder configured")?;
+    Ok(PathBuf::from(folder))
+}
+
+/// Delete multiple meetings by ID. Removes all files matching `{id}.*` in the
+/// recordings directory. Returns the list of IDs that were successfully deleted.
+#[tauri::command]
+pub async fn delete_meetings(ids: Vec<String>, app: tauri::AppHandle) -> Result<Vec<String>, String> {
+    let base_path = get_recordings_folder(&app)?;
+    let mut deleted = Vec::new();
+    let mut errors = Vec::new();
+
+    for id in &ids {
+        // Collect all files belonging to this meeting: {id}.meeting.json,
+        // {id}.transcript.json, {id}.status.json, {id}.mp4, etc.
+        let entries = match std::fs::read_dir(&base_path) {
+            Ok(e) => e,
+            Err(e) => {
+                errors.push(format!("{}: {}", id, e));
+                continue;
+            }
+        };
+
+        let prefix = format!("{}.", id);
+        let mut found_any = false;
+        let mut id_errors = Vec::new();
+
+        for entry in entries.flatten() {
+            let fname = match entry.file_name().into_string() {
+                Ok(n) => n,
+                Err(_) => continue,
+            };
+            if fname.starts_with(&prefix) {
+                found_any = true;
+                if let Err(e) = std::fs::remove_file(entry.path()) {
+                    id_errors.push(format!("{}: {}", fname, e));
+                }
+            }
+        }
+
+        if !found_any {
+            errors.push(format!("{}: not found", id));
+        } else if id_errors.is_empty() {
+            deleted.push(id.clone());
+        } else {
+            errors.extend(id_errors);
+        }
+    }
+
+    if !errors.is_empty() {
+        log::warn!("Some meetings failed to delete: {:?}", errors);
+    }
+
+    Ok(deleted)
+}
+
+/// Reset pipeline status for multiple meetings by clearing their status files.
+#[tauri::command]
+pub async fn reprocess_meetings(ids: Vec<String>, app: tauri::AppHandle) -> Result<(), String> {
+    let base_path = get_recordings_folder(&app)?;
+
+    for id in &ids {
+        let status_path = base_path.join(format!("{}.status.json", id));
+        if status_path.exists() {
+            std::fs::write(&status_path, "{}").map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+/// Rename a speaker across multiple meeting transcripts. Returns the number
+/// of transcript files that were modified.
+#[tauri::command]
+pub async fn bulk_rename_speaker(
+    old_name: String,
+    new_name: String,
+    meeting_ids: Vec<String>,
+    app: tauri::AppHandle,
+) -> Result<u32, String> {
+    let base_path = get_recordings_folder(&app)?;
+    let mut updated_count: u32 = 0;
+
+    for id in &meeting_ids {
+        let transcript_path = base_path.join(format!("{}.transcript.json", id));
+        if !transcript_path.exists() {
+            continue;
+        }
+
+        let content = std::fs::read_to_string(&transcript_path).map_err(|e| e.to_string())?;
+        let mut data: serde_json::Value =
+            serde_json::from_str(&content).map_err(|e| e.to_string())?;
+
+        let mut changed = false;
+        if let Some(utterances) = data.as_array_mut() {
+            // Transcript files are a top-level array of utterances
+            for utt in utterances {
+                if let Some(speaker) = utt.get_mut("speaker") {
+                    if speaker.as_str() == Some(&old_name) {
+                        *speaker = serde_json::Value::String(new_name.clone());
+                        changed = true;
+                    }
+                }
+            }
+        } else if let Some(utterances) = data.get_mut("utterances").and_then(|v| v.as_array_mut())
+        {
+            // Also handle object-wrapped format with "utterances" key
+            for utt in utterances {
+                if let Some(speaker) = utt.get_mut("speaker") {
+                    if speaker.as_str() == Some(&old_name) {
+                        *speaker = serde_json::Value::String(new_name.clone());
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        if changed {
+            let updated = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
+            std::fs::write(&transcript_path, updated).map_err(|e| e.to_string())?;
+            updated_count += 1;
+        }
+    }
+
+    Ok(updated_count)
+}
+
+/// Given a file the user located and the path where it was expected, try to
+/// relink other missing vault notes by checking whether they exist in the same
+/// directory as the found file. Returns pairs of (expected_path, found_path)
+/// for each successfully relinked note.
+#[tauri::command]
+pub async fn relink_vault_notes(
+    found_path: String,
+    expected_path: String,
+    other_missing: Vec<String>,
+) -> Result<Vec<(String, String)>, String> {
+    let found = PathBuf::from(&found_path);
+    let _expected = PathBuf::from(&expected_path);
+
+    let found_dir = found
+        .parent()
+        .ok_or_else(|| "Invalid found path".to_string())?;
+
+    let mut relinked = Vec::new();
+
+    for other_expected in &other_missing {
+        let other_path = PathBuf::from(other_expected);
+        if let Some(filename) = other_path.file_name() {
+            // Try the same directory as the found file
+            let candidate = found_dir.join(filename);
+            if candidate.exists() {
+                relinked.push((
+                    other_expected.clone(),
+                    candidate.to_string_lossy().to_string(),
+                ));
+            }
+        }
+    }
+
+    Ok(relinked)
+}
+
+/// Get all unique speakers across the selected meetings with a count of how
+/// many meetings each speaker appears in. Results are sorted by count
+/// descending.
+#[tauri::command]
+pub async fn get_speakers_for_meetings(
+    ids: Vec<String>,
+    app: tauri::AppHandle,
+) -> Result<Vec<(String, u32)>, String> {
+    let base_path = get_recordings_folder(&app)?;
+    let mut speaker_counts: HashMap<String, u32> = HashMap::new();
+
+    for id in &ids {
+        let transcript_path = base_path.join(format!("{}.transcript.json", id));
+        if !transcript_path.exists() {
+            continue;
+        }
+
+        let content = std::fs::read_to_string(&transcript_path).map_err(|e| e.to_string())?;
+        if let Ok(data) = serde_json::from_str::<serde_json::Value>(&content) {
+            // Support both top-level array and object-wrapped formats
+            let utterances = data
+                .as_array()
+                .or_else(|| data.get("utterances").and_then(|v| v.as_array()));
+
+            if let Some(utterances) = utterances {
+                let mut seen = HashSet::new();
+                for utt in utterances {
+                    if let Some(speaker) = utt.get("speaker").and_then(|s| s.as_str()) {
+                        if seen.insert(speaker.to_string()) {
+                            *speaker_counts.entry(speaker.to_string()).or_insert(0) += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut result: Vec<(String, u32)> = speaker_counts.into_iter().collect();
+    result.sort_by(|a, b| b.1.cmp(&a.1));
+    Ok(result)
 }

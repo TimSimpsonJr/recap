@@ -2,6 +2,7 @@
   import { settings, saveSetting } from "../stores/settings";
   import { listMonitors, type MonitorInfo } from "../tauri";
   import { onMount } from "svelte";
+  import SettingsTooltip from "./SettingsTooltip.svelte";
 
   const inputStyle = "width:100%;background:var(--surface);border:1px solid var(--border);border-radius:6px;padding:6px 12px;font-size:15px;color:var(--text);font-family:'DM Sans',sans-serif;outline:none;";
   const labelStyle = "display:block;font-size:14px;color:var(--text-muted);margin-bottom:4px;font-family:'DM Sans',sans-serif;";
@@ -73,7 +74,7 @@
   <!-- Auto-record all calendar meetings -->
   <label style="display:flex;align-items:center;justify-content:space-between;">
     <div>
-      <span style="font-size:15px;color:var(--text-secondary);font-family:'DM Sans',sans-serif;">Auto-record all calendar meetings</span>
+      <span style="font-size:15px;color:var(--text-secondary);font-family:'DM Sans',sans-serif;">Auto-record all calendar meetings<SettingsTooltip text="Automatically start recording when a calendar event begins. Arms the recorder for every upcoming event." /></span>
       <div style="font-size:12px;color:var(--text-faint);font-family:'DM Sans',sans-serif;margin-top:2px;">
         Arms the recorder for every upcoming calendar event
       </div>

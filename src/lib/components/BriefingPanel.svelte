@@ -3,6 +3,7 @@
   import { get } from "svelte/store";
   import { settings } from "../stores/settings";
   import { generateBriefing, type Briefing } from "../tauri";
+  import { looksLikeMeetingInvite } from "../calendar-utils";
 
   interface Props {
     eventId: string;
@@ -108,7 +109,7 @@
         "
       >
         First meeting with these participants
-        {#if eventDescription}
+        {#if eventDescription && !looksLikeMeetingInvite(eventDescription)}
           <div style="color: var(--text-muted); margin-top: 6px; font-size: 12.5px;">
             {eventDescription}
           </div>

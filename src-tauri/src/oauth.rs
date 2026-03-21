@@ -1,6 +1,22 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::sync::Arc;
+use tauri::Manager;
+use tokio::sync::Mutex;
+
+/// Managed state holding pending OAuth state parameters keyed by provider.
+/// Used to verify the `state` query param on callbacks (CSRF protection).
+pub type OAuthStateStore = Arc<Mutex<HashMap<String, String>>>;
+
+pub struct OAuthStateStoreState(pub OAuthStateStore);
+
+impl OAuthStateStoreState {
+    pub fn new() -> Self {
+        Self(Arc::new(Mutex::new(HashMap::new())))
+    }
+}
 
 /// How we receive the OAuth callback.
 #[derive(Debug, Clone)]
@@ -62,7 +78,7 @@ pub fn get_provider_config(provider: &str, zoho_region: Option<&str>) -> Option<
                 provider: "zoho".into(),
                 auth_url: format!("https://accounts.zoho.{}/oauth/v2/auth", region),
                 token_url: format!("https://accounts.zoho.{}/oauth/v2/token", region),
-                scopes: "ZohoMeeting.manageOrg.READ ZohoCalendar.calendar.READ".into(),
+                scopes: "ZohoMeeting.manageOrg.READ ZohoCalendar.calendar.READ ZohoCalendar.event.READ".into(),
                 redirect_method: RedirectMethod::Localhost,
             })
         }
@@ -84,14 +100,28 @@ pub fn build_auth_url(
     redirect_uri: &str,
     state: &str,
 ) -> String {
-    format!(
+    let mut url = format!(
         "{}?client_id={}&redirect_uri={}&response_type=code&scope={}&state={}",
         config.auth_url,
         urlencoding::encode(client_id),
         urlencoding::encode(redirect_uri),
         urlencoding::encode(&config.scopes),
         urlencoding::encode(state),
-    )
+    );
+
+    // Zoho and Google require access_type=offline to return a refresh token.
+    // prompt=consent ensures the consent screen is shown (required for re-auth).
+    match config.provider.as_str() {
+        "zoho" | "google" => {
+            url.push_str("&access_type=offline&prompt=consent");
+        }
+        "microsoft" => {
+            url.push_str("&prompt=consent");
+        }
+        _ => {}
+    }
+
+    url
 }
 
 /// Exchange an authorization code for tokens.
@@ -182,12 +212,12 @@ const OAUTH_CALLBACK_PORT: u16 = 8399;
 
 /// Start a temporary localhost HTTP server on a fixed port to receive
 /// the OAuth callback. Returns (port, receiver) where receiver will get
-/// the authorization code once the callback arrives.
+/// the (code, state) pair once the callback arrives.
 ///
 /// If the port is already in use (e.g. from a previous OAuth flow still in
 /// TIME_WAIT), we briefly connect to the old listener to unblock it, then
 /// rebind.
-pub fn start_localhost_server() -> Result<(u16, std::sync::mpsc::Receiver<String>), String> {
+pub fn start_localhost_server() -> Result<(u16, std::sync::mpsc::Receiver<(String, String)>), String> {
     let listener = match TcpListener::bind(format!("127.0.0.1:{}", OAUTH_CALLBACK_PORT)) {
         Ok(l) => l,
         Err(_) => {
@@ -224,15 +254,18 @@ pub fn start_localhost_server() -> Result<(u16, std::sync::mpsc::Receiver<String
             let request = String::from_utf8_lossy(&buf[..n]);
 
             // Parse GET /?code=...&state=... HTTP/1.1
-            let code = request
+            let (code, state) = request
                 .lines()
                 .next()
-                .and_then(|line| {
-                    let path = line.split_whitespace().nth(1)?;
-                    let query = path.split('?').nth(1)?;
-                    url::form_urlencoded::parse(query.as_bytes())
-                        .find(|(key, _)| key == "code")
-                        .map(|(_, value)| value.to_string())
+                .map(|line| {
+                    let path = line.split_whitespace().nth(1).unwrap_or("");
+                    let query = path.split('?').nth(1).unwrap_or("");
+                    let params: Vec<(String, String)> = url::form_urlencoded::parse(query.as_bytes())
+                        .map(|(k, v)| (k.to_string(), v.to_string()))
+                        .collect();
+                    let code = params.iter().find(|(k, _)| k == "code").map(|(_, v)| v.clone()).unwrap_or_default();
+                    let state = params.iter().find(|(k, _)| k == "state").map(|(_, v)| v.clone()).unwrap_or_default();
+                    (code, state)
                 })
                 .unwrap_or_default();
 
@@ -246,7 +279,7 @@ pub fn start_localhost_server() -> Result<(u16, std::sync::mpsc::Receiver<String
             let _ = stream.flush();
 
             if !code.is_empty() {
-                let _ = tx.send(code);
+                let _ = tx.send((code, state));
             }
         }
         // listener is dropped here, releasing the port
@@ -271,6 +304,13 @@ pub async fn start_oauth(
 
     let state = uuid::Uuid::new_v4().to_string();
 
+    // Store the state for CSRF verification on callback
+    {
+        let state_store = app.state::<OAuthStateStoreState>();
+        let mut store = state_store.0.lock().await;
+        store.insert(provider.clone(), state.clone());
+    }
+
     let redirect_uri = match &config.redirect_method {
         RedirectMethod::DeepLink => {
             format!("recap://oauth/{}/callback", provider)
@@ -285,16 +325,37 @@ pub async fn start_oauth(
             let client_secret_clone = client_secret.clone();
             let redirect_clone = redirect.clone();
             let app_clone = app.clone();
+            let expected_state = state.clone();
 
             tokio::spawn(async move {
                 // Wait for the code with a timeout
-                let code = tokio::task::spawn_blocking(move || {
+                let result = tokio::task::spawn_blocking(move || {
                     rx.recv_timeout(std::time::Duration::from_secs(300))
                 })
                 .await;
 
-                match code {
-                    Ok(Ok(code)) => {
+                match result {
+                    Ok(Ok((code, callback_state))) => {
+                        // Verify CSRF state parameter
+                        if callback_state != expected_state {
+                            log::error!(
+                                "OAuth state mismatch for {}: expected {}, got {}",
+                                config_clone.provider, expected_state, callback_state
+                            );
+                            // Clean up stored state
+                            let state_store = app_clone.state::<OAuthStateStoreState>();
+                            let mut s = state_store.0.lock().await;
+                            s.remove(&config_clone.provider);
+                            return;
+                        }
+
+                        // Clean up stored state
+                        {
+                            let state_store = app_clone.state::<OAuthStateStoreState>();
+                            let mut s = state_store.0.lock().await;
+                            s.remove(&config_clone.provider);
+                        }
+
                         match exchange_code(
                             &config_clone,
                             &client_id_clone,
@@ -325,6 +386,10 @@ pub async fn start_oauth(
                     }
                     _ => {
                         log::error!("Timed out waiting for OAuth callback");
+                        // Clean up stored state on timeout
+                        let state_store = app_clone.state::<OAuthStateStoreState>();
+                        let mut s = state_store.0.lock().await;
+                        s.remove(&config_clone.provider);
                     }
                 }
             });
@@ -344,13 +409,29 @@ pub async fn start_oauth(
 /// Called from the deep link handler when a callback is received.
 #[tauri::command]
 pub async fn exchange_oauth_code(
-    _app: tauri::AppHandle,
+    app: tauri::AppHandle,
     provider: String,
     code: String,
+    state: String,
     client_id: String,
     client_secret: String,
     zoho_region: Option<String>,
 ) -> Result<TokenResponse, String> {
+    // Verify CSRF state parameter
+    {
+        let state_store = app.state::<OAuthStateStoreState>();
+        let mut store = state_store.0.lock().await;
+        let expected = store
+            .remove(&provider)
+            .ok_or_else(|| format!("No pending OAuth state for provider {}", provider))?;
+        if state != expected {
+            return Err(format!(
+                "OAuth state mismatch for {}: possible CSRF attack",
+                provider
+            ));
+        }
+    }
+
     let config =
         get_provider_config(&provider, zoho_region.as_deref())
             .ok_or_else(|| format!("Unknown provider: {}", provider))?;

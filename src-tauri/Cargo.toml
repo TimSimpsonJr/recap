@@ -32,6 +32,7 @@ tokio = { version = "1", features = ["full"] }
 reqwest = { version = "0.12", features = ["json"] }
 url = "2"
 log = "0.4"
+env_logger = "0.11"
 urlencoding = "2"
 uuid = { version = "1", features = ["v4"] }
 open = "5"
@@ -68,3 +69,4 @@ axum = "0.8"
 serde_yaml = "0.9"
 aes-gcm = "0.10"
 rand = "0.8"
+tauri-plugin-clipboard-manager = "2.3.2"
