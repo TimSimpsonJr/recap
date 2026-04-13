@@ -211,6 +211,9 @@ class Recorder:
         # Notify listener (e.g., pipeline trigger in __main__.py)
         if self.on_recording_stopped is not None and path is not None:
             self.on_recording_stopped(path, org)
+        else:
+            # No pipeline configured — transition back to idle directly
+            self.state_machine.processing_complete()
 
         return path
 
@@ -248,19 +251,34 @@ class Recorder:
             sample_rate = self._sample_rate
 
             def _interleave_and_feed(chunk_frames: int) -> None:
-                # Snapshot the mic buffer before interleave drains it
+                # Snapshot both buffers before interleave drains them
                 bytes_needed = chunk_frames * 2  # int16 = 2 bytes per sample
                 with capture._lock:
                     mic_snapshot = capture._mic_buffer[:bytes_needed]
+                    lb_snapshot = capture._loopback_buffer[:bytes_needed]
 
                 original_interleave(chunk_frames)
 
-                # Feed mic audio to streaming models (mono 16-bit PCM)
-                if mic_snapshot:
+                # Build combined mono audio (same mix the FLAC encoder gets)
+                # by averaging mic + loopback so streaming models hear both
+                # the local user and remote participants.
+                if mic_snapshot or lb_snapshot:
+                    import numpy as np
+
+                    if len(mic_snapshot) < bytes_needed:
+                        mic_snapshot += b"\x00" * (bytes_needed - len(mic_snapshot))
+                    if len(lb_snapshot) < bytes_needed:
+                        lb_snapshot += b"\x00" * (bytes_needed - len(lb_snapshot))
+
+                    mic_arr = np.frombuffer(mic_snapshot, dtype=np.int16).astype(np.int32)
+                    lb_arr = np.frombuffer(lb_snapshot, dtype=np.int16).astype(np.int32)
+                    combined = ((mic_arr + lb_arr) // 2).astype(np.int16)
+                    combined_bytes = combined.tobytes()
+
                     if transcriber is not None:
-                        transcriber.feed_audio(mic_snapshot, sample_rate)
+                        transcriber.feed_audio(combined_bytes, sample_rate)
                     if diarizer is not None:
-                        diarizer.feed_audio(mic_snapshot, sample_rate)
+                        diarizer.feed_audio(combined_bytes, sample_rate)
 
             self._audio_capture._interleave_and_encode = _interleave_and_feed  # type: ignore[assignment]
 

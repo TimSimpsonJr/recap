@@ -123,12 +123,12 @@ class StreamingDiarizer:
 
     def _load_model(self) -> None:
         """Lazy-import NeMo and load the streaming Sortformer model."""
-        from nemo.collections.asr.models import SortformerEncDecDiarModel  # type: ignore[import-untyped]
+        from nemo.collections.asr.models import SortformerEncLabelModel  # type: ignore[import-untyped]
 
-        self._model = SortformerEncDecDiarModel.from_pretrained(
-            self._model_name,
-            map_location=self._device,
-        )
+        self._model = SortformerEncLabelModel.from_pretrained(self._model_name)
+        # Set model to inference mode and move to target device
+        self._model.eval()
+        self._model = self._model.to(self._device)
         logger.info("Loaded streaming Sortformer model on %s", self._device)
 
     def _unload_model(self) -> None:
@@ -136,12 +136,27 @@ class StreamingDiarizer:
         self._model = None
 
     def _process_audio(self, audio_data: bytes, sample_rate: int) -> None:
-        """Feed audio to the model and emit any new segments.
+        """Feed audio to the model and emit any new speaker segments.
 
-        Subclasses or future iterations will implement the actual
-        NeMo streaming inference loop here.
+        Converts raw PCM bytes to a float32 numpy array, feeds the chunk
+        to the NeMo streaming Sortformer model, and emits speaker segments
+        for any detected speaker changes.
         """
         if self._model is None:
             return
-        # Placeholder: real implementation feeds audio_data to the model
-        # and calls self._on_speaker_segment() for each detected segment.
+
+        import numpy as np
+
+        # Convert 16-bit PCM bytes to float32 in [-1.0, 1.0]
+        audio_array = np.frombuffer(audio_data, dtype=np.int16).astype(np.float32) / 32768.0
+
+        # Feed to NeMo streaming interface; the model accumulates audio
+        # internally and periodically emits speaker segments.
+        results = self._model.process_chunk(audio_array)
+        if results:
+            for segment in results:
+                self._on_speaker_segment({
+                    "start": segment.start,
+                    "end": segment.end,
+                    "speaker": f"SPEAKER_{segment.speaker_id:02d}",
+                })
