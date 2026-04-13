@@ -1,13 +1,9 @@
 """Tests for data models."""
-import json
 from datetime import date
 
 from recap.models import (
     ActionItem,
     AnalysisResult,
-    KeyPoint,
-    Decision,
-    FollowUp,
     MeetingMetadata,
     Participant,
     ProfileStub,

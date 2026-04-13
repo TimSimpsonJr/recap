@@ -11,6 +11,7 @@ from datetime import datetime
 
 from recap.errors import map_error
 from recap.models import AnalysisResult, MeetingMetadata, TranscriptResult
+from recap.pipeline.diarize import assign_speakers
 
 logger = logging.getLogger(__name__)
 

@@ -224,9 +224,9 @@ export default class RecapPlugin extends Plugin {
 
         // Get recording path and org from frontmatter
         const cache = this.app.metadataCache.getFileCache(file);
-        const fm = cache?.frontmatter;
-        const recordingPath = fm?.recording?.replace(/\[\[|\]\]/g, "") || "";
-        const org = fm?.org || "";
+        const frontmatter = cache?.frontmatter;
+        const recordingPath = frontmatter?.recording?.replace(/\[\[|\]\]/g, "") || "";
+        const org = frontmatter?.org || "";
 
         const speakers: SpeakerInfo[] = speakerLabels.map(label => ({
             label,
@@ -250,9 +250,9 @@ export default class RecapPlugin extends Plugin {
             return;
         }
         const cache = this.app.metadataCache.getFileCache(file);
-        const fm = cache?.frontmatter;
-        const recordingPath = fm?.recording?.replace(/\[\[|\]\]/g, "") || "";
-        const org = fm?.org || "";
+        const frontmatter = cache?.frontmatter;
+        const recordingPath = frontmatter?.recording?.replace(/\[\[|\]\]/g, "") || "";
+        const org = frontmatter?.org || "";
 
         if (!recordingPath) {
             new Notice("No recording path found in frontmatter");

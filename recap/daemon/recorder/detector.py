@@ -13,7 +13,7 @@ from typing import Callable
 from recap.daemon.recorder.detection import MeetingWindow, detect_meeting_windows
 from recap.daemon.recorder.enrichment import enrich_meeting_metadata
 
-log = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
 # Platforms that the detector knows how to inspect.
 _PLATFORMS = ("teams", "zoom", "signal")
@@ -86,12 +86,12 @@ class MeetingDetector:
             "platform_hint": platform_hint,
         }
         self._recorder.state_machine.arm(org)
-        log.info("Armed for event %s (org=%s, start=%s)", event_id, org, start_time)
+        logger.info("Armed for event %s (org=%s, start=%s)", event_id, org, start_time)
 
     def disarm(self) -> None:
         """Clear arming info and return to IDLE."""
         if self._armed_event is not None:
-            log.info("Disarmed (was event %s)", self._armed_event["event_id"])
+            logger.info("Disarmed (was event %s)", self._armed_event["event_id"])
             self._armed_event = None
             self._recorder.state_machine.disarm()
 
@@ -106,7 +106,7 @@ class MeetingDetector:
             current_windows = detect_meeting_windows(self.enabled_platforms)
             current_hwnds = {m.hwnd for m in current_windows}
             if self._recording_hwnd not in current_hwnds:
-                log.info("Meeting window closed, stopping recording")
+                logger.info("Meeting window closed, stopping recording")
                 await self._recorder.stop()
                 self._recording_hwnd = None
                 # Update tracked meetings
@@ -119,7 +119,7 @@ class MeetingDetector:
         if self._armed_event is not None:
             deadline = self._armed_event["start_time"] + _ARM_TIMEOUT
             if datetime.now() > deadline:
-                log.info("Arm timeout reached, disarming")
+                logger.info("Arm timeout reached, disarming")
                 self.disarm()
 
         detected = detect_meeting_windows(self.enabled_platforms)
@@ -143,7 +143,7 @@ class MeetingDetector:
             # Armed detection overrides platform behavior
             if self._armed_event is not None and not self._recorder.is_recording:
                 org = self._armed_event["org"]
-                log.info(
+                logger.info(
                     "Armed detection: auto-recording %s meeting (org=%s, event=%s)",
                     meeting.platform, org, self._armed_event["event_id"],
                 )
@@ -155,7 +155,7 @@ class MeetingDetector:
             behavior = self.get_behavior(meeting.platform)
             if behavior == "auto-record" and not self._recorder.is_recording:
                 org = self.get_default_org(meeting.platform)
-                log.info("Auto-recording %s meeting (org=%s)", meeting.platform, org)
+                logger.info("Auto-recording %s meeting (org=%s)", meeting.platform, org)
                 await self._recorder.start(org)
                 self._recording_hwnd = meeting.hwnd
             elif behavior == "prompt" and self._on_signal_detected is not None:
@@ -164,7 +164,7 @@ class MeetingDetector:
         # Clean up meetings whose windows have closed.
         closed = set(self._tracked_meetings) - detected_hwnds
         for hwnd in closed:
-            log.debug("Meeting window closed: hwnd=%s", hwnd)
+            logger.debug("Meeting window closed: hwnd=%s", hwnd)
             del self._tracked_meetings[hwnd]
 
     # ------------------------------------------------------------------
@@ -177,7 +177,7 @@ class MeetingDetector:
             try:
                 await self._poll_once()
             except Exception:
-                log.exception("Detection poll error")
+                logger.exception("Detection poll error")
             interval = (
                 _ARMED_POLL_INTERVAL_SECONDS
                 if self.is_armed

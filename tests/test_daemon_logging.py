@@ -1,6 +1,5 @@
 """Tests for daemon logging setup."""
 import logging
-import pathlib
 from recap.daemon.logging_setup import setup_logging
 
 

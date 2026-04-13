@@ -1,10 +1,9 @@
 """Tests for Teams metadata enrichment."""
-import pytest
 from unittest.mock import patch
+from recap.daemon.config import KnownContact
 from recap.daemon.recorder.enrichment import (
     match_known_contacts,
     enrich_meeting_metadata,
-    KnownContact,
 )
 
 

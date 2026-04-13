@@ -51,18 +51,18 @@ export class MeetingListView extends ItemView {
 
             try {
                 const cache = this.app.metadataCache.getFileCache(file);
-                const fm = cache?.frontmatter;
-                if (!fm) continue;
+                const frontmatter = cache?.frontmatter;
+                if (!frontmatter) continue;
 
                 this.meetings.push({
                     path: file.path,
-                    title: fm.title || file.basename,
-                    date: fm.date || "",
-                    org: fm.org || "",
-                    duration: fm.duration || "",
-                    pipelineStatus: fm["pipeline-status"] || "pending",
-                    participants: this.parseParticipants(fm.participants || []),
-                    platform: fm.platform || "",
+                    title: frontmatter.title || file.basename,
+                    date: frontmatter.date || "",
+                    org: frontmatter.org || "",
+                    duration: frontmatter.duration || "",
+                    pipelineStatus: frontmatter["pipeline-status"] || "pending",
+                    participants: this.parseParticipants(frontmatter.participants || []),
+                    platform: frontmatter.platform || "",
                 });
             } catch {
                 // Skip files we can't parse

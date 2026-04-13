@@ -1,5 +1,4 @@
 """Tests for streaming transcriber."""
-import pytest
 from unittest.mock import MagicMock, patch
 from recap.daemon.streaming.transcriber import StreamingTranscriber
 from recap.models import TranscriptResult

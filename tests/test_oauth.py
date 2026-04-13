@@ -2,7 +2,7 @@
 import asyncio
 
 import pytest
-from unittest.mock import patch, MagicMock, AsyncMock
+from unittest.mock import patch, MagicMock
 from recap.daemon.calendar.oauth import OAuthManager
 
 

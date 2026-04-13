@@ -312,7 +312,8 @@ def _parse_participants_from_frontmatter(content: str) -> list[str]:
         return []
     try:
         fm = yaml.safe_load(parts[1])
-    except yaml.YAMLError:
+    except yaml.YAMLError as e:
+        logger.warning("Failed to parse frontmatter for participant extraction: %s", e)
         return []
     if not fm or "participants" not in fm:
         return []

@@ -6,8 +6,11 @@ before daemon launch and reports which checks passed or failed.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
+
+logger = logging.getLogger("recap.startup")
 
 
 @dataclass
@@ -43,7 +46,8 @@ def _check_cuda() -> bool:
         import torch  # noqa: F811
 
         return torch.cuda.is_available()
-    except Exception:
+    except Exception as e:
+        logger.warning("Startup check failed: %s", e, exc_info=True)
         return False
 
 
@@ -58,7 +62,8 @@ def _check_audio_devices() -> bool:
             return count > 0
         finally:
             p.terminate()
-    except Exception:
+    except Exception as e:
+        logger.warning("Startup check failed: %s", e, exc_info=True)
         return False
 
 
@@ -69,7 +74,8 @@ def _check_keyring() -> bool:
 
         keyring.get_password("recap-test", "test")
         return True
-    except Exception:
+    except Exception as e:
+        logger.warning("Startup check failed: %s", e, exc_info=True)
         return False
 
 

@@ -1,5 +1,4 @@
 """Tests for NeMo speaker diarization."""
-import pytest
 from unittest.mock import patch, MagicMock
 from recap.pipeline.diarize import diarize, assign_speakers
 from recap.models import TranscriptResult, Utterance

@@ -1,7 +1,6 @@
 """Tests for auto-start stub."""
 
 from recap.daemon.autostart import install_autostart, remove_autostart, is_autostart_enabled
-import pathlib
 
 
 class TestAutoStartStub:

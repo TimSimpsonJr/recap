@@ -26,6 +26,7 @@ _DETECTOR_KEY = web.AppKey("detector", object)
 _PIPELINE_TRIGGER_KEY = web.AppKey("pipeline_trigger", object)
 _CONFIG_KEY = web.AppKey("config", object)
 _SCHEDULER_KEY = web.AppKey("scheduler", object)
+_AUTH_TOKEN_KEY = web.AppKey("auth_token", str)
 
 
 async def broadcast(app: web.Application, message: dict) -> None:
@@ -55,8 +56,11 @@ async def _meeting_detected(request: web.Request) -> web.Response:
     """POST /meeting-detected — browser extension signals a meeting URL was found."""
     try:
         body = await request.json()
-    except (json.JSONDecodeError, Exception):
+    except json.JSONDecodeError:
         return web.json_response({"error": "invalid JSON body"}, status=400)
+    except Exception as e:
+        logger.error("Unexpected error in _meeting_detected: %s", e, exc_info=True)
+        return web.json_response({"error": "internal server error"}, status=500)
 
     logger.info(
         "Meeting detected: platform=%s url=%s title=%s tabId=%s",
@@ -75,8 +79,11 @@ async def _meeting_ended(request: web.Request) -> web.Response:
     """POST /meeting-ended — browser extension signals meeting page closed."""
     try:
         body = await request.json()
-    except (json.JSONDecodeError, Exception):
+    except json.JSONDecodeError:
         return web.json_response({"error": "invalid JSON body"}, status=400)
+    except Exception as e:
+        logger.error("Unexpected error in _meeting_ended: %s", e, exc_info=True)
+        return web.json_response({"error": "internal server error"}, status=500)
 
     logger.info("Meeting ended: tabId=%s", body.get("tabId"))
     # TODO: Forward this signal to the detector/recorder so it can trigger
@@ -132,9 +139,14 @@ async def _record_start(request: web.Request) -> web.Response:
 
     try:
         body = await request.json()
-    except (json.JSONDecodeError, Exception):
+    except json.JSONDecodeError:
         return web.json_response(
             {"error": "invalid JSON body"}, status=400
+        )
+    except Exception as e:
+        logger.error("Unexpected error in _record_start: %s", e, exc_info=True)
+        return web.json_response(
+            {"error": "internal server error"}, status=500
         )
 
     org = body.get("org")
@@ -190,8 +202,11 @@ async def _reprocess(request: web.Request) -> web.Response:
 
     try:
         body = await request.json()
-    except (json.JSONDecodeError, Exception):
+    except json.JSONDecodeError:
         return web.json_response({"error": "invalid JSON body"}, status=400)
+    except Exception as e:
+        logger.error("Unexpected error in _reprocess: %s", e, exc_info=True)
+        return web.json_response({"error": "internal server error"}, status=500)
 
     recording_path = body.get("recording_path")
     if not recording_path:
@@ -216,8 +231,11 @@ async def _speakers(request: web.Request) -> web.Response:
 
     try:
         body = await request.json()
-    except (json.JSONDecodeError, Exception):
+    except json.JSONDecodeError:
         return web.json_response({"error": "invalid JSON body"}, status=400)
+    except Exception as e:
+        logger.error("Unexpected error in _speakers: %s", e, exc_info=True)
+        return web.json_response({"error": "internal server error"}, status=500)
 
     recording_path = body.get("recording_path")
     mapping = body.get("mapping")
@@ -254,8 +272,11 @@ async def _arm(request: web.Request) -> web.Response:
 
     try:
         body = await request.json()
-    except (json.JSONDecodeError, Exception):
+    except json.JSONDecodeError:
         return web.json_response({"error": "invalid JSON body"}, status=400)
+    except Exception as e:
+        logger.error("Unexpected error in _arm: %s", e, exc_info=True)
+        return web.json_response({"error": "internal server error"}, status=500)
 
     event_id = body.get("event_id")
     start_time_str = body.get("start_time")
@@ -334,14 +355,14 @@ async def _oauth_start(request: web.Request) -> web.Response:
             status=400,
         )
 
-    mgr = OAuthManager(provider, client_id, client_secret, redirect_port=8399)
-    authorize_url = mgr.get_authorization_url()
+    oauth_manager = OAuthManager(provider, client_id, client_secret, redirect_port=8399)
+    authorize_url = oauth_manager.get_authorization_url()
 
     # Start callback server in background — exchanges code and stores tokens
     async def _run_callback() -> None:
         try:
-            code = await mgr.start_callback_server()
-            tokens = mgr.exchange_code(code)
+            code = await oauth_manager.start_callback_server()
+            tokens = oauth_manager.exchange_code(code)
             store_credential(provider, "access_token", tokens["access_token"])
             if "refresh_token" in tokens:
                 store_credential(provider, "refresh_token", tokens["refresh_token"])
@@ -368,14 +389,20 @@ async def _oauth_disconnect(request: web.Request) -> web.Response:
     for key in ("access_token", "refresh_token", "calendar_id"):
         try:
             delete_credential(provider, key)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Failed to delete credential for %s: %s", provider, e)
 
     logger.info("Disconnected OAuth provider: %s", provider)
     return web.json_response({"status": "disconnected", "provider": provider})
 
 
 async def _websocket_handler(request: web.Request) -> web.WebSocketResponse:
+    # Validate token from query parameter
+    token = request.query.get("token", "")
+    expected = request.app.get(_AUTH_TOKEN_KEY, "")
+    if not token or not hmac.compare_digest(token, expected):
+        return web.json_response({"error": "unauthorized"}, status=401)
+
     ws = web.WebSocketResponse()
     await ws.prepare(request)
 
@@ -431,6 +458,7 @@ def create_app(
     """Create and return the daemon aiohttp application."""
     app = web.Application(middlewares=[_auth_middleware(auth_token)])
     app[_WS_CLIENTS_KEY] = set()
+    app[_AUTH_TOKEN_KEY] = auth_token
     if recorder is not None:
         app[_RECORDER_KEY] = recorder
     if detector is not None:

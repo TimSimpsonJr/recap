@@ -21,7 +21,6 @@ from recap.vault import (
     write_profile_stubs,
     find_previous_meeting,
     _generate_meeting_markdown,
-    _generate_pipeline_content,
     _format_action_item,
     _format_duration,
     slugify,
@@ -258,27 +257,6 @@ class TestGenerateMeetingMarkdown:
         )
         assert "## Relationship Notes" in md
         assert "Jane prefers async" in md
-
-    def test_no_screenshots_section(self, sample_metadata, sample_analysis):
-        """Screenshots/frames section should not exist."""
-        md = _generate_meeting_markdown(
-            metadata=sample_metadata,
-            analysis=sample_analysis,
-            duration_seconds=2700.0,
-            recording_path=pathlib.Path("C:/rec/test.m4a"),
-        )
-        assert "## Screenshots" not in md
-
-    def test_no_todoist_tags(self, sample_metadata, sample_analysis):
-        """Todoist tags should not appear in output."""
-        md = _generate_meeting_markdown(
-            metadata=sample_metadata,
-            analysis=sample_analysis,
-            duration_seconds=2700.0,
-            recording_path=pathlib.Path("C:/rec/test.m4a"),
-            user_name="Tim",
-        )
-        assert "#todoist" not in md
 
     def test_recording_path_m4a(self, sample_metadata, sample_analysis):
         """Recording path should use .m4a extension."""

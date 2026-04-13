@@ -1,12 +1,10 @@
 """Tests for the calendar sync scheduler."""
 
-import asyncio
 from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-import pytest_asyncio
 
 from recap.daemon.calendar.scheduler import CalendarSyncScheduler
 from recap.daemon.calendar.sync import CalendarEvent
@@ -14,11 +12,6 @@ from recap.daemon.config import (
     CalendarProviderConfig,
     CalendarSyncConfig,
     DaemonConfig,
-    DaemonPortConfig,
-    DetectionConfig,
-    LoggingConfig,
-    PipelineConfig,
-    RecordingConfig,
 )
 
 

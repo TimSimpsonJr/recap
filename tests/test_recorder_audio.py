@@ -1,7 +1,6 @@
 """Tests for audio capture module."""
 
 import pytest
-from pathlib import Path
 from unittest.mock import patch, MagicMock
 
 from recap.daemon.recorder.audio import (

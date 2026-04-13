@@ -59,5 +59,5 @@ def _purge_old_logs(log_dir: Path, retention_days: int) -> None:
         try:
             if log_file.stat().st_mtime < cutoff:
                 log_file.unlink()
-        except OSError:
-            pass
+        except OSError as e:
+            print(f"Could not delete old log file {log_file}: {e}")

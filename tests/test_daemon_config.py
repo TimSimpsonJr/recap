@@ -1,9 +1,8 @@
 """Tests for daemon config loading."""
-import pathlib
 import pytest
 import yaml
 
-from recap.daemon.config import DaemonConfig, load_daemon_config, OrgConfig
+from recap.daemon.config import load_daemon_config
 
 
 class TestLoadDaemonConfig:

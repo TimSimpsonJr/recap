@@ -1,8 +1,6 @@
 """Tests for meeting window detection."""
-import pytest
 from unittest.mock import patch
 from recap.daemon.recorder.detection import (
-    MeetingWindow,
     detect_meeting_windows,
     MEETING_PATTERNS,
 )

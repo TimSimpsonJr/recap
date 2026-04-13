@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
@@ -33,7 +33,7 @@ def _slugify(text: str) -> str:
     return slug.strip("-")
 
 
-def _org_subfolder(org: str) -> str:
+def org_subfolder(org: str) -> str:
     """Map org name to vault subfolder: 'disbursecloud' -> '_Recap/Disbursecloud'."""
     return f"_Recap/{org[0].upper()}{org[1:]}"
 
@@ -46,13 +46,14 @@ def _parse_frontmatter(content: str) -> dict | None:
         return None
     try:
         return yaml.safe_load(parts[1])
-    except yaml.YAMLError:
+    except yaml.YAMLError as e:
+        logger.warning("Failed to parse frontmatter: %s", e)
         return None
 
 
 def write_calendar_note(event: CalendarEvent, vault_path: Path) -> Path:
     """Write a calendar event as a vault note. Returns the note path."""
-    subfolder = _org_subfolder(event.org)
+    subfolder = org_subfolder(event.org)
     meetings_dir = vault_path / subfolder / "Meetings"
     meetings_dir.mkdir(parents=True, exist_ok=True)
 
@@ -160,7 +161,8 @@ def update_calendar_note(
 
     try:
         fm = yaml.safe_load(parts[1])
-    except yaml.YAMLError:
+    except yaml.YAMLError as e:
+        logger.warning("Failed to parse frontmatter: %s", e)
         return
 
     if fm is None:
@@ -189,7 +191,8 @@ def update_calendar_note(
                             queue = json.loads(
                                 rename_queue_path.read_text(encoding="utf-8")
                             )
-                        except (json.JSONDecodeError, ValueError):
+                        except (json.JSONDecodeError, ValueError) as e:
+                            logger.warning("Could not parse rename queue %s: %s", rename_queue_path, e)
                             queue = []
                     queue.append(
                         {"old_path": str(note_path), "new_path": str(new_path)}

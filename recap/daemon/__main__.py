@@ -94,8 +94,8 @@ def _make_process_recording(config: DaemonConfig, recorder: Recorder):
             # Ensure state machine returns to idle even on failure
             try:
                 recorder.state_machine.processing_complete()
-            except Exception:
-                pass
+            except Exception as e:
+                logger.error("Failed to reset state machine after pipeline failure: %s", e)
             logger.error("Pipeline failed: %s", e)
             notify("Recap", f"Pipeline failed: {e}")
 

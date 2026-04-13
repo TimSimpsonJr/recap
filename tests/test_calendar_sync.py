@@ -1,7 +1,5 @@
 """Tests for calendar sync."""
 import json
-import pytest
-from pathlib import Path
 from recap.daemon.calendar.sync import (
     CalendarEvent,
     write_calendar_note,

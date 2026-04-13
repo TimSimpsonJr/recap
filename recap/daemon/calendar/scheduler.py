@@ -3,20 +3,19 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from recap.daemon.calendar.sync import (
     CalendarEvent,
-    _org_subfolder,
+    org_subfolder,
     find_note_by_event_id,
     should_update_note,
     update_calendar_note,
     write_calendar_note,
 )
 from recap.daemon.credentials import (
-    delete_credential,
     get_credential,
     has_credential,
     store_credential,
@@ -100,7 +99,7 @@ class CalendarSyncScheduler:
 
         for event in all_events:
             try:
-                subfolder = _org_subfolder(event.org)
+                subfolder = org_subfolder(event.org)
                 action = should_update_note(
                     event.event_id,
                     self._vault_path,

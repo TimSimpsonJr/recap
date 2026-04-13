@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import gc
+import logging
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from recap.models import TranscriptResult, Utterance
 
@@ -29,8 +32,10 @@ def _unload_model(model) -> None:
     try:
         import torch
         torch.cuda.empty_cache()
-    except (ImportError, RuntimeError):
-        pass
+    except ImportError:
+        pass  # torch not installed, expected in CPU-only mode
+    except RuntimeError as e:
+        logger.warning("Failed to clear CUDA cache: %s", e)
 
 
 def diarize(

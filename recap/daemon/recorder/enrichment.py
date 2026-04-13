@@ -7,17 +7,10 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
 
-log = logging.getLogger(__name__)
+from recap.daemon.config import KnownContact
 
-
-@dataclass
-class KnownContact:
-    """A contact with a canonical name and a display name for matching."""
-
-    name: str
-    display_name: str
+logger = logging.getLogger(__name__)
 
 
 def match_known_contacts(
@@ -71,7 +64,7 @@ def extract_teams_participants(hwnd: int) -> list[str] | None:
 
         control = auto.ControlFromHandle(hwnd)
         if not control:
-            log.debug("UIA: no control for hwnd %s", hwnd)
+            logger.debug("UIA: no control for hwnd %s", hwnd)
             return None
 
         names: list[str] = []
@@ -83,16 +76,16 @@ def extract_teams_participants(hwnd: int) -> list[str] | None:
             if names:
                 break
             if attempt == 0:
-                log.debug("UIA: no participants on first pass, retrying")
+                logger.debug("UIA: no participants on first pass, retrying")
 
         if not names:
-            log.debug("UIA: no participant names found for hwnd %s", hwnd)
+            logger.debug("UIA: no participant names found for hwnd %s", hwnd)
             return None
 
         return names
 
     except Exception:
-        log.debug("UIA extraction failed for hwnd %s", hwnd, exc_info=True)
+        logger.debug("UIA extraction failed for hwnd %s", hwnd, exc_info=True)
         return None
 
 
@@ -120,7 +113,7 @@ def _walk_for_participants(
             _walk_for_participants(child, names, depth + 1, max_depth)
 
     except Exception:
-        log.debug("UIA walk error at depth %d", depth, exc_info=True)
+        logger.debug("UIA walk error at depth %d", depth, exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -149,7 +142,7 @@ def enrich_meeting_metadata(
             if raw:
                 participants = match_known_contacts(raw, known_contacts)
         except Exception:
-            log.debug("Teams enrichment failed", exc_info=True)
+            logger.debug("Teams enrichment failed", exc_info=True)
 
     return {
         "title": parsed_title,

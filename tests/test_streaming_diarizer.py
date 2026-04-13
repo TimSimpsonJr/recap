@@ -1,6 +1,5 @@
 """Tests for streaming diarizer."""
 
-import pytest
 from unittest.mock import MagicMock, patch
 
 from recap.daemon.streaming.diarizer import StreamingDiarizer

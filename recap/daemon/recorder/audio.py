@@ -6,8 +6,6 @@ for real-time FLAC encoding with continuous flush to disk.
 
 from __future__ import annotations
 
-import math
-import struct
 import threading
 from pathlib import Path
 from typing import Any

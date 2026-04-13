@@ -1,6 +1,5 @@
 """Tests for credential storage."""
-import pytest
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 from recap.daemon.credentials import store_credential, get_credential, delete_credential, has_credential
 
 

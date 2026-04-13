@@ -1,6 +1,6 @@
 """Tests for Zoho Calendar API client."""
 import pytest
-from unittest.mock import patch, AsyncMock, MagicMock
+from unittest.mock import patch, AsyncMock
 from recap.daemon.calendar.zoho import fetch_zoho_events
 
 

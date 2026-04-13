@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 
 def find_orphaned_recordings(
@@ -46,5 +49,6 @@ def _is_completed(status_file: Path) -> bool:
     try:
         data = json.loads(status_file.read_text(encoding="utf-8"))
         return data.get("pipeline-status") == "complete"
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning("Could not read status file %s: %s", status_file, e)
         return False

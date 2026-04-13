@@ -1,7 +1,6 @@
 """Tests for recorder orchestrator."""
-import pathlib
 import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
+from unittest.mock import MagicMock, patch
 from recap.daemon.recorder.recorder import Recorder
 from recap.daemon.recorder.state_machine import RecorderState
 

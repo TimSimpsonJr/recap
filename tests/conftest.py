@@ -21,11 +21,3 @@ def tmp_recordings(tmp_path: pathlib.Path) -> pathlib.Path:
     recordings = tmp_path / "recordings"
     recordings.mkdir()
     return recordings
-
-
-@pytest.fixture
-def tmp_frames(tmp_path: pathlib.Path) -> pathlib.Path:
-    """Create a temporary frames directory."""
-    frames = tmp_path / "frames"
-    frames.mkdir()
-    return frames

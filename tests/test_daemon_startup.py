@@ -1,6 +1,6 @@
 """Tests for daemon startup validation."""
 from unittest.mock import patch
-from recap.daemon.startup import validate_startup, StartupCheck, StartupResult
+from recap.daemon.startup import validate_startup
 
 
 class TestStartupValidation:

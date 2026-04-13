@@ -1,23 +1,79 @@
-vault_path: "C:/Users/you/path/to/vault"
-recordings_path: "C:/Users/you/recap-data/recordings"
-frames_path: "C:/Users/you/recap-data/frames"
-user_name: "Your Name"
+config-version: 1
 
-whisperx:
-  model: "large-v3"
-  device: "cuda"
-  language: "en"
+# Required paths
+vault-path: "C:/Users/you/path/to/vault"
+recordings-path: "C:/Users/you/recap-data/recordings"
+user-name: "Your Name"
 
-huggingface_token: "hf_your_token_here"
+# Organization profiles
+orgs:
+  work:
+    subfolder: "_Recap/Work"
+    llm-backend: "claude"
+    default: true
+  personal:
+    subfolder: "_Recap/Personal"
+    llm-backend: "claude"
 
-todoist:
-  api_token: "your_todoist_api_token"
-  default_project: "Recap"
-  project_map:
-    standup: "Sprint Tasks"
-    client-call: "Client Work"
-    planning: "Sprint Tasks"
-    1:1: "Recap"
+# Calendar providers
+calendars:
+  zoho:
+    org: "work"
+    calendar-id: "your-zoho-calendar-id"
+  google:
+    default-org: "personal"
+    # calendar-id defaults to "primary" for Google
 
+# Meeting detection
+detection:
+  teams:
+    enabled: true
+    behavior: "auto-record"        # "auto-record" or "prompt"
+    default-org: "work"
+  zoom:
+    enabled: true
+    behavior: "auto-record"
+  signal:
+    enabled: true
+    behavior: "prompt"
+
+# Recording settings
+recording:
+  format: "flac"
+  archive-format: "aac"
+  delete-source-after-archive: false
+  silence-timeout-minutes: 5
+  max-duration-hours: 4
+
+# Pipeline settings
+pipeline:
+  transcription-model: "nvidia/parakeet-tdt-0.6b-v2"
+  diarization-model: "nvidia/diar_streaming_sortformer_4spk-v2.1"
+  auto-retry: true
+  max-retries: 1
+
+# Calendar sync
+calendar-sync:
+  interval-minutes: 15
+  sync-on-startup: true
+
+# Logging
+logging:
+  path: "_Recap/.recap/logs"
+  retention-days: 7
+
+# Daemon ports
+daemon:
+  extension-port-start: 17839
+  extension-port-end: 17845
+  plugin-port: 9847
+  auto-start: false
+
+# Known contacts for display name matching
+known-contacts: []
+  # - name: "Jane Smith"
+  #   display-name: "Jane S."
+
+# Claude CLI
 claude:
   command: "claude"
