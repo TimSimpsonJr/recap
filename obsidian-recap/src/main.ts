@@ -1,9 +1,10 @@
-import { Plugin, Notice } from "obsidian";
+import { Plugin, Notice, TFile } from "obsidian";
 import { DaemonClient } from "./api";
 import { RecapStatusBar } from "./components/StatusBarItem";
 import { OrgPickerModal } from "./components/OrgPickerModal";
 import { RecapSettingTab } from "./settings";
 import { MeetingListView, VIEW_MEETING_LIST } from "./views/MeetingListView";
+import { SpeakerCorrectionModal, SpeakerInfo } from "./views/SpeakerCorrectionModal";
 
 interface RecapSettings {
     daemonUrl: string;
@@ -108,6 +109,38 @@ export default class RecapPlugin extends Plugin {
             callback: () => this.activateView(VIEW_MEETING_LIST),
         });
 
+        // Detect unidentified speakers on file open
+        this.registerEvent(
+            this.app.workspace.on("file-open", (file) => {
+                if (!file || !this.client) return;
+                if (!file.path.startsWith("_Recap/") || !file.path.includes("/Meetings/")) return;
+
+                this.app.vault.cachedRead(file).then(content => {
+                    if (content.includes("SPEAKER_")) {
+                        new Notice(
+                            "This meeting has unidentified speakers. Use 'Recap: Fix speakers' to correct them.",
+                            10000,
+                        );
+                    }
+                });
+            }),
+        );
+
+        this.addCommand({
+            id: "fix-speakers",
+            name: "Fix unidentified speakers",
+            checkCallback: (checking) => {
+                const file = this.app.workspace.getActiveFile();
+                if (file && file.path.startsWith("_Recap/") && file.path.includes("/Meetings/")) {
+                    if (!checking) {
+                        this.openSpeakerCorrection(file);
+                    }
+                    return true;
+                }
+                return false;
+            },
+        });
+
         // Settings tab
         this.addSettingTab(new RecapSettingTab(this.app, this));
 
@@ -125,6 +158,52 @@ export default class RecapPlugin extends Plugin {
 
     async saveSettings() {
         await this.saveData(this.settings);
+    }
+
+    private async openSpeakerCorrection(file: TFile): Promise<void> {
+        if (!this.client) {
+            new Notice("Daemon not connected");
+            return;
+        }
+
+        const content = await this.app.vault.cachedRead(file);
+
+        // Extract SPEAKER_XX labels from content
+        const speakerLabels = [...new Set(
+            (content.match(/SPEAKER_\d+/g) || [])
+        )];
+
+        if (speakerLabels.length === 0) {
+            new Notice("No unidentified speakers found in this note");
+            return;
+        }
+
+        // Get people names from vault
+        const peopleFiles = this.app.vault.getMarkdownFiles().filter(f =>
+            f.path.startsWith("_Recap/") && f.path.includes("/People/")
+        );
+        const peopleNames = peopleFiles.map(f => f.basename);
+
+        // Get recording path and org from frontmatter
+        const cache = this.app.metadataCache.getFileCache(file);
+        const fm = cache?.frontmatter;
+        const recordingPath = fm?.recording?.replace(/\[\[|\]\]/g, "") || "";
+        const org = fm?.org || "";
+
+        const speakers: SpeakerInfo[] = speakerLabels.map(label => ({
+            label,
+            sampleClipPath: "", // TODO: daemon could serve sample clips
+        }));
+
+        new SpeakerCorrectionModal(
+            this.app,
+            speakers,
+            peopleNames,
+            [], // known contacts - could fetch from daemon
+            recordingPath,
+            org,
+            this.client,
+        ).open();
     }
 
     async activateView(viewType: string): Promise<void> {

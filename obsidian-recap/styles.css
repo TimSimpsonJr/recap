@@ -154,3 +154,33 @@
 .recap-oauth-provider {
     margin-bottom: 4px;
 }
+
+/* Speaker correction modal */
+.recap-speaker-modal {
+    max-width: 500px;
+}
+.recap-speaker-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 8px 0;
+}
+.recap-speaker-label {
+    font-family: var(--font-monospace);
+    color: var(--text-faint);
+    min-width: 100px;
+}
+.recap-play-btn {
+    padding: 4px 8px;
+    cursor: pointer;
+}
+.recap-speaker-input {
+    flex: 1;
+    padding: 4px 8px;
+}
+.recap-modal-buttons {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 16px;
+}
