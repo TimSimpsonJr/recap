@@ -17,8 +17,10 @@ from recap.daemon.auth import ensure_auth_token
 from recap.daemon.config import DaemonConfig, load_daemon_config
 from recap.daemon.logging_setup import setup_logging
 from recap.daemon.notifications import notify
+from recap.daemon.recorder.detector import MeetingDetector
 from recap.daemon.recorder.recorder import Recorder
 from recap.daemon.recorder.recovery import find_orphaned_recordings
+from recap.daemon.recorder.signal_popup import show_signal_popup
 from recap.daemon.server import broadcast, create_app
 from recap.daemon.startup import validate_startup
 from recap.daemon.tray import RecapTray
@@ -188,10 +190,41 @@ def main() -> None:
         "Recap", "Max recording duration reached. Stopping.",
     )
 
-    # Create HTTP app (pass recorder so endpoints can use it)
+    # Signal popup callback — runs when the detector sees a Signal call
+    def on_signal_detected(meeting_window, enriched_metadata):
+        """Show Signal call popup in a separate thread."""
+        org_names = [org.name for org in config.orgs]
+        signal_config = config.detection.signal
+        defaults = {
+            "org": signal_config.default_org,
+            "backend": getattr(signal_config, "default_backend", "ollama"),
+        }
+        result = show_signal_popup(orgs=org_names, defaults=defaults)
+        if result:
+            logger.info(
+                "Signal recording started: org=%s, backend=%s",
+                result["org"], result["backend"],
+            )
+            loop = _loop_holder[0]
+            if loop is not None and loop.is_running():
+                asyncio.run_coroutine_threadsafe(
+                    recorder.start(result["org"]), loop,
+                )
+        else:
+            logger.info("Signal recording declined")
+
+    # Create meeting detector
+    detector = MeetingDetector(
+        config=config,
+        recorder=recorder,
+        on_signal_detected=on_signal_detected,
+    )
+
+    # Create HTTP app (pass recorder and detector so endpoints can use them)
     app = create_app(
         auth_token=auth_token,
         recorder=recorder,
+        detector=detector,
         pipeline_trigger=process_recording,
     )
 
@@ -252,11 +285,18 @@ def main() -> None:
     logger.info("System tray started")
 
     # Capture the event loop once the server starts so tray callbacks
-    # can schedule async work on it.
+    # can schedule async work on it, and start meeting detection.
     async def _on_startup(app_: web.Application) -> None:
         _loop_holder[0] = asyncio.get_event_loop()
+        detector.start()
+        logger.info("Meeting detection started")
+
+    async def _on_cleanup(app_: web.Application) -> None:
+        detector.stop()
+        logger.info("Meeting detection stopped")
 
     app.on_startup.append(_on_startup)
+    app.on_cleanup.append(_on_cleanup)
 
     # Run HTTP server (blocking)
     logger.info("Starting HTTP server on port %d", config.daemon_ports.plugin_port)
