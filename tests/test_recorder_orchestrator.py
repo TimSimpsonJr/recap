@@ -36,6 +36,12 @@ class TestRecorder:
     def test_state_is_idle_initially(self, recorder):
         assert recorder.state_machine.state == RecorderState.IDLE
 
-    def test_disk_space_check(self, recorder):
-        # Should return True on most dev machines (>1GB free)
-        assert recorder._check_disk_space() is True
+    def test_disk_space_check_passes_with_plenty(self, recorder):
+        with patch("shutil.disk_usage") as mock_usage:
+            mock_usage.return_value = MagicMock(free=5_000_000_000)  # 5GB
+            assert recorder._check_disk_space() is True
+
+    def test_disk_space_check_warns_when_low(self, recorder):
+        with patch("shutil.disk_usage") as mock_usage:
+            mock_usage.return_value = MagicMock(free=500_000_000)  # 500MB
+            assert recorder._check_disk_space() is False

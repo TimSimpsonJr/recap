@@ -31,7 +31,7 @@ class TestSilenceDetector:
         detector.update(rms_level=0.0001)
         time.sleep(0.05)
         detector.update(rms_level=0.0001)
-        assert detector.silence_duration > 0
+        assert 0.04 < detector.silence_duration < 0.5
 
     def test_reset_clears_state(self):
         detector = SilenceDetector(threshold_db=-40, timeout_seconds=0.1)

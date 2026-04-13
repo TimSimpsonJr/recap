@@ -1,6 +1,5 @@
 """Tests for Claude analysis module."""
 import json
-import pathlib
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -117,6 +116,9 @@ class TestAnalyze:
         )
 
         assert isinstance(result, AnalysisResult)
+        assert result.meeting_type == "client-call"
+        assert len(result.action_items) == 1
+        assert result.action_items[0].assignee == "Tim"
         mock_sub.run.assert_called_once()
         call_args = mock_sub.run.call_args
         assert "--print" in call_args[0][0]
@@ -147,6 +149,8 @@ class TestAnalyze:
         )
 
         assert isinstance(result, AnalysisResult)
+        assert result.meeting_type == "client-call"
+        assert len(result.action_items) == 1
         assert mock_sub.run.call_count == 2
         mock_sleep.assert_called_once_with(2)
 
@@ -231,7 +235,7 @@ class TestAnalyzeOllamaBackend:
         mock_proc.stdout = json.dumps(sample_claude_json)
         mock_sub.run.return_value = mock_proc
 
-        analyze(
+        result = analyze(
             transcript=sample_transcript,
             metadata=sample_metadata,
             prompt_path=prompt_path,
@@ -239,5 +243,7 @@ class TestAnalyzeOllamaBackend:
             ollama_model="mistral",
         )
 
+        assert result.meeting_type == "client-call"
+        assert len(result.action_items) == 1
         cmd = mock_sub.run.call_args[0][0]
         assert "mistral" in cmd

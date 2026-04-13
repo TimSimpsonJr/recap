@@ -87,7 +87,7 @@ class TestTokenExchange:
 
         mock_session.fetch_token.assert_called_once()
         call_kwargs = mock_session.fetch_token.call_args
-        assert call_kwargs[1]["code"] == "the-code" or call_kwargs[0] == ()
+        assert call_kwargs[1]["code"] == "the-code"
 
     @patch("recap.daemon.calendar.oauth.OAuth2Session")
     def test_refresh_token(self, mock_session_cls):

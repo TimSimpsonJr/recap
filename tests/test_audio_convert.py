@@ -1,7 +1,6 @@
 """Tests for audio format conversion."""
 import pytest
 from unittest.mock import patch, MagicMock
-from pathlib import Path
 from recap.pipeline.audio_convert import convert_flac_to_aac, delete_source_if_configured
 
 
@@ -58,4 +57,5 @@ class TestDeleteSource:
 
     def test_no_error_if_missing(self, tmp_path):
         flac = tmp_path / "nonexistent.flac"
-        delete_source_if_configured(flac, delete=True)  # should not raise
+        delete_source_if_configured(flac, delete=True)
+        assert not flac.exists()  # still doesn't exist, no error raised
