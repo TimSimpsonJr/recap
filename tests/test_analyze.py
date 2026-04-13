@@ -12,7 +12,7 @@ from recap.models import (
     TranscriptResult,
     Utterance,
 )
-from recap.analyze import analyze, _build_prompt, _parse_claude_output
+from recap.analyze import analyze, _build_prompt, _build_command, _parse_claude_output
 
 
 @pytest.fixture
@@ -172,3 +172,72 @@ class TestAnalyze:
             )
 
         assert mock_sub.run.call_count == 3
+
+
+class TestBuildCommand:
+    def test_claude_backend(self):
+        cmd = _build_command("claude", "claude", "sonnet", "llama3")
+        assert cmd[0] == "claude"
+        assert "--print" in cmd
+
+    def test_ollama_backend(self):
+        cmd = _build_command("ollama", "claude", "sonnet", "llama3")
+        assert cmd[0] == "ollama"
+        assert "run" in cmd
+        assert "llama3" in cmd
+
+    def test_ollama_custom_model(self):
+        cmd = _build_command("ollama", "claude", "sonnet", "mistral")
+        assert "mistral" in cmd
+
+
+class TestAnalyzeOllamaBackend:
+    @patch("recap.analyze.subprocess")
+    def test_uses_ollama_backend(
+        self, mock_sub, sample_transcript, sample_metadata, sample_claude_json, tmp_path
+    ):
+        """When backend='ollama', should call ollama instead of claude."""
+        prompt_path = tmp_path / "prompt.md"
+        prompt_path.write_text("{{participants}}\n{{transcript}}")
+
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.stdout = json.dumps(sample_claude_json)
+        mock_sub.run.return_value = mock_proc
+
+        result = analyze(
+            transcript=sample_transcript,
+            metadata=sample_metadata,
+            prompt_path=prompt_path,
+            backend="ollama",
+            ollama_model="llama3",
+        )
+
+        assert isinstance(result, AnalysisResult)
+        cmd = mock_sub.run.call_args[0][0]
+        assert "ollama" in cmd[0]
+        assert "llama3" in cmd
+
+    @patch("recap.analyze.subprocess")
+    def test_ollama_uses_custom_model(
+        self, mock_sub, sample_transcript, sample_metadata, sample_claude_json, tmp_path
+    ):
+        """Ollama backend should use the specified model name."""
+        prompt_path = tmp_path / "prompt.md"
+        prompt_path.write_text("{{participants}}\n{{transcript}}")
+
+        mock_proc = MagicMock()
+        mock_proc.returncode = 0
+        mock_proc.stdout = json.dumps(sample_claude_json)
+        mock_sub.run.return_value = mock_proc
+
+        analyze(
+            transcript=sample_transcript,
+            metadata=sample_metadata,
+            prompt_path=prompt_path,
+            backend="ollama",
+            ollama_model="mistral",
+        )
+
+        cmd = mock_sub.run.call_args[0][0]
+        assert "mistral" in cmd
