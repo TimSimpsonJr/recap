@@ -1,6 +1,6 @@
 [build-system]
 requires = ["hatchling"]
-build-backend = "hatchling.backends"
+build-backend = "hatchling.build"
 
 [project]
 name = "recap"
@@ -9,6 +9,7 @@ description = "Meeting recording → transcription → analysis → Obsidian vau
 requires-python = ">=3.10"
 dependencies = [
     "pyyaml>=6.0",
+    "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]
@@ -24,7 +25,7 @@ dev = [
 ]
 
 [tool.uv]
-extra-index-url = ["https://download.pytorch.org/whl/cu121"]
+extra-index-url = ["https://download.pytorch.org/whl/cu126"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

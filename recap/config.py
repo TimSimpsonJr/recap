@@ -6,6 +6,7 @@ import pathlib
 from dataclasses import dataclass, field
 
 import yaml
+from dotenv import load_dotenv
 
 
 @dataclass
@@ -66,6 +67,9 @@ class RecapConfig:
 
 
 def load_config(path: pathlib.Path) -> RecapConfig:
+    # Load .env from the project root (walks up from config file location)
+    load_dotenv(path.parent / ".env")
+
     if not path.exists():
         raise FileNotFoundError(f"Config file not found: {path}")
 

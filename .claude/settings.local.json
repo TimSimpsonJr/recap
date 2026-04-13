@@ -1,0 +1,34 @@
+{
+  "permissions": {
+    "allow": [
+      "Skill(code-review:code-review)",
+      "Skill(code-review:code-review:*)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(netstat -ano)",
+      "Bash(findstr :1420)",
+      "Bash(tasklist /FI \"PID eq 11748\" /FO CSV /NH)",
+      "Bash(wmic process:*)",
+      "Bash(taskkill //PID 11748 //F)",
+      "Bash(cargo check:*)",
+      "Bash(python -m pytest tests/test_participant_extraction.py tests/test_pipeline_screenshot_extraction.py -v)",
+      "Skill(church:secret-crusade)",
+      "Skill(church:secret-crusade:*)",
+      "Skill(church:dead-crusade)",
+      "Skill(church:dead-crusade:*)",
+      "Skill(church:dep-crusade)",
+      "Skill(church:dep-crusade:*)",
+      "Skill(church:size-crusade)",
+      "Skill(church:size-crusade:*)",
+      "Skill(church:git-crusade)",
+      "Skill(church:git-crusade:*)",
+      "Skill(church:naming-crusade)",
+      "Skill(church:naming-crusade:*)",
+      "Skill(church:observability-crusade)",
+      "Skill(church:observability-crusade:*)",
+      "Skill(church:a11y-crusade)",
+      "Skill(church:a11y-crusade:*)",
+      "Skill(church:adaptive-crusade)",
+      "Skill(church:adaptive-crusade:*)"
+    ]
+  }
+}

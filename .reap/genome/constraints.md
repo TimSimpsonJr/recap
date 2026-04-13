@@ -9,6 +9,6 @@
 - **NVIDIA GPU assumed for recording** — ffmpeg H.265 NVENC encoding; no software fallback
 - **SSD required for multi-stream capture** — simultaneous audio + screen recording needs SSD throughput
 - **No cloud storage of user data** — recordings, transcripts, and analysis artifacts stay local
-- **PyTorch CUDA 12.1** — extra-index-url pinned to cu121 wheels
+- **PyTorch CUDA 12.6** — extra-index-url pinned to cu126 wheels (cu121 lacked torch 2.8+ required by WhisperX 3.8+)
 - **Obsidian vault compatibility** — generated notes must be valid Obsidian markdown (wikilinks, callouts, YAML frontmatter). Not generic markdown.
 - **Claude CLI for LLM calls (personal use)** — all LLM interactions use `claude --print`. This is permitted under Consumer ToS for personal use on your own machine (Anthropic's docs explicitly show scripted/piped usage). If Recap is ever distributed to other users, switch to Anthropic API keys under Commercial Terms. Ollama is a future option for local inference when model quality catches up (limited to ~14B models on 12GB RTX 4070).
