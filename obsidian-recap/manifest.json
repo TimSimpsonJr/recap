@@ -1,0 +1,9 @@
+{
+    "id": "recap",
+    "name": "Recap",
+    "version": "0.1.0",
+    "minAppVersion": "1.5.0",
+    "description": "Meeting recording dashboard — browse, review, and manage meeting notes from the Recap daemon.",
+    "author": "Tim Simpson",
+    "isDesktopOnly": true
+}
