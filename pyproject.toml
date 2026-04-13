@@ -23,6 +23,7 @@ daemon = [
     "pywin32>=306",
     "PyAudioWPatch>=0.2.12",
     "pyflac>=2.2",
+    "uiautomation>=2.0",
 ]
 ml = [
     "nemo_toolkit[asr]>=2.0",
