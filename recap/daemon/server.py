@@ -45,6 +45,34 @@ async def _health(_request: web.Request) -> web.Response:
     return web.json_response({"status": "ok", "version": "0.2.0"})
 
 
+async def _meeting_detected(request: web.Request) -> web.Response:
+    """POST /meeting-detected — browser extension signals a meeting URL was found."""
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, Exception):
+        return web.json_response({"error": "invalid JSON body"}, status=400)
+
+    logger.info(
+        "Meeting detected: platform=%s url=%s title=%s tabId=%s",
+        body.get("platform"),
+        body.get("url"),
+        body.get("title"),
+        body.get("tabId"),
+    )
+    return web.json_response({"status": "acknowledged"})
+
+
+async def _meeting_ended(request: web.Request) -> web.Response:
+    """POST /meeting-ended — browser extension signals meeting page closed."""
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, Exception):
+        return web.json_response({"error": "invalid JSON body"}, status=400)
+
+    logger.info("Meeting ended: tabId=%s", body.get("tabId"))
+    return web.json_response({"status": "acknowledged"})
+
+
 async def _api_status(request: web.Request) -> web.Response:
     recorder: Recorder | None = request.app.get(_RECORDER_KEY)
     if recorder is None:
@@ -255,6 +283,8 @@ def create_app(
         app[_PIPELINE_TRIGGER_KEY] = pipeline_trigger
 
     app.router.add_get("/health", _health)
+    app.router.add_post("/meeting-detected", _meeting_detected)
+    app.router.add_post("/meeting-ended", _meeting_ended)
     app.router.add_get("/api/status", _api_status)
     app.router.add_post("/api/record/start", _record_start)
     app.router.add_post("/api/record/stop", _record_stop)
