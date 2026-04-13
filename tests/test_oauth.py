@@ -107,22 +107,21 @@ class TestTokenExchange:
 class TestCallbackServer:
     @pytest.mark.asyncio
     async def test_start_callback_server_returns_code(self):
+        # Use a fixed test port (not ephemeral) to match the production behavior
+        test_port = 18399
         manager = OAuthManager(
-            provider="zoho", client_id="id", client_secret="secret", redirect_port=0
+            provider="zoho", client_id="id", client_secret="secret", redirect_port=test_port
         )
 
         async def simulate_callback():
-            # Wait for server to start
-            for _ in range(50):
-                if manager._server_port is not None:
-                    break
-                await asyncio.sleep(0.05)
+            # Wait for server to start listening
+            await asyncio.sleep(0.2)
 
             import aiohttp
 
             async with aiohttp.ClientSession() as session:
                 async with session.get(
-                    f"http://localhost:{manager._server_port}/callback?code=test-auth-code"
+                    f"http://localhost:{test_port}/callback?code=test-auth-code"
                 ) as resp:
                     assert resp.status == 200
                     text = await resp.text()
@@ -137,29 +136,27 @@ class TestCallbackServer:
 
     @pytest.mark.asyncio
     async def test_callback_server_missing_code_returns_error(self):
+        test_port = 18400
         manager = OAuthManager(
-            provider="zoho", client_id="id", client_secret="secret", redirect_port=0
+            provider="zoho", client_id="id", client_secret="secret", redirect_port=test_port
         )
 
         async def simulate_bad_callback():
-            for _ in range(50):
-                if manager._server_port is not None:
-                    break
-                await asyncio.sleep(0.05)
+            await asyncio.sleep(0.2)
 
             import aiohttp
 
             async with aiohttp.ClientSession() as session:
                 # Request without code param
                 async with session.get(
-                    f"http://localhost:{manager._server_port}/callback"
+                    f"http://localhost:{test_port}/callback"
                 ) as resp:
                     assert resp.status == 400
 
             # Now send a valid request so the server shuts down
             async with aiohttp.ClientSession() as session:
                 async with session.get(
-                    f"http://localhost:{manager._server_port}/callback?code=ok"
+                    f"http://localhost:{test_port}/callback?code=ok"
                 ) as resp:
                     pass
 

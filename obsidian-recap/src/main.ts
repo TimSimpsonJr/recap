@@ -74,16 +74,14 @@ export default class RecapPlugin extends Plugin {
                     new Notice("Recap: Daemon not connected");
                     return;
                 }
-                // Try to get org list from daemon, fall back to hardcoded defaults
-                // TODO: daemon /api/status should include an `orgs` field
-                let orgs = ["disbursecloud", "personal", "activism"];
+                // Fetch org list from daemon config endpoint
+                let orgs: string[] = [];
                 try {
-                    const status = await this.client.getStatus();
-                    const statusAny = status as unknown as Record<string, unknown>;
-                    if (statusAny.orgs) {
-                        orgs = statusAny.orgs as string[];
-                    }
-                } catch { /* use fallback */ }
+                    const resp = await this.client!.get<{orgs: string[]}>("/api/config/orgs");
+                    orgs = resp.orgs;
+                } catch {
+                    orgs = ["default"];
+                }
                 new OrgPickerModal(this.app, orgs, async (org) => {
                     try {
                         await this.client!.startRecording(org);

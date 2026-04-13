@@ -311,6 +311,18 @@ async def _disarm(request: web.Request) -> web.Response:
     return web.json_response({"status": "disarmed"})
 
 
+async def _config_orgs(request: web.Request) -> web.Response:
+    """GET /api/config/orgs — return the configured org list."""
+    config: DaemonConfig | None = request.app.get(_CONFIG_KEY)
+    if config is None:
+        return web.json_response({"orgs": ["default"]})
+
+    org_names = [org.name for org in config.orgs]
+    if not org_names:
+        org_names = ["default"]
+    return web.json_response({"orgs": org_names})
+
+
 async def _autostart_status(_request: web.Request) -> web.Response:
     """GET /api/autostart — check if auto-start is enabled."""
     from recap.daemon.autostart import is_autostart_enabled
@@ -480,6 +492,7 @@ def create_app(
     app.router.add_post("/api/disarm", _disarm)
     app.router.add_post("/api/meetings/reprocess", _reprocess)
     app.router.add_post("/api/meetings/speakers", _speakers)
+    app.router.add_get("/api/config/orgs", _config_orgs)
     app.router.add_get("/api/autostart", _autostart_status)
     app.router.add_get("/api/oauth/{provider}/status", _oauth_status)
     app.router.add_post("/api/oauth/{provider}/start", _oauth_start)

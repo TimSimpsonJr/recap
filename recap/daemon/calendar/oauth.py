@@ -39,9 +39,6 @@ class OAuthManager:
         self._client_secret = client_secret
         self._redirect_port = redirect_port
         self._config = self.PROVIDERS[provider]
-        # Set when callback server starts with port 0 (ephemeral)
-        self._server_port: int | None = None
-
     @property
     def authorize_url(self) -> str:
         """Return the provider's authorization endpoint URL."""
@@ -54,9 +51,12 @@ class OAuthManager:
 
     @property
     def redirect_uri(self) -> str:
-        """Return the local redirect URI for the OAuth callback."""
-        port = self._server_port if self._server_port is not None else self._redirect_port
-        return f"http://localhost:{port}/callback"
+        """Return the local redirect URI for the OAuth callback.
+
+        Always uses the configured redirect_port to ensure the URI in the
+        authorization request matches the one used during token exchange.
+        """
+        return f"http://localhost:{self._redirect_port}/callback"
 
     def get_authorization_url(self) -> str:
         """Build the full OAuth authorization URL with all required parameters."""
@@ -139,11 +139,7 @@ class OAuthManager:
         site = web.TCPSite(runner, "localhost", self._redirect_port)
         await site.start()
 
-        # Resolve actual port (important when redirect_port=0)
-        sock = site._server.sockets[0]  # type: ignore[union-attr]
-        actual_port = sock.getsockname()[1]
-        self._server_port = actual_port
-        logger.info("OAuth callback server listening on port %d", actual_port)
+        logger.info("OAuth callback server listening on port %d", self._redirect_port)
 
         try:
             # Poll until we receive the code
@@ -153,6 +149,5 @@ class OAuthManager:
                 await asyncio.sleep(0.05)
         finally:
             await runner.cleanup()
-            self._server_port = None
 
         return code_result

@@ -60,7 +60,7 @@ def _build_command(
 ) -> list[str]:
     """Build the subprocess command for the chosen backend."""
     if backend == "ollama":
-        return ["ollama", "run", ollama_model]
+        return ["ollama", "run", ollama_model, "--format", "json"]
     return [claude_command, "--print", "--output-format", "json", "--model", claude_model]
 
 
@@ -75,6 +75,10 @@ def analyze(
 ) -> AnalysisResult:
     template = prompt_path.read_text(encoding="utf-8")
     prompt = _build_prompt(template, transcript, metadata)
+
+    # Ollama needs an explicit JSON instruction since it may return plain text
+    if backend == "ollama":
+        prompt = "You must respond with valid JSON only. No other text.\n\n" + prompt
 
     label = _BACKEND_LABELS.get(backend, backend)
     last_error = ""

@@ -343,7 +343,11 @@ class Recorder:
 
     async def _monitor_duration(self) -> None:
         """Async task that enforces max recording duration."""
-        warning_threshold = self._max_duration_seconds - 3600  # 1 hour before max
+        # Only warn if max duration is longer than 1 hour; otherwise skip warning
+        if self._max_duration_seconds > 3600:
+            warning_threshold: float | None = self._max_duration_seconds - 3600
+        else:
+            warning_threshold = None
         warning_sent = False
         elapsed = 0.0
 
@@ -352,8 +356,12 @@ class Recorder:
                 await asyncio.sleep(1.0)
                 elapsed += 1.0
 
-                # Warning at max_duration - 1 hour
-                if elapsed >= warning_threshold and not warning_sent:
+                # Warning at max_duration - 1 hour (skipped for short sessions)
+                if (
+                    warning_threshold is not None
+                    and elapsed >= warning_threshold
+                    and not warning_sent
+                ):
                     warning_sent = True
                     logger.warning(
                         "Recording approaching max duration (%.0f hours remaining)",

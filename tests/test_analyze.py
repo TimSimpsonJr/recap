@@ -189,10 +189,13 @@ class TestBuildCommand:
         assert cmd[0] == "ollama"
         assert "run" in cmd
         assert "llama3" in cmd
+        assert "--format" in cmd
+        assert "json" in cmd
 
     def test_ollama_custom_model(self):
         cmd = _build_command("ollama", "claude", "sonnet", "mistral")
         assert "mistral" in cmd
+        assert "--format" in cmd
 
 
 class TestAnalyzeOllamaBackend:
@@ -221,6 +224,10 @@ class TestAnalyzeOllamaBackend:
         cmd = mock_sub.run.call_args[0][0]
         assert "ollama" in cmd[0]
         assert "llama3" in cmd
+        assert "--format" in cmd
+        # Verify JSON instruction was prepended to prompt
+        input_text = mock_sub.run.call_args[1].get("input") or mock_sub.run.call_args.kwargs.get("input", "")
+        assert "You must respond with valid JSON only" in input_text
 
     @patch("recap.analyze.subprocess")
     def test_ollama_uses_custom_model(

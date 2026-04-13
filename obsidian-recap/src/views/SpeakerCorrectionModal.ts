@@ -40,8 +40,13 @@ export class SpeakerCorrectionModal extends Modal {
 
         contentEl.createEl("h2", { text: "Identify Speakers" });
         contentEl.createEl("p", {
-            text: "The pipeline couldn't match speakers to names. Listen to a sample and assign names:",
+            text: "The pipeline couldn't match speakers to names. Assign a name to each speaker label:",
             cls: "setting-item-description",
+        });
+        contentEl.createEl("p", {
+            text: "Audio preview not yet available.",
+            cls: "setting-item-description",
+            attr: { style: "font-style: italic; opacity: 0.7;" },
         });
 
         // All suggestions (people notes + known contacts, deduplicated)
@@ -53,7 +58,8 @@ export class SpeakerCorrectionModal extends Modal {
             // Speaker label
             row.createSpan({ text: speaker.label, cls: "recap-speaker-label" });
 
-            // Play button
+            // Audio preview play button — only rendered when a clip path is available.
+            // Currently sampleClipPath is always empty; audio extraction is a future feature.
             if (speaker.sampleClipPath) {
                 const playBtn = row.createEl("button", { text: "\u25b6", cls: "recap-play-btn" });
                 let audio: HTMLAudioElement | null = null;
