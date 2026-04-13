@@ -99,15 +99,15 @@ class MeetingDetector:
     # Polling
     # ------------------------------------------------------------------
 
-    def _poll_once(self) -> None:
-        """Execute a single detection cycle (synchronous)."""
+    async def _poll_once(self) -> None:
+        """Execute a single detection cycle."""
         # --- Window monitoring: stop recording if window closed ---
         if self._recorder.is_recording and self._recording_hwnd is not None:
             current_windows = detect_meeting_windows(self.enabled_platforms)
             current_hwnds = {m.hwnd for m in current_windows}
             if self._recording_hwnd not in current_hwnds:
                 log.info("Meeting window closed, stopping recording")
-                self._recorder.stop()
+                await self._recorder.stop()
                 self._recording_hwnd = None
                 # Update tracked meetings
                 closed = set(self._tracked_meetings) - current_hwnds
@@ -147,7 +147,7 @@ class MeetingDetector:
                     "Armed detection: auto-recording %s meeting (org=%s, event=%s)",
                     meeting.platform, org, self._armed_event["event_id"],
                 )
-                self._recorder.start(org)
+                await self._recorder.start(org)
                 self._recording_hwnd = meeting.hwnd
                 self._armed_event = None  # consumed
                 continue
@@ -156,7 +156,7 @@ class MeetingDetector:
             if behavior == "auto-record" and not self._recorder.is_recording:
                 org = self.get_default_org(meeting.platform)
                 log.info("Auto-recording %s meeting (org=%s)", meeting.platform, org)
-                self._recorder.start(org)
+                await self._recorder.start(org)
                 self._recording_hwnd = meeting.hwnd
             elif behavior == "prompt" and self._on_signal_detected is not None:
                 self._on_signal_detected(meeting, enriched)
@@ -175,7 +175,7 @@ class MeetingDetector:
         """Poll in a loop until cancelled."""
         while True:
             try:
-                self._poll_once()
+                await self._poll_once()
             except Exception:
                 log.exception("Detection poll error")
             interval = (

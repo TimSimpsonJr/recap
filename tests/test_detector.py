@@ -6,6 +6,15 @@ from recap.daemon.recorder.detector import MeetingDetector
 from recap.daemon.recorder.detection import MeetingWindow
 
 
+def _make_recorder_mock():
+    """Create a mock recorder with async start/stop methods."""
+    mock = MagicMock()
+    mock.start = AsyncMock()
+    mock.stop = AsyncMock()
+    mock.is_recording = False
+    return mock
+
+
 class TestMeetingDetector:
     @pytest.fixture
     def mock_config(self):
@@ -43,75 +52,76 @@ class TestMeetingDetector:
         assert detector.get_default_org("teams") == "disbursecloud"
         assert detector.get_default_org("signal") == "personal"
 
-    def test_auto_record_starts_recorder(self, mock_config):
-        mock_recorder = MagicMock()
-        mock_recorder.is_recording = False
+    @pytest.mark.asyncio
+    async def test_auto_record_starts_recorder(self, mock_config):
+        mock_recorder = _make_recorder_mock()
         detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
 
         meeting = MeetingWindow(hwnd=1, title="Sprint | Microsoft Teams", platform="teams")
         with patch("recap.daemon.recorder.detector.detect_meeting_windows", return_value=[meeting]):
             with patch("recap.daemon.recorder.detector.enrich_meeting_metadata", return_value={"title": "Sprint", "participants": [], "platform": "teams"}):
-                detector._poll_once()
+                await detector._poll_once()
 
         mock_recorder.start.assert_called_once_with("disbursecloud")
 
-    def test_prompt_behavior_calls_callback(self, mock_config):
-        mock_recorder = MagicMock()
-        mock_recorder.is_recording = False
+    @pytest.mark.asyncio
+    async def test_prompt_behavior_calls_callback(self, mock_config):
+        mock_recorder = _make_recorder_mock()
         on_signal = MagicMock()
         detector = MeetingDetector(config=mock_config, recorder=mock_recorder, on_signal_detected=on_signal)
 
         meeting = MeetingWindow(hwnd=1, title="Signal", platform="signal")
         with patch("recap.daemon.recorder.detector.detect_meeting_windows", return_value=[meeting]):
             with patch("recap.daemon.recorder.detector.enrich_meeting_metadata", return_value={"title": "Signal Call", "participants": [], "platform": "signal"}):
-                detector._poll_once()
+                await detector._poll_once()
 
         on_signal.assert_called_once()
         mock_recorder.start.assert_not_called()
 
-    def test_does_not_retrigger_same_meeting(self, mock_config):
-        mock_recorder = MagicMock()
-        mock_recorder.is_recording = False
+    @pytest.mark.asyncio
+    async def test_does_not_retrigger_same_meeting(self, mock_config):
+        mock_recorder = _make_recorder_mock()
         detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
 
         meeting = MeetingWindow(hwnd=1, title="Sprint | Microsoft Teams", platform="teams")
         with patch("recap.daemon.recorder.detector.detect_meeting_windows", return_value=[meeting]):
             with patch("recap.daemon.recorder.detector.enrich_meeting_metadata", return_value={"title": "Sprint", "participants": [], "platform": "teams"}):
-                detector._poll_once()
+                await detector._poll_once()
                 mock_recorder.start.reset_mock()
                 # Second poll with same meeting
                 mock_recorder.is_recording = True  # now recording
-                detector._poll_once()
+                await detector._poll_once()
 
         mock_recorder.start.assert_not_called()  # should not trigger again
 
-    def test_does_not_start_when_already_recording(self, mock_config):
-        mock_recorder = MagicMock()
+    @pytest.mark.asyncio
+    async def test_does_not_start_when_already_recording(self, mock_config):
+        mock_recorder = _make_recorder_mock()
         mock_recorder.is_recording = True  # already recording
         detector = MeetingDetector(config=mock_config, recorder=MagicMock())
 
         meeting = MeetingWindow(hwnd=1, title="Sprint | Microsoft Teams", platform="teams")
         with patch("recap.daemon.recorder.detector.detect_meeting_windows", return_value=[meeting]):
             with patch("recap.daemon.recorder.detector.enrich_meeting_metadata", return_value={"title": "Sprint", "participants": [], "platform": "teams"}):
-                detector._poll_once()
+                await detector._poll_once()
 
         mock_recorder.start.assert_not_called()
 
-    def test_cleans_up_closed_windows(self, mock_config):
-        mock_recorder = MagicMock()
-        mock_recorder.is_recording = False
+    @pytest.mark.asyncio
+    async def test_cleans_up_closed_windows(self, mock_config):
+        mock_recorder = _make_recorder_mock()
         detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
 
         meeting = MeetingWindow(hwnd=1, title="Sprint | Microsoft Teams", platform="teams")
         with patch("recap.daemon.recorder.detector.detect_meeting_windows", return_value=[meeting]):
             with patch("recap.daemon.recorder.detector.enrich_meeting_metadata", return_value={"title": "Sprint", "participants": [], "platform": "teams"}):
-                detector._poll_once()
+                await detector._poll_once()
 
         assert 1 in detector._tracked_meetings
 
         # Second poll: window is gone
         with patch("recap.daemon.recorder.detector.detect_meeting_windows", return_value=[]):
-            detector._poll_once()
+            await detector._poll_once()
 
         assert 1 not in detector._tracked_meetings
 
@@ -155,9 +165,9 @@ class TestCalendarArming:
         detector.disarm()
         assert detector.is_armed is False
 
-    def test_armed_detection_starts_recording(self, mock_config):
-        mock_recorder = MagicMock()
-        mock_recorder.is_recording = False
+    @pytest.mark.asyncio
+    async def test_armed_detection_starts_recording(self, mock_config):
+        mock_recorder = _make_recorder_mock()
         detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
         detector.arm_for_event(
             event_id="evt1",
@@ -168,13 +178,13 @@ class TestCalendarArming:
         meeting = MeetingWindow(hwnd=1, title="Sprint | Microsoft Teams", platform="teams")
         with patch("recap.daemon.recorder.detector.detect_meeting_windows", return_value=[meeting]):
             with patch("recap.daemon.recorder.detector.enrich_meeting_metadata", return_value={"title": "Sprint", "participants": [], "platform": "teams"}):
-                detector._poll_once()
+                await detector._poll_once()
 
         mock_recorder.start.assert_called_once()
 
-    def test_arm_timeout_disarms(self, mock_config):
-        mock_recorder = MagicMock()
-        mock_recorder.is_recording = False
+    @pytest.mark.asyncio
+    async def test_arm_timeout_disarms(self, mock_config):
+        mock_recorder = _make_recorder_mock()
         detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
         # Arm with a start_time far in the past (beyond timeout)
         detector.arm_for_event(
@@ -184,14 +194,15 @@ class TestCalendarArming:
         )
 
         with patch("recap.daemon.recorder.detector.detect_meeting_windows", return_value=[]):
-            detector._poll_once()
+            await detector._poll_once()
 
         assert detector.is_armed is False
 
 
 class TestWindowMonitoring:
-    def test_stops_recording_when_window_closes(self, mock_config):
-        mock_recorder = MagicMock()
+    @pytest.mark.asyncio
+    async def test_stops_recording_when_window_closes(self, mock_config):
+        mock_recorder = _make_recorder_mock()
         mock_recorder.is_recording = True
         detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
 
@@ -202,13 +213,14 @@ class TestWindowMonitoring:
         # Next poll: window is gone
         with patch("recap.daemon.recorder.detector.detect_meeting_windows", return_value=[]):
             with patch("recap.daemon.recorder.detector.enrich_meeting_metadata"):
-                detector._poll_once()
+                await detector._poll_once()
 
         mock_recorder.stop.assert_called_once()
         assert detector._recording_hwnd is None
 
-    def test_keeps_recording_when_window_still_open(self, mock_config):
-        mock_recorder = MagicMock()
+    @pytest.mark.asyncio
+    async def test_keeps_recording_when_window_still_open(self, mock_config):
+        mock_recorder = _make_recorder_mock()
         mock_recorder.is_recording = True
         detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
 
@@ -219,6 +231,6 @@ class TestWindowMonitoring:
         # Next poll: window still there
         with patch("recap.daemon.recorder.detector.detect_meeting_windows", return_value=[meeting]):
             with patch("recap.daemon.recorder.detector.enrich_meeting_metadata"):
-                detector._poll_once()
+                await detector._poll_once()
 
         mock_recorder.stop.assert_not_called()

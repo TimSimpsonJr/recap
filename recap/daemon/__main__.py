@@ -261,24 +261,34 @@ def main() -> None:
 
     recorder.on_streaming_segment = _on_streaming_segment
 
+    # Helper to schedule async work from synchronous callbacks (tray, state machine)
+    def _handle_async_error(future):
+        try:
+            future.result()
+        except Exception as e:
+            logger.error("Async callback failed: %s", e)
+            notify("Recap Error", str(e))
+
+    def _run_async(coro):
+        """Schedule an async coroutine from any thread."""
+        loop = _loop_holder[0]
+        if loop is not None and loop.is_running():
+            future = asyncio.run_coroutine_threadsafe(coro, loop)
+            future.add_done_callback(_handle_async_error)
+
     # Wire state changes to tray updates + WebSocket broadcasts
     def on_state_change(old, new):
         org = recorder.state_machine.current_org or ""
         tray.update_state(new.value, org)
         # Schedule broadcast on the event loop (state change may fire
         # from any thread, but broadcast is async)
-        try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                asyncio.ensure_future(
-                    broadcast(app, {
-                        "event": "state_change",
-                        "state": new.value,
-                        "org": org,
-                    })
-                )
-        except RuntimeError:
-            pass
+        _run_async(
+            broadcast(app, {
+                "event": "state_change",
+                "state": new.value,
+                "org": org,
+            })
+        )
 
     # Replace state machine with one that has our callback
     from recap.daemon.recorder.state_machine import RecorderStateMachine
@@ -286,12 +296,6 @@ def main() -> None:
 
     # Setup tray — wire menu items to recorder
     org_names = [org.name for org in config.orgs]
-
-    def _run_async(coro):
-        """Schedule an async coroutine from the tray thread."""
-        loop = _loop_holder[0]
-        if loop is not None and loop.is_running():
-            asyncio.run_coroutine_threadsafe(coro, loop)
 
     def on_start_recording(org: str) -> None:
         logger.info("Start recording requested for org: %s", org)
