@@ -74,6 +74,10 @@ def _make_process_recording(config: DaemonConfig, recorder: Recorder):
             )
             pipeline_config = _build_pipeline_config(config, org_config)
 
+            # Pass the streaming transcript (if available) so the pipeline
+            # can skip batch transcription + diarization when streaming succeeded.
+            streaming_transcript = recorder.streaming_result
+
             note_path = run_pipeline(
                 audio_path=flac_path,
                 metadata=metadata,
@@ -81,6 +85,7 @@ def _make_process_recording(config: DaemonConfig, recorder: Recorder):
                 org_subfolder=org_config.subfolder,
                 vault_path=config.vault_path,
                 user_name=config.user_name,
+                streaming_transcript=streaming_transcript,
                 from_stage=from_stage,
             )
             recorder.state_machine.processing_complete()
@@ -237,6 +242,24 @@ def main() -> None:
         config=config,
         scheduler=calendar_scheduler,
     )
+
+    # Wire streaming segment callback: bridge from audio thread to async
+    # event loop for WebSocket broadcast of live transcript segments.
+    def _on_streaming_segment(segment: dict) -> None:
+        loop = _loop_holder[0]
+        if loop is not None and loop.is_running():
+            asyncio.run_coroutine_threadsafe(
+                broadcast(app, {
+                    "event": "transcript_segment",
+                    "speaker": segment.get("speaker", "UNKNOWN"),
+                    "text": segment.get("text", ""),
+                    "start": segment.get("start", 0),
+                    "end": segment.get("end", 0),
+                }),
+                loop,
+            )
+
+    recorder.on_streaming_segment = _on_streaming_segment
 
     # Wire state changes to tray updates + WebSocket broadcasts
     def on_state_change(old, new):

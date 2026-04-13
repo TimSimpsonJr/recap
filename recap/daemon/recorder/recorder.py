@@ -16,6 +16,9 @@ from typing import Callable
 from recap.daemon.recorder.audio import AudioCapture
 from recap.daemon.recorder.silence import SilenceDetector
 from recap.daemon.recorder.state_machine import RecorderStateMachine
+from recap.daemon.streaming.diarizer import StreamingDiarizer
+from recap.daemon.streaming.transcriber import StreamingTranscriber
+from recap.models import TranscriptResult
 
 logger = logging.getLogger(__name__)
 
@@ -55,11 +58,17 @@ class Recorder:
         self._silence_task: asyncio.Task | None = None
         self._duration_task: asyncio.Task | None = None
 
+        # Streaming transcription/diarization (best-effort)
+        self._transcriber: StreamingTranscriber | None = None
+        self._diarizer: StreamingDiarizer | None = None
+        self._streaming_result: TranscriptResult | None = None
+
         # Callbacks for external notification (e.g., tray icon)
         self.on_silence_detected: Callable | None = None
         self.on_max_duration_warning: Callable | None = None
         self.on_max_duration_reached: Callable | None = None
         self.on_recording_stopped: Callable[[Path, str], None] | None = None
+        self.on_streaming_segment: Callable[[dict], None] | None = None
 
     @property
     def is_recording(self) -> bool:
@@ -74,6 +83,11 @@ class Recorder:
         if not self.is_recording:
             return None
         return self._current_path
+
+    @property
+    def streaming_result(self) -> TranscriptResult | None:
+        """Merged streaming transcript, or None if streaming failed or wasn't used."""
+        return self._streaming_result
 
     def _generate_recording_path(self, org: str) -> Path:
         """Generate a unique recording filename.
@@ -131,6 +145,10 @@ class Recorder:
             timeout_seconds=self._silence_timeout_seconds,
         )
 
+        # Start streaming transcription and diarization (best-effort)
+        self._streaming_result = None
+        self._start_streaming()
+
         self.state_machine.start_recording(org)
         self._audio_capture.start()
 
@@ -173,6 +191,9 @@ class Recorder:
             self._audio_capture.stop()
             self._audio_capture = None
 
+        # Stop streaming and merge results
+        self._stop_streaming()
+
         # Reset silence detector
         if self._silence_detector is not None:
             self._silence_detector.reset()
@@ -192,6 +213,87 @@ class Recorder:
             self.on_recording_stopped(path, org)
 
         return path
+
+    def _start_streaming(self) -> None:
+        """Create and start streaming transcriber and diarizer (best-effort).
+
+        If either fails to start, recording continues without it.
+        """
+        self._transcriber = StreamingTranscriber()
+        self._diarizer = StreamingDiarizer()
+
+        try:
+            self._transcriber.start()
+        except Exception:
+            logger.warning("Streaming transcriber failed to start", exc_info=True)
+
+        # Wire the on_segment callback so external listeners (e.g. WebSocket
+        # broadcast) receive live transcript segments.
+        if self.on_streaming_segment is not None:
+            self._transcriber.on_segment = self.on_streaming_segment
+
+        try:
+            self._diarizer.start()
+        except Exception:
+            logger.warning("Streaming diarizer failed to start", exc_info=True)
+
+        # Hook into the audio drain loop to feed streaming models.
+        # We wrap _interleave_and_encode to capture mic buffer data before
+        # it is drained, then feed it to the streaming models.
+        if self._audio_capture is not None:
+            original_interleave = self._audio_capture._interleave_and_encode
+            capture = self._audio_capture
+            transcriber = self._transcriber
+            diarizer = self._diarizer
+            sample_rate = self._sample_rate
+
+            def _interleave_and_feed(chunk_frames: int) -> None:
+                # Snapshot the mic buffer before interleave drains it
+                bytes_needed = chunk_frames * 2  # int16 = 2 bytes per sample
+                with capture._lock:
+                    mic_snapshot = capture._mic_buffer[:bytes_needed]
+
+                original_interleave(chunk_frames)
+
+                # Feed mic audio to streaming models (mono 16-bit PCM)
+                if mic_snapshot:
+                    if transcriber is not None:
+                        transcriber.feed_audio(mic_snapshot, sample_rate)
+                    if diarizer is not None:
+                        diarizer.feed_audio(mic_snapshot, sample_rate)
+
+            self._audio_capture._interleave_and_encode = _interleave_and_feed  # type: ignore[assignment]
+
+    def _stop_streaming(self) -> None:
+        """Stop streaming models and merge results if both succeeded."""
+        from recap.pipeline.diarize import assign_speakers
+
+        transcript_result: TranscriptResult | None = None
+        diarizer_segments: list[dict] | None = None
+
+        if self._transcriber is not None:
+            transcript_result = self._transcriber.stop()
+            self._transcriber = None
+
+        if self._diarizer is not None:
+            diarizer_segments = self._diarizer.stop()
+            self._diarizer = None
+
+        # Merge if both succeeded
+        if transcript_result is not None and diarizer_segments is not None:
+            try:
+                self._streaming_result = assign_speakers(
+                    transcript_result, diarizer_segments,
+                )
+                logger.info(
+                    "Streaming transcript merged: %d utterances",
+                    len(self._streaming_result.utterances),
+                )
+            except Exception:
+                logger.warning("Failed to merge streaming results", exc_info=True)
+                self._streaming_result = None
+        else:
+            self._streaming_result = None
 
     async def _monitor_silence(self) -> None:
         """Async task that periodically checks for silence timeout."""
