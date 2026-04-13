@@ -42,38 +42,37 @@ class PipelineConfig:
 # Status helpers
 # ---------------------------------------------------------------------------
 
-def _status_path(config: PipelineConfig) -> pathlib.Path | None:
+def _status_path(config: PipelineConfig, recording_stem: str) -> pathlib.Path | None:
     if config.status_dir is None:
         return None
     config.status_dir.mkdir(parents=True, exist_ok=True)
-    return config.status_dir / "status.json"
+    return config.status_dir / f"{recording_stem}.json"
 
 
-def _write_status(config: PipelineConfig, data: dict) -> None:
-    path = _status_path(config)
+def _write_status(config: PipelineConfig, recording_stem: str, data: dict) -> None:
+    path = _status_path(config, recording_stem)
     if path is not None:
         path.write_text(json.dumps(data, indent=2))
 
 
-def _stage_started(config: PipelineConfig, stage: str) -> None:
-    _write_status(config, {
+def _stage_started(config: PipelineConfig, recording_stem: str, stage: str) -> None:
+    _write_status(config, recording_stem, {
         "pipeline-status": _stage_label(stage),
         "stage": stage,
         "started": datetime.now().isoformat(),
     })
 
 
-def _stage_completed(config: PipelineConfig, stage: str) -> None:
-    _write_status(config, {
+def _stage_completed(config: PipelineConfig, recording_stem: str, stage: str) -> None:
+    _write_status(config, recording_stem, {
         "pipeline-status": _stage_label(stage),
         "stage": stage,
-        "started": datetime.now().isoformat(),
         "completed": datetime.now().isoformat(),
     })
 
 
-def _stage_failed(config: PipelineConfig, stage: str, error: str) -> None:
-    _write_status(config, {
+def _stage_failed(config: PipelineConfig, recording_stem: str, stage: str, error: str) -> None:
+    _write_status(config, recording_stem, {
         "pipeline-status": f"failed:{stage}",
         "stage": stage,
         "error": error,
@@ -119,7 +118,7 @@ def _update_note_frontmatter(note_path: pathlib.Path, status: str, error: str | 
         new_content = "---\n" + new_fm + "\n---\n" + parts[2]
         note_path.write_text(new_content, encoding="utf-8")
     except Exception:
-        logger.debug("Could not update frontmatter in %s", note_path, exc_info=True)
+        logger.warning("Could not update frontmatter in %s", note_path, exc_info=True)
 
 
 # ---------------------------------------------------------------------------
@@ -157,10 +156,33 @@ def _has_real_speakers(transcript: TranscriptResult) -> bool:
     return any(u.speaker != "UNKNOWN" for u in transcript.utterances)
 
 
+def _apply_speaker_mapping(
+    transcript: TranscriptResult, mapping: dict[str, str],
+) -> TranscriptResult:
+    """Return a copy of *transcript* with speaker labels replaced per *mapping*."""
+    from recap.models import Utterance
+
+    new_utterances = [
+        Utterance(
+            speaker=mapping.get(u.speaker, u.speaker),
+            start=u.start,
+            end=u.end,
+            text=u.text,
+        )
+        for u in transcript.utterances
+    ]
+    return TranscriptResult(
+        utterances=new_utterances,
+        raw_text=transcript.raw_text,
+        language=transcript.language,
+    )
+
+
 def _run_with_retry(
     fn,
     stage: str,
     config: PipelineConfig,
+    recording_stem: str,
     note_path: pathlib.Path | None,
     *,
     is_claude: bool = False,
@@ -187,14 +209,14 @@ def _run_with_retry(
                 return fn()
             except Exception as retry_error:
                 actionable = map_error(stage, retry_error)
-                _stage_failed(config, stage, actionable)
+                _stage_failed(config, recording_stem, stage, actionable)
                 if note_path:
                     _update_note_frontmatter(note_path, f"failed:{stage}", actionable)
                 raise retry_error from first_error
 
         # No retry -- fail immediately
         actionable = map_error(stage, first_error)
-        _stage_failed(config, stage, actionable)
+        _stage_failed(config, recording_stem, stage, actionable)
         if note_path:
             _update_note_frontmatter(note_path, f"failed:{stage}", actionable)
         raise
@@ -231,6 +253,7 @@ def run_pipeline(
 
     prompt_path = config.prompt_template_path or DEFAULT_PROMPT_TEMPLATE
     duration = _get_audio_duration(audio_path)
+    recording_stem = audio_path.stem
 
     # Vault directories
     org_dir = vault_path / org_subfolder
@@ -265,7 +288,7 @@ def run_pipeline(
         # 1. Transcribe
         # ------------------------------------------------------------------
         if not _should_skip("transcribe", from_stage):
-            _stage_started(config, "transcribe")
+            _stage_started(config, recording_stem, "transcribe")
             transcript_save = audio_path.with_suffix(".transcript.json")
 
             def do_transcribe():
@@ -277,9 +300,9 @@ def run_pipeline(
                 )
 
             transcript = _run_with_retry(
-                do_transcribe, "transcribe", config, note_path,
+                do_transcribe, "transcribe", config, recording_stem, note_path,
             )
-            _stage_completed(config, "transcribe")
+            _stage_completed(config, recording_stem, "transcribe")
         else:
             # Load from saved transcript if skipping
             transcript_save = audio_path.with_suffix(".transcript.json")
@@ -298,7 +321,7 @@ def run_pipeline(
         # 2. Diarize
         # ------------------------------------------------------------------
         if not _should_skip("diarize", from_stage) and transcript is not None:
-            _stage_started(config, "diarize")
+            _stage_started(config, recording_stem, "diarize")
 
             def do_diarize():
                 segments = diarize(
@@ -309,16 +332,32 @@ def run_pipeline(
                 return assign_speakers(transcript, segments)
 
             transcript = _run_with_retry(
-                do_diarize, "diarize", config, note_path,
+                do_diarize, "diarize", config, recording_stem, note_path,
             )
-            _stage_completed(config, "diarize")
+            _stage_completed(config, recording_stem, "diarize")
+
+    # ------------------------------------------------------------------
+    # Apply speaker corrections (if a .speakers.json exists)
+    # ------------------------------------------------------------------
+    speakers_file = audio_path.with_suffix(".speakers.json")
+    if transcript is not None and speakers_file.exists():
+        try:
+            speaker_mapping = json.loads(speakers_file.read_text(encoding="utf-8"))
+            if isinstance(speaker_mapping, dict) and speaker_mapping:
+                transcript = _apply_speaker_mapping(transcript, speaker_mapping)
+                logger.info(
+                    "Applied speaker mapping from %s (%d entries)",
+                    speakers_file, len(speaker_mapping),
+                )
+        except (json.JSONDecodeError, OSError) as exc:
+            logger.warning("Failed to load speaker mapping: %s", exc)
 
     # ------------------------------------------------------------------
     # 3. Analyze
     # ------------------------------------------------------------------
     analysis: AnalysisResult | None = None
     if not _should_skip("analyze", from_stage) and transcript is not None:
-        _stage_started(config, "analyze")
+        _stage_started(config, recording_stem, "analyze")
 
         def do_analyze():
             return analyze(
@@ -330,15 +369,15 @@ def run_pipeline(
             )
 
         analysis = _run_with_retry(
-            do_analyze, "analyze", config, note_path, is_claude=(config.llm_backend == "claude"),
+            do_analyze, "analyze", config, recording_stem, note_path, is_claude=(config.llm_backend == "claude"),
         )
-        _stage_completed(config, "analyze")
+        _stage_completed(config, recording_stem, "analyze")
 
     # ------------------------------------------------------------------
     # 4. Export
     # ------------------------------------------------------------------
     if not _should_skip("export", from_stage) and analysis is not None:
-        _stage_started(config, "export")
+        _stage_started(config, recording_stem, "export")
 
         def do_export():
             previous = find_previous_meeting(
@@ -364,28 +403,28 @@ def run_pipeline(
             return written
 
         result_note = _run_with_retry(
-            do_export, "export", config, note_path,
+            do_export, "export", config, recording_stem, note_path,
         )
         if result_note is not None:
             note_path = result_note
-        _stage_completed(config, "export")
+        _stage_completed(config, recording_stem, "export")
 
     # ------------------------------------------------------------------
     # 5. Convert
     # ------------------------------------------------------------------
     if not _should_skip("convert", from_stage) and config.archive_format == "aac":
-        _stage_started(config, "convert")
+        _stage_started(config, recording_stem, "convert")
 
         def do_convert():
             aac_path = convert_flac_to_aac(audio_path, bitrate=config.archive_bitrate)
             delete_source_if_configured(audio_path, config.delete_source_after_archive)
             return aac_path
 
-        _run_with_retry(do_convert, "convert", config, note_path)
-        _stage_completed(config, "convert")
+        _run_with_retry(do_convert, "convert", config, recording_stem, note_path)
+        _stage_completed(config, recording_stem, "convert")
 
     # Final status
-    _write_status(config, {
+    _write_status(config, recording_stem, {
         "pipeline-status": "complete",
         "completed": datetime.now().isoformat(),
     })

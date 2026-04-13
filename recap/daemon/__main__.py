@@ -143,7 +143,8 @@ def main() -> None:
     logger.info("Startup validation passed")
 
     # Check for orphaned recordings
-    orphans = find_orphaned_recordings(config.recordings_path)
+    status_dir = config.vault_path / "_Recap" / ".recap" / "status"
+    orphans = find_orphaned_recordings(config.recordings_path, status_dir=status_dir)
     for path in orphans:
         logger.warning("Orphaned recording found: %s", path)
         notify("Recap", f"Incomplete recording found: {path.name}")

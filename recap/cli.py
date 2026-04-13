@@ -2,12 +2,13 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import pathlib
 import sys
 
-from recap.config import RecapConfig, load_config
-from recap.pipeline import run_pipeline
+from recap.models import MeetingMetadata
+from recap.pipeline import PipelineConfig, run_pipeline
 
 logger = logging.getLogger(__name__)
 
@@ -24,69 +25,49 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     process_parser.add_argument("audio", help="Path to audio/video file")
     process_parser.add_argument("metadata", help="Path to meeting metadata JSON")
     process_parser.add_argument(
-        "--config", default="config.yaml", help="Path to config file (default: config.yaml)"
+        "--vault", required=True, help="Path to Obsidian vault"
+    )
+    process_parser.add_argument(
+        "--org", default="Work", help="Org subfolder (default: Work)"
+    )
+    process_parser.add_argument(
+        "--user", default="Tim", help="User name (default: Tim)"
     )
     process_parser.add_argument(
         "--from", dest="from_stage",
-        choices=["merge", "frames", "transcribe", "diarize", "analyze", "export"],
+        choices=["transcribe", "diarize", "analyze", "export", "convert"],
         help="Restart from this stage (skip earlier completed stages)",
     )
     process_parser.add_argument(
-        "--only",
-        choices=["merge", "frames", "transcribe", "diarize", "analyze", "export", "todoist-sync"],
-        help="Re-run only this single stage",
+        "--backend", default="claude",
+        choices=["claude", "ollama"],
+        help="LLM backend (default: claude)",
     )
-
-    # retry-todoist command
-    retry_parser = subparsers.add_parser("retry-todoist", help="Retry failed Todoist task creation")
-    retry_parser.add_argument(
-        "--config", default="config.yaml", help="Path to config file (default: config.yaml)"
+    process_parser.add_argument(
+        "--device", default="cuda",
+        help="Compute device (default: cuda)",
     )
 
     return parser.parse_args(argv)
 
 
-def _setup_logging(config: RecapConfig) -> None:
+def _setup_logging() -> None:
     log_format = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
-    handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
-
-    # Add file handler if logs_path is accessible
-    try:
-        config.logs_path.mkdir(parents=True, exist_ok=True)
-        file_handler = logging.FileHandler(
-            config.logs_path / "recap.log", encoding="utf-8"
-        )
-        file_handler.setFormatter(logging.Formatter(log_format))
-        handlers.append(file_handler)
-    except OSError:
-        pass  # Fall back to stdout-only if log dir isn't writable
-
     logging.basicConfig(
         level=logging.INFO,
         format=log_format,
-        handlers=handlers,
+        handlers=[logging.StreamHandler(sys.stdout)],
     )
 
 
 def main(argv: list[str] | None = None) -> None:
     args = _parse_args(argv)
-    config = load_config(pathlib.Path(args.config))
-    _setup_logging(config)
+    _setup_logging()
 
     if args.command == "process":
         audio_path = pathlib.Path(args.audio)
         metadata_path = pathlib.Path(args.metadata)
-
-        if args.only == "todoist-sync":
-            from recap.pipeline import run_todoist_sync
-
-            results = run_todoist_sync(config)
-            logger.info(
-                "Todoist sync complete: %d tasks synced, %d notes missing",
-                results["total_synced"],
-                results["notes_missing"],
-            )
-            return
+        vault_path = pathlib.Path(args.vault)
 
         if not audio_path.exists():
             logger.error("Audio file not found: %s", audio_path)
@@ -95,59 +76,26 @@ def main(argv: list[str] | None = None) -> None:
             logger.error("Metadata file not found: %s", metadata_path)
             sys.exit(1)
 
-        results = run_pipeline(
-            audio_path, metadata_path, config,
-            from_stage=args.from_stage,
-            only_stage=args.only,
+        metadata = MeetingMetadata.from_dict(
+            json.loads(metadata_path.read_text(encoding="utf-8"))
         )
 
-        if results.get("meeting_note"):
-            logger.info("Meeting note: %s", results["meeting_note"])
-        if results.get("todoist_tasks"):
-            logger.info("Created %d Todoist tasks", len(results["todoist_tasks"]))
-        if results.get("profiles_created"):
-            logger.info("Created profiles: %s", ", ".join(results["profiles_created"]))
+        pipeline_config = PipelineConfig(
+            device=args.device,
+            llm_backend=args.backend,
+        )
 
-    elif args.command == "retry-todoist":
-        from recap.models import ActionItem
-        from recap.todoist import load_retry_file, create_tasks
+        note_path = run_pipeline(
+            audio_path=audio_path,
+            metadata=metadata,
+            config=pipeline_config,
+            org_subfolder=args.org,
+            vault_path=vault_path,
+            user_name=args.user,
+            from_stage=args.from_stage,
+        )
 
-        retry_items = load_retry_file(config.retry_path)
-        if not retry_items:
-            logger.info("No pending Todoist tasks to retry")
-            return
-
-        logger.info("Retrying %d Todoist tasks", len(retry_items))
-
-        # Convert retry items back to ActionItems and attempt creation
-        action_items = [
-            ActionItem(
-                assignee=config.user_name,
-                description=item["description"],
-                due_date=item.get("due_date"),
-                priority=item.get("priority", "normal"),
-            )
-            for item in retry_items
-        ]
-
-        project_name = retry_items[0].get("project", config.todoist.default_project)
-        note_path = retry_items[0].get("note_path", "")
-
-        try:
-            task_ids = create_tasks(
-                action_items=action_items,
-                user_name=config.user_name,
-                api_token=config.todoist.api_token,
-                project_name=project_name,
-                vault_name=config.vault_path.name,
-                note_path=note_path,
-            )
-            logger.info("Successfully created %d Todoist tasks", len(task_ids))
-            # Clear retry file on success
-            config.retry_path.unlink(missing_ok=True)
-        except Exception as e:
-            logger.error("Retry failed: %s", e)
-            sys.exit(1)
+        logger.info("Meeting note: %s", note_path)
 
 
 if __name__ == "__main__":

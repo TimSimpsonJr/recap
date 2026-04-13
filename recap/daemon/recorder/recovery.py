@@ -7,7 +7,7 @@ from pathlib import Path
 
 def find_orphaned_recordings(
     recordings_path: Path,
-    status_dir: Path | None = None,
+    status_dir: Path,
 ) -> list[Path]:
     """Find FLAC files that lack a completed pipeline status.
 
@@ -19,8 +19,7 @@ def find_orphaned_recordings(
 
     Args:
         recordings_path: Directory containing FLAC recordings.
-        status_dir: Directory containing status JSON files.  Defaults to
-            ``recordings_path / ".recap" / "status"``.
+        status_dir: Directory containing per-recording status JSON files.
 
     Returns:
         List of :class:`~pathlib.Path` objects for orphaned FLAC files.
@@ -29,9 +28,6 @@ def find_orphaned_recordings(
     """
     if not recordings_path.is_dir():
         return []
-
-    if status_dir is None:
-        status_dir = recordings_path / ".recap" / "status"
 
     orphans: list[Path] = []
     for flac in sorted(recordings_path.glob("*.flac")):

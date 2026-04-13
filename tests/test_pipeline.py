@@ -268,7 +268,7 @@ class TestStatusTracking:
 
         def spy_write_text(self_path, content, *a, **kw):
             original_write(self_path, content, *a, **kw)
-            if self_path.name == "status.json":
+            if self_path.name == "recording.json" and self_path.parent.name == "status":
                 statuses_seen.append(json.loads(content))
 
         with (
@@ -332,7 +332,7 @@ class TestStatusTracking:
                 user_name="Tim",
             )
 
-        status_file = pipeline_config.status_dir / "status.json"
+        status_file = pipeline_config.status_dir / "recording.json"
         assert status_file.exists()
         final = json.loads(status_file.read_text())
         assert final["pipeline-status"] == "complete"
@@ -358,7 +358,7 @@ class TestFailureStatus:
                 user_name="Tim",
             )
 
-        status_file = pipeline_config.status_dir / "status.json"
+        status_file = pipeline_config.status_dir / "recording.json"
         assert status_file.exists()
         data = json.loads(status_file.read_text())
         assert data["pipeline-status"] == "failed:transcribe"
@@ -390,7 +390,7 @@ class TestFailureStatus:
                 user_name="Tim",
             )
 
-        status_file = pipeline_config.status_dir / "status.json"
+        status_file = pipeline_config.status_dir / "recording.json"
         data = json.loads(status_file.read_text())
         assert data["pipeline-status"] == "failed:analyze"
 

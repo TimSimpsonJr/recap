@@ -20,38 +20,54 @@ def map_error(stage: str, error: Exception, **context: str) -> str:
     # --- Per-stage mappings ---
     if stage == "transcribe":
         return _map_transcribe(error, msg)
+    if stage == "diarize":
+        return _map_diarize(error, msg)
     if stage == "analyze":
         return _map_analyze(error, msg, context)
     if stage == "export":
         return _map_export(error, msg, context)
-    if stage == "frames":
-        return _map_frames(error, msg)
-    if stage == "todoist":
-        return _map_todoist(error, msg)
+    if stage == "convert":
+        return _map_convert(error, msg)
 
     return str(error)
 
 
 def _map_transcribe(error: Exception, msg: str) -> str:
-    if "401" in msg or "unauthorized" in msg or "authentication" in msg:
-        return (
-            "HuggingFace authentication failed \u2014 "
-            "check your token in Settings > WhisperX"
-        )
     if "cuda" in msg and ("not available" in msg or "no cuda" in msg):
         return (
             "CUDA not available \u2014 "
-            "check GPU drivers or switch device to 'cpu' in Settings > WhisperX"
+            "check GPU drivers or switch device to 'cpu' in Settings > Pipeline"
         )
     if "out of memory" in msg or "cuda out of memory" in msg:
         return (
             "GPU out of memory \u2014 "
-            "try a smaller model (e.g., 'medium') in Settings > WhisperX"
+            "try a smaller Parakeet model in Settings > Pipeline"
         )
     if "download" in msg or "connection" in msg or "resolve" in msg:
         return (
-            "Failed to download WhisperX model \u2014 "
-            "check your internet connection and HuggingFace token"
+            "Failed to download Parakeet model \u2014 "
+            "check your internet connection"
+        )
+    if isinstance(error, (FileNotFoundError, OSError)):
+        return "Audio file not found or unreadable \u2014 recording may be incomplete"
+    return str(error)
+
+
+def _map_diarize(error: Exception, msg: str) -> str:
+    if "cuda" in msg and ("not available" in msg or "no cuda" in msg):
+        return (
+            "CUDA not available \u2014 "
+            "check GPU drivers or switch device to 'cpu' in Settings > Pipeline"
+        )
+    if "out of memory" in msg or "cuda out of memory" in msg:
+        return (
+            "GPU out of memory during diarization \u2014 "
+            "close other GPU applications and retry"
+        )
+    if "download" in msg or "connection" in msg or "resolve" in msg:
+        return (
+            "Failed to download NeMo diarization model \u2014 "
+            "check your internet connection"
         )
     if isinstance(error, (FileNotFoundError, OSError)):
         return "Audio file not found or unreadable \u2014 recording may be incomplete"
@@ -94,15 +110,11 @@ def _map_export(error: Exception, msg: str, context: dict[str, str]) -> str:
     return str(error)
 
 
-def _map_frames(error: Exception, msg: str) -> str:
+def _map_convert(error: Exception, msg: str) -> str:
     if ("ffmpeg" in msg or "ffprobe" in msg) and "not found" in msg:
         return "ffmpeg not found \u2014 ensure ffmpeg is installed and on system PATH"
     if isinstance(error, FileNotFoundError):
         return "Recording file not found \u2014 it may have been moved or deleted"
-    return str(error)
-
-
-def _map_todoist(error: Exception, msg: str) -> str:
-    if "401" in msg or "unauthorized" in msg or "forbidden" in msg:
-        return "Todoist authentication failed \u2014 reconnect in Settings > Todoist"
+    if "permission" in msg:
+        return "Cannot write converted audio \u2014 check folder permissions"
     return str(error)
