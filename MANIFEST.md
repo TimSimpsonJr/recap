@@ -1,67 +1,89 @@
-# Recap — Structural Map
+# Recap -- Structural Map
 
 ## Stack
 
-- **Language:** Python 3.10+ (PyYAML, python-dotenv); pivoting to Python daemon + Obsidian plugin
-- **Pipeline:** Claude CLI for meeting analysis, Obsidian vault writer for output
-- **Browser extension:** Chrome/Edge MV3 for meeting URL detection (Zoom, Meet, Teams, Zoho)
+- **Language:** Python 3.10+ (daemon, pipeline, analysis); TypeScript (Obsidian plugin)
+- **ML:** NVIDIA Parakeet (ASR), NeMo Sortformer (diarization), Claude CLI (analysis)
+- **Runtime:** aiohttp server + WebSocket, PyAudioWPatch (WASAPI), pystray system tray
+- **Browser extension:** Chrome/Edge MV3 for meeting URL detection
 
 ## Structure
 
 ```
-├── recap/                                   # Python pipeline package
-│   ├── __init__.py / __main__.py            # Package init + `python -m recap` entry
-│   ├── cli.py                               # CLI argument parsing and dispatch
-│   ├── config.py                            # YAML config loader with env var interpolation
-│   ├── pipeline.py                          # Stage-tracked orchestrator with status.json
-│   ├── analyze.py                           # Claude CLI invocation for meeting analysis
-│   ├── vault.py                             # Obsidian vault note writer (markdown output)
-│   ├── models.py                            # Data models (MeetingMetadata, TranscriptSegment, etc.)
-│   └── errors.py                            # Typed exceptions with actionable user messages
-├── prompts/                                 # Claude prompt templates
-│   ├── meeting_analysis.md                  # Main analysis prompt (summary, actions, decisions)
-│   └── meeting_briefing.md                  # Pre-meeting briefing prompt
-├── extension/                               # Chrome/Edge MV3 meeting URL detector
-│   ├── manifest.json                        # Extension manifest (permissions, content scripts)
-│   ├── background.js                        # Service worker: meeting URL detection + signaling
-│   ├── content.js                           # Content script stub (reserved for future use)
-│   ├── options.html / options.js            # Extension settings page
-│   └── icons/                               # Extension icons (16, 48, 128px)
-├── tests/                                   # Pytest test suite
-│   ├── conftest.py                          # Shared fixtures (tmp dirs, mock config, metadata)
-│   ├── fixtures/                            # Test data (config.yaml, test-metadata.json)
-│   ├── test_pipeline.py                     # Pipeline orchestration tests
-│   ├── test_pipeline_pause.py               # Pipeline pause/resume behavior
-│   ├── test_pipeline_waiting.py             # Pipeline wait-for-input states
-│   ├── test_pipeline_screenshot_extraction.py  # Screenshot extraction stage tests
-│   ├── test_analyze.py                      # Claude analysis invocation tests
-│   ├── test_vault.py                        # Vault note writer tests
-│   ├── test_config.py                       # Config loading + validation tests
-│   ├── test_cli.py                          # CLI argument parsing tests
-│   ├── test_errors.py                       # Error mapping tests
-│   ├── test_models.py                       # Data model tests
-│   ├── test_participant_extraction.py       # Participant parsing from transcripts
-│   └── test_speaker_labels.py              # Speaker label normalization tests
-├── docs/plans/                              # Design docs + phased implementation plans
-│   ├── 2026-04-13-implementation-overview.md       # 10-phase roadmap overview
-│   ├── 2026-04-13-obsidian-plugin-architecture.md  # Plugin architecture design
-│   ├── 2026-04-13-phase-{0..9}-*.md               # Individual phase plans
-│   └── (legacy plans from Tauri era)               # Historical reference
-├── config.example.yaml                      # Pipeline config template
-├── pyproject.toml                           # Python project config (hatch, pytest, uv)
-├── run_pipeline.py                          # Convenience script for running pipeline
-├── .reap/genome/                            # Cortex project genome (principles, conventions, domain)
-└── PLAN.md                                  # High-level project plan
+recap/                                        # Python package
+  __init__.py / __main__.py                   # Package init + CLI entry
+  cli.py                                      # CLI argument parsing
+  config.py                                   # YAML config loader with env var interpolation
+  analyze.py                                  # Claude CLI invocation for meeting analysis
+  vault.py                                    # Obsidian vault note writer
+  models.py                                   # Data models (MeetingMetadata, TranscriptSegment)
+  errors.py                                   # Typed exceptions with actionable messages
+  daemon/                                     # Background service
+    __main__.py                               # `python -m recap.daemon` entry
+    server.py                                 # aiohttp HTTP + WebSocket server
+    config.py                                 # Daemon-specific config (ports, paths, orgs)
+    startup.py                                # Service initialization and shutdown
+    tray.py                                   # pystray system tray icon and menu
+    auth.py                                   # Token-based daemon authentication
+    credentials.py                            # Credential storage (Windows DPAPI)
+    logging_setup.py                          # Structured logging configuration
+    notifications.py                          # Desktop toast notifications
+    recorder/                                 # Audio capture subsystem
+      recorder.py                             # Recording orchestrator
+      audio.py                                # WASAPI loopback capture (PyAudioWPatch)
+      detector.py                             # Meeting window detector (title matching)
+      detection.py                            # Browser extension signal receiver
+      enrichment.py                           # Meeting metadata enrichment from calendar
+      state_machine.py                        # Recording state transitions
+      silence.py                              # Silence detection for auto-stop
+      recovery.py                             # Crash recovery for interrupted recordings
+      signal_popup.py                         # Manual recording trigger popup
+    calendar/                                 # Calendar integration
+      sync.py                                 # Calendar sync orchestrator
+      scheduler.py                            # Pre-meeting briefing scheduler
+      google.py                               # Google Calendar API client
+      zoho.py                                 # Zoho Calendar API client
+      oauth.py                                # OAuth 2.0 flow handler
+    streaming/                                # Real-time ML
+      transcriber.py                          # Live Parakeet ASR streaming
+      diarizer.py                             # Live NeMo speaker diarization
+  pipeline/                                   # Post-meeting processing
+    __init__.py                               # Stage-tracked orchestrator
+    transcribe.py                             # Batch Parakeet transcription
+    diarize.py                                # Batch NeMo diarization
+    audio_convert.py                          # WAV-to-AAC conversion (ffmpeg)
+obsidian-recap/                               # Obsidian plugin (TypeScript)
+  src/main.ts                                 # Plugin entry, command registration
+  src/api.ts                                  # HTTP/WS client for daemon
+  src/settings.ts                             # Plugin settings tab
+  src/renameProcessor.ts                      # Vault file rename handler
+  src/notificationHistory.ts                  # Notification log
+  src/views/MeetingListView.ts                # Meeting dashboard view
+  src/views/LiveTranscriptView.ts             # Real-time transcript view
+  src/views/SpeakerCorrectionModal.ts         # Speaker label editor modal
+  src/components/                             # UI components (FilterBar, MeetingRow, etc.)
+  src/utils/format.ts                         # Display formatting helpers
+extension/                                    # Chrome/Edge MV3 extension
+  manifest.json / background.js              # Meeting URL detection + daemon signaling
+  options.html / options.js                   # Extension settings
+prompts/                                      # Claude prompt templates
+  meeting_analysis.md                         # Post-meeting analysis prompt
+  meeting_briefing.md                         # Pre-meeting briefing prompt
+tests/                                        # Pytest suite (32 modules)
+  conftest.py                                 # Shared fixtures
+  fixtures/                                   # Test data (config.yaml, metadata)
+docs/plans/                                   # Design docs and phase plans
 ```
 
 ## Key Relationships
 
-- `pipeline.py` orchestrates stages, writes `status.json` per stage; `--from`/`--only` enable retry from any point
-- `analyze.py` reads prompt templates from `prompts/` and invokes Claude CLI with meeting transcript
-- `vault.py` consumes `analyze.py` output and writes structured markdown to the configured Obsidian vault
-- `config.py` loads `config.example.yaml`-shaped files with env var interpolation; consumed by all pipeline stages
-- `errors.py` maps exceptions to user-facing messages that reference specific config fields to fix
-- `models.py` defines shared data structures used across `pipeline.py`, `analyze.py`, and `vault.py`
-- `extension/background.js` detects meeting URLs and will signal the future Python daemon (Phase 4)
-- `docs/plans/2026-04-13-*` define the 10-phase roadmap: daemon (1), recording (2), pipeline (3), detection (4), OAuth (5), plugin core (6), plugin advanced (7), streaming (8), packaging (9)
-- `tests/conftest.py` provides shared fixtures; test files mirror `recap/` module structure
+- `daemon/server.py` exposes REST + WebSocket endpoints consumed by `obsidian-recap/src/api.ts`
+- `daemon/recorder/` orchestrates capture; `recorder.py` coordinates `audio.py`, `detector.py`, `state_machine.py`, and `silence.py`
+- `daemon/recorder/enrichment.py` pulls calendar data from `daemon/calendar/sync.py` to tag recordings with meeting metadata
+- `daemon/streaming/transcriber.py` and `diarizer.py` feed live results through WebSocket to the plugin's `LiveTranscriptView`
+- `pipeline/` runs post-meeting: `transcribe.py` and `diarize.py` produce segments consumed by `analyze.py`, which writes via `vault.py`
+- `daemon/calendar/oauth.py` handles OAuth flows for both Google and Zoho; tokens stored via `credentials.py` (Windows DPAPI)
+- `config.py` (top-level) loads pipeline config; `daemon/config.py` extends it with daemon-specific settings (port, orgs, tray)
+- `models.py` and `errors.py` are shared across daemon, pipeline, and analysis layers
+- `extension/background.js` detects meeting URLs and POSTs to `daemon/recorder/detection.py` endpoint
+- Tests mirror source structure: `test_daemon_server.py` tests `daemon/server.py`, `test_streaming_*.py` tests `streaming/`, etc.
