@@ -13,13 +13,19 @@ import aiohttp
 from aiohttp import web
 
 if TYPE_CHECKING:
+    from recap.daemon.calendar.scheduler import CalendarSyncScheduler
+    from recap.daemon.config import DaemonConfig
+    from recap.daemon.recorder.detector import MeetingDetector
     from recap.daemon.recorder.recorder import Recorder
 
 logger = logging.getLogger("recap.daemon.server")
 
 _WS_CLIENTS_KEY = web.AppKey("ws_clients", set)
 _RECORDER_KEY = web.AppKey("recorder", object)
+_DETECTOR_KEY = web.AppKey("detector", object)
 _PIPELINE_TRIGGER_KEY = web.AppKey("pipeline_trigger", object)
+_CONFIG_KEY = web.AppKey("config", object)
+_SCHEDULER_KEY = web.AppKey("scheduler", object)
 
 
 async def broadcast(app: web.Application, message: dict) -> None:
@@ -75,13 +81,19 @@ async def _meeting_ended(request: web.Request) -> web.Response:
 
 async def _api_status(request: web.Request) -> web.Response:
     recorder: Recorder | None = request.app.get(_RECORDER_KEY)
+    scheduler: CalendarSyncScheduler | None = request.app.get(_SCHEDULER_KEY)
+
+    last_sync = None
+    if scheduler is not None and scheduler.last_sync is not None:
+        last_sync = scheduler.last_sync.isoformat()
+
     if recorder is None:
         return web.json_response(
             {
                 "state": "idle",
                 "recording": None,
                 "daemon_uptime": 0,
-                "last_calendar_sync": None,
+                "last_calendar_sync": last_sync,
                 "errors": [],
             }
         )
@@ -99,7 +111,7 @@ async def _api_status(request: web.Request) -> web.Response:
             "state": state,
             "recording": recording_info,
             "daemon_uptime": 0,
-            "last_calendar_sync": None,
+            "last_calendar_sync": last_sync,
             "errors": [],
         }
     )
@@ -224,6 +236,129 @@ async def _speakers(request: web.Request) -> web.Response:
     return web.json_response({"status": "processing"})
 
 
+async def _arm(request: web.Request) -> web.Response:
+    """POST /api/arm — arm the detector for an upcoming calendar event."""
+    from datetime import datetime
+
+    detector: MeetingDetector | None = request.app.get(_DETECTOR_KEY)
+    if detector is None:
+        return web.json_response(
+            {"error": "detector not available"}, status=503
+        )
+
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, Exception):
+        return web.json_response({"error": "invalid JSON body"}, status=400)
+
+    event_id = body.get("event_id")
+    start_time_str = body.get("start_time")
+    org = body.get("org")
+    if not event_id or not start_time_str or not org:
+        return web.json_response(
+            {"error": "missing required fields: event_id, start_time, org"},
+            status=400,
+        )
+
+    try:
+        start_time = datetime.fromisoformat(start_time_str)
+    except (ValueError, TypeError):
+        return web.json_response(
+            {"error": "invalid start_time format"}, status=400
+        )
+
+    platform_hint = body.get("platform_hint")
+    detector.arm_for_event(event_id, start_time, org, platform_hint)
+    return web.json_response({"status": "armed"})
+
+
+async def _disarm(request: web.Request) -> web.Response:
+    """POST /api/disarm — disarm the detector."""
+    detector: MeetingDetector | None = request.app.get(_DETECTOR_KEY)
+    if detector is None:
+        return web.json_response(
+            {"error": "detector not available"}, status=503
+        )
+
+    detector.disarm()
+    return web.json_response({"status": "disarmed"})
+
+
+async def _oauth_status(request: web.Request) -> web.Response:
+    """GET /api/oauth/:provider/status — check if a provider is connected."""
+    from recap.daemon.credentials import has_credential
+
+    provider = request.match_info["provider"]
+    if provider not in ("zoho", "google"):
+        return web.json_response(
+            {"error": f"unknown provider: {provider}"}, status=400,
+        )
+
+    connected = has_credential(provider, "access_token")
+    return web.json_response({"connected": connected, "provider": provider})
+
+
+async def _oauth_start(request: web.Request) -> web.Response:
+    """POST /api/oauth/:provider/start — initiate OAuth flow."""
+    from recap.daemon.calendar.oauth import OAuthManager
+    from recap.daemon.credentials import get_credential, store_credential
+
+    provider = request.match_info["provider"]
+    if provider not in ("zoho", "google"):
+        return web.json_response(
+            {"error": f"unknown provider: {provider}"}, status=400,
+        )
+
+    client_id = get_credential(provider, "client_id")
+    client_secret = get_credential(provider, "client_secret")
+
+    if not client_id or not client_secret:
+        return web.json_response(
+            {"error": f"no client_id/client_secret configured for {provider}"},
+            status=400,
+        )
+
+    mgr = OAuthManager(provider, client_id, client_secret, redirect_port=0)
+    authorize_url = mgr.get_authorization_url()
+
+    # Start callback server in background — exchanges code and stores tokens
+    async def _run_callback() -> None:
+        try:
+            code = await mgr.start_callback_server()
+            tokens = mgr.exchange_code(code)
+            store_credential(provider, "access_token", tokens["access_token"])
+            if "refresh_token" in tokens:
+                store_credential(provider, "refresh_token", tokens["refresh_token"])
+            logger.info("OAuth flow complete for %s", provider)
+        except Exception:
+            logger.exception("OAuth callback failed for %s", provider)
+
+    asyncio.create_task(_run_callback())
+
+    # Return the URL immediately — the plugin opens it in a browser
+    return web.json_response({"authorize_url": authorize_url})
+
+
+async def _oauth_disconnect(request: web.Request) -> web.Response:
+    """DELETE /api/oauth/:provider — disconnect a provider."""
+    from recap.daemon.credentials import delete_credential
+
+    provider = request.match_info["provider"]
+    if provider not in ("zoho", "google"):
+        return web.json_response(
+            {"error": f"unknown provider: {provider}"}, status=400,
+        )
+
+    for key in ("access_token", "refresh_token", "calendar_id"):
+        try:
+            delete_credential(provider, key)
+        except Exception:
+            pass
+
+    logger.info("Disconnected OAuth provider: %s", provider)
+    return web.json_response({"status": "disconnected", "provider": provider})
+
+
 async def _websocket_handler(request: web.Request) -> web.WebSocketResponse:
     ws = web.WebSocketResponse()
     await ws.prepare(request)
@@ -272,15 +407,24 @@ def _auth_middleware(auth_token: str):
 def create_app(
     auth_token: str,
     recorder: Recorder | None = None,
+    detector: MeetingDetector | None = None,
     pipeline_trigger: Callable[[Path, str, str | None], Awaitable[None]] | None = None,
+    config: DaemonConfig | None = None,
+    scheduler: CalendarSyncScheduler | None = None,
 ) -> web.Application:
     """Create and return the daemon aiohttp application."""
     app = web.Application(middlewares=[_auth_middleware(auth_token)])
     app[_WS_CLIENTS_KEY] = set()
     if recorder is not None:
         app[_RECORDER_KEY] = recorder
+    if detector is not None:
+        app[_DETECTOR_KEY] = detector
     if pipeline_trigger is not None:
         app[_PIPELINE_TRIGGER_KEY] = pipeline_trigger
+    if config is not None:
+        app[_CONFIG_KEY] = config
+    if scheduler is not None:
+        app[_SCHEDULER_KEY] = scheduler
 
     app.router.add_get("/health", _health)
     app.router.add_post("/meeting-detected", _meeting_detected)
@@ -288,7 +432,12 @@ def create_app(
     app.router.add_get("/api/status", _api_status)
     app.router.add_post("/api/record/start", _record_start)
     app.router.add_post("/api/record/stop", _record_stop)
+    app.router.add_post("/api/arm", _arm)
+    app.router.add_post("/api/disarm", _disarm)
     app.router.add_post("/api/meetings/reprocess", _reprocess)
     app.router.add_post("/api/meetings/speakers", _speakers)
+    app.router.add_get("/api/oauth/{provider}/status", _oauth_status)
+    app.router.add_post("/api/oauth/{provider}/start", _oauth_start)
+    app.router.add_delete("/api/oauth/{provider}", _oauth_disconnect)
     app.router.add_get("/api/ws", _websocket_handler)
     return app

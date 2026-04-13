@@ -14,6 +14,7 @@ from pathlib import Path
 from aiohttp import web
 
 from recap.daemon.auth import ensure_auth_token
+from recap.daemon.calendar.scheduler import CalendarSyncScheduler
 from recap.daemon.config import DaemonConfig, load_daemon_config
 from recap.daemon.logging_setup import setup_logging
 from recap.daemon.notifications import notify
@@ -220,12 +221,21 @@ def main() -> None:
         on_signal_detected=on_signal_detected,
     )
 
-    # Create HTTP app (pass recorder and detector so endpoints can use them)
+    # Create calendar sync scheduler
+    calendar_scheduler = CalendarSyncScheduler(
+        config=config,
+        vault_path=config.vault_path,
+        detector=detector,
+    )
+
+    # Create HTTP app (pass recorder, detector, scheduler so endpoints can use them)
     app = create_app(
         auth_token=auth_token,
         recorder=recorder,
         detector=detector,
         pipeline_trigger=process_recording,
+        config=config,
+        scheduler=calendar_scheduler,
     )
 
     # Wire state changes to tray updates + WebSocket broadcasts
@@ -290,8 +300,12 @@ def main() -> None:
         _loop_holder[0] = asyncio.get_event_loop()
         detector.start()
         logger.info("Meeting detection started")
+        await calendar_scheduler.start()
+        logger.info("Calendar sync started")
 
     async def _on_cleanup(app_: web.Application) -> None:
+        calendar_scheduler.stop()
+        logger.info("Calendar sync stopped")
         detector.stop()
         logger.info("Meeting detection stopped")
 
