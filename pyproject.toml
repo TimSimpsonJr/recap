@@ -21,6 +21,8 @@ daemon = [
     "plyer>=2.1",
     "authlib>=1.3",
     "pywin32>=306",
+    "PyAudioWPatch>=0.2.12",
+    "pyflac>=2.2",
 ]
 dev = [
     "pytest>=8.0",
