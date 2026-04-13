@@ -141,3 +141,22 @@ class TestDisarmEndpoint:
             headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
         )
         assert resp.status == 503
+
+
+@pytest.mark.asyncio
+class TestAutoStartEndpoint:
+    """GET /api/autostart — auto-start status (stub)."""
+
+    async def test_returns_not_implemented(self, client):
+        resp = await client.get(
+            "/api/autostart",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["enabled"] is False
+        assert data["implemented"] is False
+
+    async def test_requires_auth(self, client):
+        resp = await client.get("/api/autostart")
+        assert resp.status == 401

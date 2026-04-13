@@ -284,6 +284,16 @@ async def _disarm(request: web.Request) -> web.Response:
     return web.json_response({"status": "disarmed"})
 
 
+async def _autostart_status(_request: web.Request) -> web.Response:
+    """GET /api/autostart — check if auto-start is enabled."""
+    from recap.daemon.autostart import is_autostart_enabled
+
+    return web.json_response({
+        "enabled": is_autostart_enabled(),
+        "implemented": False,
+    })
+
+
 async def _oauth_status(request: web.Request) -> web.Response:
     """GET /api/oauth/:provider/status — check if a provider is connected."""
     from recap.daemon.credentials import has_credential
@@ -436,6 +446,7 @@ def create_app(
     app.router.add_post("/api/disarm", _disarm)
     app.router.add_post("/api/meetings/reprocess", _reprocess)
     app.router.add_post("/api/meetings/speakers", _speakers)
+    app.router.add_get("/api/autostart", _autostart_status)
     app.router.add_get("/api/oauth/{provider}/status", _oauth_status)
     app.router.add_post("/api/oauth/{provider}/start", _oauth_start)
     app.router.add_delete("/api/oauth/{provider}", _oauth_disconnect)
