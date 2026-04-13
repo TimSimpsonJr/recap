@@ -8,7 +8,6 @@ from datetime import date
 
 import yaml
 
-from recap.frames import FrameResult
 from recap.models import (
     AnalysisResult,
     MeetingMetadata,
@@ -16,6 +15,8 @@ from recap.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+MEETING_RECORD_MARKER = "## Meeting Record"
 
 
 def slugify(text: str) -> str:
@@ -34,36 +35,40 @@ def _format_duration(seconds: float) -> str:
     return f"{minutes}m"
 
 
-def _format_timestamp(seconds: float) -> str:
-    m = int(seconds // 60)
-    s = int(seconds % 60)
-    return f"{m}:{s:02d}"
+def _format_action_item(
+    item,
+    user_name: str | None = None,
+) -> str:
+    """Format an action item in Obsidian Tasks emoji format."""
+    is_user = user_name and item.assignee.lower() == user_name.lower()
+    assignee = item.assignee if is_user else f"[[{item.assignee}]]"
+
+    line = f"- [ ] {assignee}: {item.description}"
+
+    # Due date
+    if item.due_date:
+        line += f" 📅 {item.due_date}"
+
+    # Priority emoji
+    if item.priority == "high":
+        line += " ⏫"
+    elif item.priority == "normal":
+        line += " 🔼"
+    # low priority: no emoji
+
+    return line
 
 
-def _generate_meeting_markdown(
+def _generate_pipeline_content(
     metadata: MeetingMetadata,
     analysis: AnalysisResult,
     duration_seconds: float,
     recording_path: pathlib.Path,
-    frames: list[FrameResult] | None = None,
     previous_meeting: str | None = None,
     user_name: str | None = None,
 ) -> str:
-    # Frontmatter
-    fm = {
-        "date": metadata.date.isoformat(),
-        "participants": [f"[[{p.name}]]" for p in metadata.participants],
-        "companies": [f"[[{c.name}]]" for c in analysis.companies],
-        "platform": metadata.platform,
-        "duration": _format_duration(duration_seconds),
-        "recording": str(recording_path),
-        "type": analysis.meeting_type,
-        "tags": [f"meeting/{analysis.meeting_type}"],
-    }
-    lines = ["---"]
-    lines.append(yaml.dump(fm, default_flow_style=False, sort_keys=False).strip())
-    lines.append("---")
-    lines.append("")
+    """Generate the pipeline content that goes below the Meeting Record marker."""
+    lines = []
 
     # Summary
     lines.append("## Summary")
@@ -94,11 +99,7 @@ def _generate_meeting_markdown(
         lines.append("## Action Items")
         lines.append("")
         for item in analysis.action_items:
-            # Wikilink assignees other than the user
-            is_user = user_name and item.assignee.lower() == user_name.lower()
-            assignee = item.assignee if is_user else f"[[{item.assignee}]]"
-            todoist_tag = " #todoist" if is_user else ""
-            lines.append(f"- [ ] {assignee}: {item.description}{todoist_tag}")
+            lines.append(_format_action_item(item, user_name=user_name))
         lines.append("")
 
     # Follow-ups (conditional)
@@ -123,15 +124,53 @@ def _generate_meeting_markdown(
         lines.append(f"[[{previous_meeting}]]")
         lines.append("")
 
-    # Screenshots (conditional)
-    if frames:
-        lines.append("## Screenshots")
-        lines.append("")
-        for frame in frames:
-            ts = _format_timestamp(frame.timestamp)
-            lines.append(f"![[{frame.path.name}]]")
-            lines.append(f"*Frame at {ts}*")
-            lines.append("")
+    return "\n".join(lines)
+
+
+def _generate_meeting_markdown(
+    metadata: MeetingMetadata,
+    analysis: AnalysisResult,
+    duration_seconds: float,
+    recording_path: pathlib.Path,
+    org: str | None = None,
+    previous_meeting: str | None = None,
+    user_name: str | None = None,
+) -> str:
+    """Generate a complete meeting note with frontmatter, marker, and pipeline content."""
+    # Frontmatter
+    fm: dict = {
+        "date": metadata.date.isoformat(),
+        "participants": [f"[[{p.name}]]" for p in metadata.participants],
+        "companies": [f"[[{c.name}]]" for c in analysis.companies],
+        "platform": metadata.platform,
+        "duration": _format_duration(duration_seconds),
+        "recording": str(recording_path),
+        "type": analysis.meeting_type,
+        "tags": [f"meeting/{analysis.meeting_type}"],
+        "pipeline-status": "complete",
+    }
+    if org:
+        fm["org"] = org
+
+    lines = ["---"]
+    lines.append(yaml.dump(fm, default_flow_style=False, sort_keys=False).strip())
+    lines.append("---")
+    lines.append("")
+
+    # Meeting Record marker
+    lines.append(MEETING_RECORD_MARKER)
+    lines.append("")
+
+    # Pipeline content
+    pipeline_content = _generate_pipeline_content(
+        metadata=metadata,
+        analysis=analysis,
+        duration_seconds=duration_seconds,
+        recording_path=recording_path,
+        previous_meeting=previous_meeting,
+        user_name=user_name,
+    )
+    lines.append(pipeline_content)
 
     return "\n".join(lines)
 
@@ -142,7 +181,7 @@ def write_meeting_note(
     duration_seconds: float,
     recording_path: pathlib.Path,
     meetings_dir: pathlib.Path,
-    frames: list[FrameResult] | None = None,
+    org: str | None = None,
     previous_meeting: str | None = None,
     user_name: str | None = None,
 ) -> pathlib.Path | None:
@@ -150,15 +189,44 @@ def write_meeting_note(
     note_path = meetings_dir / filename
 
     if note_path.exists():
-        logger.warning("Meeting note already exists, skipping: %s", note_path)
-        return None
+        content = note_path.read_text(encoding="utf-8")
+        if MEETING_RECORD_MARKER in content:
+            # Reprocess: replace everything below the marker
+            marker_idx = content.index(MEETING_RECORD_MARKER)
+            above_marker = content[:marker_idx]
+            pipeline_content = _generate_pipeline_content(
+                metadata=metadata,
+                analysis=analysis,
+                duration_seconds=duration_seconds,
+                recording_path=recording_path,
+                previous_meeting=previous_meeting,
+                user_name=user_name,
+            )
+            new_content = above_marker + MEETING_RECORD_MARKER + "\n\n" + pipeline_content
+            note_path.write_text(new_content, encoding="utf-8")
+            logger.info("Reprocessed meeting note (replaced below marker): %s", note_path)
+            return note_path
+        else:
+            # Marker doesn't exist: append marker + content
+            pipeline_content = _generate_pipeline_content(
+                metadata=metadata,
+                analysis=analysis,
+                duration_seconds=duration_seconds,
+                recording_path=recording_path,
+                previous_meeting=previous_meeting,
+                user_name=user_name,
+            )
+            new_content = content.rstrip("\n") + "\n\n" + MEETING_RECORD_MARKER + "\n\n" + pipeline_content
+            note_path.write_text(new_content, encoding="utf-8")
+            logger.info("Appended meeting record to existing note: %s", note_path)
+            return note_path
 
     md = _generate_meeting_markdown(
         metadata=metadata,
         analysis=analysis,
         duration_seconds=duration_seconds,
         recording_path=recording_path,
-        frames=frames,
+        org=org,
         previous_meeting=previous_meeting,
         user_name=user_name,
     )
