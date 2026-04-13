@@ -53,4 +53,9 @@ export class LiveTranscriptView extends ItemView {
             this.transcriptEl.empty();
         }
     }
+
+    async onClose(): Promise<void> {
+        this.transcriptEl = null;
+        this.statusEl = null;
+    }
 }

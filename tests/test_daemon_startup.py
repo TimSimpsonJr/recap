@@ -44,3 +44,24 @@ class TestStartupValidation:
                     result = validate_startup(vault_path=tmp_path, check_gpu=True)
         assert len(result.warnings) == 1
         assert result.warnings[0].name == "gpu"
+
+    def test_gpu_check_handles_missing_torch(self, tmp_path):
+        """Bug 5: _check_cuda should handle ImportError when torch is not installed."""
+        import builtins
+        real_import = builtins.__import__
+
+        def mock_import(name, *args, **kwargs):
+            if name == "torch":
+                raise ImportError("No module named 'torch'")
+            return real_import(name, *args, **kwargs)
+
+        with patch("builtins.__import__", side_effect=mock_import):
+            with patch("recap.daemon.startup._check_audio_devices", return_value=True):
+                with patch("recap.daemon.startup._check_keyring", return_value=True):
+                    result = validate_startup(vault_path=tmp_path, check_gpu=True)
+
+        # GPU check should fail gracefully (non-fatal), not raise
+        gpu_check = next(c for c in result.checks if c.name == "gpu")
+        assert gpu_check.passed is False
+        assert gpu_check.fatal is False
+        assert result.can_start is True

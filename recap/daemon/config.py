@@ -20,6 +20,7 @@ class OrgConfig:
 class CalendarProviderConfig:
     org: Optional[str] = None
     default_org: Optional[str] = None
+    calendar_id: Optional[str] = None
 
 
 @dataclass
@@ -196,6 +197,7 @@ def load_daemon_config(path: pathlib.Path) -> DaemonConfig:
         name: CalendarProviderConfig(
             org=cal_data.get("org"),
             default_org=cal_data.get("default-org"),
+            calendar_id=cal_data.get("calendar-id"),
         )
         for name, cal_data in calendars_raw.items()
     }

@@ -96,6 +96,7 @@ class CalendarSyncScheduler:
 
         synced = 0
         armed = 0
+        rename_queue_path = self._vault_path / "_Recap" / ".recap" / "rename-queue.json"
 
         for event in all_events:
             try:
@@ -119,6 +120,7 @@ class CalendarSyncScheduler:
                             note,
                             new_time=event.time,
                             new_participants=event.participants,
+                            rename_queue_path=rename_queue_path,
                         )
                         synced += 1
             except Exception:
@@ -162,10 +164,21 @@ class CalendarSyncScheduler:
         if provider_config:
             org = provider_config.org or provider_config.default_org or "personal"
 
-        calendar_id = get_credential(provider, "calendar_id") or (
-            "primary" if provider == "google" else ""
-        )
+        # Resolve calendar_id: config > credential store > "primary" for Google
+        calendar_id = None
+        if provider_config and provider_config.calendar_id:
+            calendar_id = provider_config.calendar_id
         if not calendar_id:
+            calendar_id = get_credential(provider, "calendar_id")
+        if not calendar_id and provider == "google":
+            calendar_id = "primary"
+        if not calendar_id:
+            logger.warning(
+                "No calendar_id configured for %s — skipping sync. "
+                "Set 'calendar-id' in the calendars.%s config section.",
+                provider,
+                provider,
+            )
             return []
 
         today = datetime.now().strftime("%Y-%m-%dT00:00:00Z")

@@ -80,7 +80,7 @@ class TestOAuthStartEndpoint:
 
         with (
             patch("recap.daemon.credentials.get_credential", side_effect=mock_get_cred),
-            patch("recap.daemon.calendar.oauth.OAuthManager", return_value=mock_mgr),
+            patch("recap.daemon.calendar.oauth.OAuthManager", return_value=mock_mgr) as mock_cls,
         ):
             resp = await client.post(
                 "/api/oauth/google/start",
@@ -92,6 +92,27 @@ class TestOAuthStartEndpoint:
         data = await resp.json()
         assert "authorize_url" in data
         assert "accounts.google.com" in data["authorize_url"]
+
+    async def test_oauth_start_uses_fixed_port(self, client):
+        """Bug 1: OAuth should use port 8399, not ephemeral port 0."""
+        def mock_get_cred(provider, key):
+            return {"client_id": "cid", "client_secret": "csec"}.get(key)
+
+        mock_mgr = MagicMock()
+        mock_mgr.get_authorization_url.return_value = "https://accounts.google.com/auth"
+        mock_mgr.start_callback_server = MagicMock()
+
+        with (
+            patch("recap.daemon.credentials.get_credential", side_effect=mock_get_cred),
+            patch("recap.daemon.calendar.oauth.OAuthManager", return_value=mock_mgr) as mock_cls,
+        ):
+            await client.post(
+                "/api/oauth/google/start",
+                json={},
+                headers=_auth(),
+            )
+            # Verify OAuthManager was constructed with redirect_port=8399
+            mock_cls.assert_called_once_with("google", "cid", "csec", redirect_port=8399)
 
     async def test_rejects_unknown_provider(self, client):
         resp = await client.post(

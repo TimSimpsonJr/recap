@@ -65,6 +65,9 @@ async def _meeting_detected(request: web.Request) -> web.Response:
         body.get("title"),
         body.get("tabId"),
     )
+    # TODO: Forward this signal to the detector/recorder so it can trigger
+    # automatic recording. Currently this endpoint only logs and acknowledges.
+    # Wire to: recorder.on_meeting_detected(platform, url, title, tab_id)
     return web.json_response({"status": "acknowledged"})
 
 
@@ -76,6 +79,9 @@ async def _meeting_ended(request: web.Request) -> web.Response:
         return web.json_response({"error": "invalid JSON body"}, status=400)
 
     logger.info("Meeting ended: tabId=%s", body.get("tabId"))
+    # TODO: Forward this signal to the detector/recorder so it can trigger
+    # automatic stop. Currently this endpoint only logs and acknowledges.
+    # Wire to: recorder.on_meeting_ended(tab_id)
     return web.json_response({"status": "acknowledged"})
 
 
@@ -232,7 +238,7 @@ async def _speakers(request: web.Request) -> web.Response:
 
     org = body.get("org", "")
 
-    asyncio.create_task(trigger(rec_path, org, "export"))
+    asyncio.create_task(trigger(rec_path, org, "analyze"))
     return web.json_response({"status": "processing"})
 
 
@@ -328,7 +334,7 @@ async def _oauth_start(request: web.Request) -> web.Response:
             status=400,
         )
 
-    mgr = OAuthManager(provider, client_id, client_secret, redirect_port=0)
+    mgr = OAuthManager(provider, client_id, client_secret, redirect_port=8399)
     authorize_url = mgr.get_authorization_url()
 
     # Start callback server in background — exchanges code and stores tokens

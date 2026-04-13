@@ -23,6 +23,7 @@ export default class RecapPlugin extends Plugin {
     statusBar: RecapStatusBar | null = null;
     renameProcessor: RenameProcessor | null = null;
     notificationHistory: NotificationHistory = new NotificationHistory();
+    private lastKnownState: string = "idle";
 
     async onload() {
         await this.loadSettings();
@@ -32,11 +33,8 @@ export default class RecapPlugin extends Plugin {
         this.registerView(VIEW_LIVE_TRANSCRIPT, (leaf) => new LiveTranscriptView(leaf));
 
         // Read auth token from vault
-        const tokenPath = "_Recap/.recap/auth-token";
-        let token = "";
-        try {
-            token = (await this.app.vault.adapter.read(tokenPath)).trim();
-        } catch {
+        const token = await this.readAuthToken();
+        if (!token) {
             new Notice("Recap: Could not read daemon auth token. Check _Recap/.recap/auth-token");
         }
 
@@ -54,42 +52,11 @@ export default class RecapPlugin extends Plugin {
 
         // WebSocket connection
         if (this.client) {
-            this.client.on("state_change", (event) => {
-                this.statusBar?.updateState(
-                    event.state as string,
-                    event.org as string | undefined,
-                );
-                // Update live transcript view status
-                const leaves = this.app.workspace.getLeavesOfType(VIEW_LIVE_TRANSCRIPT);
-                for (const leaf of leaves) {
-                    (leaf.view as LiveTranscriptView).updateStatus(event.state as string);
-                }
-            });
-
-            // Wire all events to notification history
-            this.client.on("*", (event) => {
-                if (event.event === "error") {
-                    this.notificationHistory.add("error", "Daemon Error", event.message as string || "Unknown error");
-                } else if (event.event === "processing_complete") {
-                    this.notificationHistory.add("info", "Processing Complete", event.recording_path as string || "");
-                } else if (event.event === "recording_started") {
-                    this.notificationHistory.add("info", "Recording Started", `Org: ${event.org || "unknown"}`);
-                } else if (event.event === "recording_stopped") {
-                    this.notificationHistory.add("info", "Recording Stopped", event.recording_path as string || "");
-                }
-            });
-
-            // Wire rename_queued events to trigger rename processing
-            this.client.on("rename_queued", async () => {
-                await this.renameProcessor?.processQueue();
-            });
-
-            this.client.connectWebSocket(() => {
-                this.statusBar?.setOffline();
-            });
+            this.connectWebSocket();
             // Initial status fetch
             try {
                 const status = await this.client.getStatus();
+                this.lastKnownState = status.state;
                 this.statusBar.updateState(status.state, status.recording?.org);
             } catch {
                 this.statusBar.setOffline();
@@ -102,13 +69,21 @@ export default class RecapPlugin extends Plugin {
         this.addCommand({
             id: "start-recording",
             name: "Start recording",
-            callback: () => {
+            callback: async () => {
                 if (!this.client) {
                     new Notice("Recap: Daemon not connected");
                     return;
                 }
-                // TODO: get org list from daemon config
-                const orgs = ["disbursecloud", "personal", "activism"];
+                // Try to get org list from daemon, fall back to hardcoded defaults
+                // TODO: daemon /api/status should include an `orgs` field
+                let orgs = ["disbursecloud", "personal", "activism"];
+                try {
+                    const status = await this.client.getStatus();
+                    const statusAny = status as unknown as Record<string, unknown>;
+                    if (statusAny.orgs) {
+                        orgs = statusAny.orgs as string[];
+                    }
+                } catch { /* use fallback */ }
                 new OrgPickerModal(this.app, orgs, async (org) => {
                     try {
                         await this.client!.startRecording(org);
@@ -292,6 +267,103 @@ export default class RecapPlugin extends Plugin {
         }
     }
 
+    private connectWebSocket(): void {
+        if (!this.client) return;
+
+        // Bug 6: Re-fetch status on WebSocket connect to clear offline state
+        this.client.on("_connected", async () => {
+            this.statusBar?.setConnected();
+            try {
+                const status = await this.client!.getStatus();
+                this.lastKnownState = status.state;
+                this.statusBar?.updateState(status.state, status.recording?.org);
+            } catch { /* will retry on next reconnect */ }
+        });
+
+        // Bug 3: Wire state_change to notifications using actual daemon events
+        this.client.on("state_change", (event) => {
+            const previousState = this.lastKnownState;
+            const state = event.state as string;
+            this.lastKnownState = state;
+
+            this.statusBar?.updateState(state, event.org as string | undefined);
+
+            // Update live transcript view status
+            const leaves = this.app.workspace.getLeavesOfType(VIEW_LIVE_TRANSCRIPT);
+            for (const leaf of leaves) {
+                (leaf.view as LiveTranscriptView).updateStatus(state);
+            }
+
+            // Generate notifications from state transitions
+            if (state === "recording") {
+                this.notificationHistory.add("info", "Recording Started", `Recording for ${event.org || "unknown"}`);
+            } else if (state === "processing") {
+                this.notificationHistory.add("info", "Processing", "Pipeline running...");
+            } else if (state === "idle" && previousState === "processing") {
+                this.notificationHistory.add("info", "Complete", "Meeting processed");
+            }
+        });
+
+        // Bug 2: Wire transcript_segment events to live transcript view
+        this.client.on("transcript_segment", (event) => {
+            const leaves = this.app.workspace.getLeavesOfType(VIEW_LIVE_TRANSCRIPT);
+            for (const leaf of leaves) {
+                (leaf.view as LiveTranscriptView).appendUtterance(
+                    (event.speaker as string) || "UNKNOWN",
+                    (event.text as string) || "",
+                );
+            }
+        });
+
+        // Wire error events
+        this.client.on("error", (event) => {
+            this.notificationHistory.add("error", "Daemon Error", (event.message as string) || "Unknown error");
+        });
+
+        // Wire silence_warning events
+        this.client.on("silence_warning", (event) => {
+            this.notificationHistory.add("warning", "Silence Detected", (event.message as string) || "Extended silence during recording");
+        });
+
+        // Wire rename_queued events to trigger rename processing
+        this.client.on("rename_queued", async () => {
+            await this.renameProcessor?.processQueue();
+        });
+
+        this.client.connectWebSocket(() => {
+            this.statusBar?.setOffline();
+        });
+    }
+
+    // Bug 5: Reconnect when daemon URL changes in settings
+    async reconnect(): Promise<void> {
+        this.client?.disconnectWebSocket();
+        const token = await this.readAuthToken();
+        if (token) {
+            this.client = new DaemonClient(this.settings.daemonUrl, token);
+            this.connectWebSocket();
+            try {
+                const status = await this.client.getStatus();
+                this.lastKnownState = status.state;
+                this.statusBar?.updateState(status.state, status.recording?.org);
+            } catch {
+                this.statusBar?.setOffline();
+            }
+        } else {
+            this.client = null;
+            this.statusBar?.setOffline();
+        }
+    }
+
+    private async readAuthToken(): Promise<string> {
+        const tokenPath = "_Recap/.recap/auth-token";
+        try {
+            return (await this.app.vault.adapter.read(tokenPath)).trim();
+        } catch {
+            return "";
+        }
+    }
+
     async activateView(viewType: string): Promise<void> {
         const { workspace } = this.app;
         let leaf = workspace.getLeavesOfType(viewType)[0];
@@ -304,6 +376,18 @@ export default class RecapPlugin extends Plugin {
         }
         if (leaf) {
             workspace.revealLeaf(leaf);
+        }
+
+        // Bug 4: If opening the live transcript, sync it with the current daemon state
+        if (viewType === VIEW_LIVE_TRANSCRIPT && this.client) {
+            const leaves = workspace.getLeavesOfType(VIEW_LIVE_TRANSCRIPT);
+            for (const l of leaves) {
+                const view = l.view as LiveTranscriptView;
+                try {
+                    const status = await this.client.getStatus();
+                    view.updateStatus(status.state);
+                } catch { /* daemon offline, view already shows idle */ }
+            }
         }
     }
 }

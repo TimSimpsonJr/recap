@@ -129,7 +129,13 @@ def should_update_note(
         changed = True
     if new_participants is not None:
         existing = fm.get("participants", [])
-        if existing != new_participants:
+        # Strip wikilink brackets for comparison — notes store [[Name]]
+        # but incoming participants are raw names
+        normalized_existing = sorted(
+            p.replace("[[", "").replace("]]", "") for p in existing
+        )
+        normalized_new = sorted(new_participants)
+        if normalized_existing != normalized_new:
             changed = True
 
     return "update" if changed else "skip"
@@ -176,8 +182,21 @@ def update_calendar_note(
                     old_name = note_path.name
                     new_name = old_name.replace(old_date, new_date, 1)
                     new_path = note_path.parent / new_name
+                    # Read existing queue entries and append
+                    queue: list[dict] = []
+                    if rename_queue_path.exists():
+                        try:
+                            queue = json.loads(
+                                rename_queue_path.read_text(encoding="utf-8")
+                            )
+                        except (json.JSONDecodeError, ValueError):
+                            queue = []
+                    queue.append(
+                        {"old_path": str(note_path), "new_path": str(new_path)}
+                    )
+                    rename_queue_path.parent.mkdir(parents=True, exist_ok=True)
                     rename_queue_path.write_text(
-                        json.dumps({"old_path": str(note_path), "new_path": str(new_path)}),
+                        json.dumps(queue, indent=2),
                         encoding="utf-8",
                     )
 

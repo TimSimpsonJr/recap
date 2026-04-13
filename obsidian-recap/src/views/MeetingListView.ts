@@ -118,4 +118,8 @@ export class MeetingListView extends ItemView {
             });
         }
     }
+
+    async onClose(): Promise<void> {
+        this.listContainer = null;
+    }
 }

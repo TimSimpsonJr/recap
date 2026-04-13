@@ -27,6 +27,7 @@ export class RecapSettingTab extends PluginSettingTab {
                 .onChange(async (value) => {
                     this.plugin.settings.daemonUrl = value;
                     await this.plugin.saveSettings();
+                    await this.plugin.reconnect();
                 })
             );
 

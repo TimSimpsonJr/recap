@@ -98,6 +98,91 @@ class TestShouldUpdateNote:
         assert result == "update"
 
 
+    def test_wikilink_participants_match_raw_names(self, tmp_path):
+        """Bug 3: Notes store [[Name]] wikilinks but sync compares raw names."""
+        meetings_dir = tmp_path / "_Recap" / "Disbursecloud" / "Meetings"
+        meetings_dir.mkdir(parents=True)
+        note = meetings_dir / "2026-04-14 - test.md"
+        note.write_text(
+            '---\nevent-id: "abc"\ntime: "10:00-11:00"\n'
+            'participants:\n- "[[Alice]]"\n- "[[Bob]]"\n---\n'
+        )
+        result = should_update_note(
+            event_id="abc",
+            vault_path=tmp_path,
+            org_subfolder="_Recap/Disbursecloud",
+            new_time="10:00-11:00",
+            new_participants=["Alice", "Bob"],
+        )
+        assert result == "skip"
+
+    def test_wikilink_participants_detect_real_change(self, tmp_path):
+        """Participants actually changed — should detect update."""
+        meetings_dir = tmp_path / "_Recap" / "Disbursecloud" / "Meetings"
+        meetings_dir.mkdir(parents=True)
+        note = meetings_dir / "2026-04-14 - test.md"
+        note.write_text(
+            '---\nevent-id: "abc"\ntime: "10:00-11:00"\n'
+            'participants:\n- "[[Alice]]"\n- "[[Bob]]"\n---\n'
+        )
+        result = should_update_note(
+            event_id="abc",
+            vault_path=tmp_path,
+            org_subfolder="_Recap/Disbursecloud",
+            new_time="10:00-11:00",
+            new_participants=["Alice", "Charlie"],
+        )
+        assert result == "update"
+
+
+class TestUpdateCalendarNote:
+    def test_rename_queue_writes_json_array(self, tmp_path):
+        """Bug 4: Rename queue should be a JSON array of {old_path, new_path}."""
+        note = tmp_path / "2026-04-14 - test.md"
+        note.write_text(
+            '---\nevent-id: "abc"\ndate: "2026-04-14"\n'
+            'time: "10:00-11:00"\nparticipants: []\n---\nBody\n'
+        )
+        queue_path = tmp_path / "rename-queue.json"
+
+        update_calendar_note(
+            note,
+            new_time="2026-04-15 10:00-11:00",
+            rename_queue_path=queue_path,
+        )
+
+        assert queue_path.exists()
+        queue = json.loads(queue_path.read_text())
+        assert isinstance(queue, list)
+        assert len(queue) == 1
+        assert "old_path" in queue[0]
+        assert "new_path" in queue[0]
+        assert "2026-04-14" in queue[0]["old_path"]
+        assert "2026-04-15" in queue[0]["new_path"]
+
+    def test_rename_queue_appends_to_existing(self, tmp_path):
+        """Rename queue should append, not overwrite existing entries."""
+        note = tmp_path / "2026-04-14 - test.md"
+        note.write_text(
+            '---\nevent-id: "abc"\ndate: "2026-04-14"\n'
+            'time: "10:00-11:00"\nparticipants: []\n---\nBody\n'
+        )
+        queue_path = tmp_path / "rename-queue.json"
+        # Pre-populate with an existing entry
+        queue_path.write_text(
+            json.dumps([{"old_path": "old.md", "new_path": "new.md"}])
+        )
+
+        update_calendar_note(
+            note,
+            new_time="2026-04-15 10:00-11:00",
+            rename_queue_path=queue_path,
+        )
+
+        queue = json.loads(queue_path.read_text())
+        assert len(queue) == 2
+
+
 class TestFindNoteByEventId:
     def test_finds_note(self, tmp_path):
         note = tmp_path / "test.md"

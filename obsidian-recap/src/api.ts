@@ -76,8 +76,14 @@ export class DaemonClient {
     connectWebSocket(onDisconnect?: () => void): void {
         if (this.ws) return;
 
-        const wsUrl = this.baseUrl.replace("http", "ws") + "/api/ws";
+        const wsUrl = this.baseUrl.replace(/^https?/, (m) => m === "https" ? "wss" : "ws")
+            + `/api/ws?token=${encodeURIComponent(this.token)}`;
         this.ws = new WebSocket(wsUrl);
+
+        this.ws.onopen = () => {
+            const handlers = this.eventHandlers.get("_connected") || [];
+            handlers.forEach(h => h({ event: "_connected" }));
+        };
 
         this.ws.onmessage = (event: MessageEvent) => {
             try {

@@ -235,3 +235,77 @@ class TestSyncProvider:
 
         assert len(events) == 1
         assert events[0].event_id == "evt-1"
+
+    @pytest.mark.asyncio
+    async def test_zoho_skips_when_no_calendar_id(self, tmp_path):
+        """Bug 2: Zoho sync should skip with warning when no calendar_id."""
+        config = _make_config(
+            tmp_path,
+            calendars={"zoho": CalendarProviderConfig(org="testorg")},
+        )
+        scheduler = CalendarSyncScheduler(config, tmp_path)
+
+        def mock_get_cred(provider, key):
+            if key == "access_token":
+                return "tok123"
+            return None  # No calendar_id in credential store
+
+        with (
+            patch("recap.daemon.calendar.scheduler.get_credential", side_effect=mock_get_cred),
+        ):
+            events = await scheduler._sync_provider("zoho")
+
+        assert events == []
+
+    @pytest.mark.asyncio
+    async def test_calendar_id_from_config(self, tmp_path):
+        """Bug 2: calendar_id should be read from config."""
+        config = _make_config(
+            tmp_path,
+            calendars={"zoho": CalendarProviderConfig(org="testorg", calendar_id="my-cal-123")},
+        )
+        scheduler = CalendarSyncScheduler(config, tmp_path)
+
+        event = _make_event()
+
+        def mock_get_cred(provider, key):
+            if key == "access_token":
+                return "tok123"
+            return None
+
+        with (
+            patch("recap.daemon.calendar.scheduler.get_credential", side_effect=mock_get_cred),
+            patch("recap.daemon.calendar.scheduler.has_credential", return_value=True),
+            patch.object(scheduler, "_fetch_events", new_callable=AsyncMock, return_value=[event]),
+        ):
+            events = await scheduler._sync_provider("zoho")
+
+        assert len(events) == 1
+
+    @pytest.mark.asyncio
+    async def test_google_defaults_calendar_id_to_primary(self, tmp_path):
+        """Bug 2: Google should default calendar_id to 'primary'."""
+        config = _make_config(
+            tmp_path,
+            calendars={"google": CalendarProviderConfig(org="testorg")},
+        )
+        scheduler = CalendarSyncScheduler(config, tmp_path)
+
+        event = _make_event()
+
+        def mock_get_cred(provider, key):
+            if key == "access_token":
+                return "tok123"
+            return None  # No calendar_id anywhere
+
+        with (
+            patch("recap.daemon.calendar.scheduler.get_credential", side_effect=mock_get_cred),
+            patch("recap.daemon.calendar.scheduler.has_credential", return_value=True),
+            patch.object(scheduler, "_fetch_events", new_callable=AsyncMock, return_value=[event]) as mock_fetch,
+        ):
+            events = await scheduler._sync_provider("google")
+
+        assert len(events) == 1
+        # Verify "primary" was passed as calendar_id
+        call_args = mock_fetch.call_args
+        assert call_args[0][2] == "primary"  # 3rd positional arg is calendar_id
