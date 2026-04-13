@@ -8,11 +8,13 @@ import pathlib
 import signal
 import sys
 import threading
+from datetime import date
+from pathlib import Path
 
 from aiohttp import web
 
 from recap.daemon.auth import ensure_auth_token
-from recap.daemon.config import load_daemon_config
+from recap.daemon.config import DaemonConfig, load_daemon_config
 from recap.daemon.logging_setup import setup_logging
 from recap.daemon.notifications import notify
 from recap.daemon.recorder.recorder import Recorder
@@ -20,8 +22,76 @@ from recap.daemon.recorder.recovery import find_orphaned_recordings
 from recap.daemon.server import broadcast, create_app
 from recap.daemon.startup import validate_startup
 from recap.daemon.tray import RecapTray
+from recap.models import MeetingMetadata
+from recap.pipeline import PipelineConfig as PipelineCfg, run_pipeline
 
 logger = logging.getLogger("recap.daemon")
+
+
+def _build_pipeline_config(config: DaemonConfig, org_config) -> PipelineCfg:
+    """Build a PipelineConfig from the daemon config and an org config."""
+    return PipelineCfg(
+        transcription_model=config.pipeline.transcription_model,
+        diarization_model=config.pipeline.diarization_model,
+        device="cuda",
+        llm_backend=org_config.llm_backend,
+        ollama_model="",
+        archive_format=config.recording.archive_format,
+        archive_bitrate="64k",
+        delete_source_after_archive=config.recording.delete_source_after_archive,
+        auto_retry=config.pipeline.auto_retry,
+        max_retries=config.pipeline.max_retries,
+        prompt_template_path=None,
+        status_dir=config.vault_path / "_Recap" / ".recap" / "status",
+    )
+
+
+def _make_process_recording(config: DaemonConfig, recorder: Recorder):
+    """Create the async process_recording coroutine bound to daemon state."""
+
+    async def process_recording(
+        flac_path: Path,
+        org: str,
+        from_stage: str | None = None,
+    ) -> None:
+        """Run the pipeline in a background task after recording stops."""
+        try:
+            org_config = next(
+                (o for o in config.orgs if o.name == org),
+                config.default_org,
+            )
+            if org_config is None:
+                raise ValueError(f"No org config found for '{org}'")
+
+            metadata = MeetingMetadata(
+                title=flac_path.stem,
+                date=date.today(),
+                participants=[],
+                platform="unknown",
+            )
+            pipeline_config = _build_pipeline_config(config, org_config)
+
+            note_path = run_pipeline(
+                audio_path=flac_path,
+                metadata=metadata,
+                config=pipeline_config,
+                org_subfolder=org_config.subfolder,
+                vault_path=config.vault_path,
+                user_name=config.user_name,
+                from_stage=from_stage,
+            )
+            recorder.state_machine.processing_complete()
+            notify("Recap", f"Meeting processed: {note_path.stem}")
+        except Exception as e:
+            # Ensure state machine returns to idle even on failure
+            try:
+                recorder.state_machine.processing_complete()
+            except Exception:
+                pass
+            logger.error("Pipeline failed: %s", e)
+            notify("Recap", f"Pipeline failed: {e}")
+
+    return process_recording
 
 
 def main() -> None:
@@ -77,12 +147,35 @@ def main() -> None:
     auth_token = ensure_auth_token(auth_token_path)
     logger.info("Auth token ready")
 
+    # The event loop is needed to call async methods from synchronous
+    # callbacks (tray, recorder).  We capture it after web.run_app starts,
+    # but stash it in a mutable container so closures can reference it.
+    _loop_holder: list[asyncio.AbstractEventLoop | None] = [None]
+
     # Create recorder
     recorder = Recorder(
         recordings_path=config.recordings_path,
         silence_timeout_minutes=config.recording.silence_timeout_minutes,
         max_duration_hours=config.recording.max_duration_hours,
     )
+
+    # Build the pipeline trigger
+    process_recording = _make_process_recording(config, recorder)
+
+    # Wire recording-stopped callback: spawn pipeline in the event loop
+    def _on_recording_stopped(flac_path: Path, org: str) -> None:
+        loop = _loop_holder[0]
+        if loop is not None and loop.is_running():
+            asyncio.run_coroutine_threadsafe(
+                process_recording(flac_path, org), loop,
+            )
+        else:
+            logger.warning(
+                "Event loop not available — cannot trigger pipeline for %s",
+                flac_path,
+            )
+
+    recorder.on_recording_stopped = _on_recording_stopped
 
     # Wire silence/duration callbacks to notifications
     recorder.on_silence_detected = lambda: notify(
@@ -96,7 +189,11 @@ def main() -> None:
     )
 
     # Create HTTP app (pass recorder so endpoints can use it)
-    app = create_app(auth_token=auth_token, recorder=recorder)
+    app = create_app(
+        auth_token=auth_token,
+        recorder=recorder,
+        pipeline_trigger=process_recording,
+    )
 
     # Wire state changes to tray updates + WebSocket broadcasts
     def on_state_change(old, new):
@@ -123,11 +220,6 @@ def main() -> None:
 
     # Setup tray — wire menu items to recorder
     org_names = [org.name for org in config.orgs]
-
-    # The event loop is needed to call async recorder methods from the
-    # synchronous tray callbacks.  We capture it after web.run_app starts,
-    # but since the tray thread starts first we stash it in a mutable container.
-    _loop_holder: list[asyncio.AbstractEventLoop | None] = [None]
 
     def _run_async(coro):
         """Schedule an async coroutine from the tray thread."""

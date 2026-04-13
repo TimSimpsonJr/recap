@@ -59,6 +59,7 @@ class Recorder:
         self.on_silence_detected: Callable | None = None
         self.on_max_duration_warning: Callable | None = None
         self.on_max_duration_reached: Callable | None = None
+        self.on_recording_stopped: Callable[[Path, str], None] | None = None
 
     @property
     def is_recording(self) -> bool:
@@ -177,10 +178,19 @@ class Recorder:
             self._silence_detector.reset()
             self._silence_detector = None
 
+        # Capture org before state transition (stop_recording clears nothing,
+        # but processing_complete will clear current_org later)
+        org = self.state_machine.current_org or ""
+
         # Transition state machine
         self.state_machine.stop_recording()
 
         logger.info("Recording stopped: %s", path)
+
+        # Notify listener (e.g., pipeline trigger in __main__.py)
+        if self.on_recording_stopped is not None and path is not None:
+            self.on_recording_stopped(path, org)
+
         return path
 
     async def _monitor_silence(self) -> None:

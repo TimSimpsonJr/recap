@@ -96,6 +96,7 @@ class KnownContact:
 class DaemonConfig:
     vault_path: pathlib.Path
     recordings_path: pathlib.Path
+    user_name: str = "Tim"
     detection: DetectionConfig = field(default_factory=DetectionConfig)
     recording: RecordingConfig = field(default_factory=RecordingConfig)
     pipeline: PipelineConfig = field(default_factory=PipelineConfig)
@@ -264,6 +265,7 @@ def load_daemon_config(path: pathlib.Path) -> DaemonConfig:
     return DaemonConfig(
         vault_path=pathlib.Path(raw["vault-path"]),
         recordings_path=pathlib.Path(raw["recordings-path"]),
+        user_name=raw.get("user-name", "Tim"),
         detection=detection,
         recording=recording,
         pipeline=pipeline,

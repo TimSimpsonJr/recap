@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import hmac
 import json
 import logging
-from typing import TYPE_CHECKING
+from pathlib import Path
+from typing import TYPE_CHECKING, Callable, Awaitable
 
 import aiohttp
 from aiohttp import web
@@ -17,6 +19,7 @@ logger = logging.getLogger("recap.daemon.server")
 
 _WS_CLIENTS_KEY = web.AppKey("ws_clients", set)
 _RECORDER_KEY = web.AppKey("recorder", object)
+_PIPELINE_TRIGGER_KEY = web.AppKey("pipeline_trigger", object)
 
 
 async def broadcast(app: web.Application, message: dict) -> None:
@@ -131,6 +134,68 @@ async def _record_stop(request: web.Request) -> web.Response:
         )
 
 
+async def _reprocess(request: web.Request) -> web.Response:
+    """POST /api/meetings/reprocess — re-run pipeline from a given stage."""
+    trigger = request.app.get(_PIPELINE_TRIGGER_KEY)
+    if trigger is None:
+        return web.json_response(
+            {"error": "pipeline not configured"}, status=503
+        )
+
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, Exception):
+        return web.json_response({"error": "invalid JSON body"}, status=400)
+
+    recording_path = body.get("recording_path")
+    if not recording_path:
+        return web.json_response(
+            {"error": "missing 'recording_path' field"}, status=400
+        )
+
+    from_stage = body.get("from_stage")
+    org = body.get("org", "")
+
+    asyncio.create_task(trigger(Path(recording_path), org, from_stage))
+    return web.json_response({"status": "processing"})
+
+
+async def _speakers(request: web.Request) -> web.Response:
+    """POST /api/meetings/speakers — save speaker mapping and reprocess from export."""
+    trigger = request.app.get(_PIPELINE_TRIGGER_KEY)
+    if trigger is None:
+        return web.json_response(
+            {"error": "pipeline not configured"}, status=503
+        )
+
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, Exception):
+        return web.json_response({"error": "invalid JSON body"}, status=400)
+
+    recording_path = body.get("recording_path")
+    mapping = body.get("mapping")
+    if not recording_path:
+        return web.json_response(
+            {"error": "missing 'recording_path' field"}, status=400
+        )
+    if not mapping or not isinstance(mapping, dict):
+        return web.json_response(
+            {"error": "missing or invalid 'mapping' field"}, status=400
+        )
+
+    # Save speaker mapping alongside the recording
+    rec_path = Path(recording_path)
+    speakers_file = rec_path.with_suffix(".speakers.json")
+    speakers_file.write_text(json.dumps(mapping, indent=2))
+    logger.info("Speaker mapping saved: %s", speakers_file)
+
+    org = body.get("org", "")
+
+    asyncio.create_task(trigger(rec_path, org, "export"))
+    return web.json_response({"status": "processing"})
+
+
 async def _websocket_handler(request: web.Request) -> web.WebSocketResponse:
     ws = web.WebSocketResponse()
     await ws.prepare(request)
@@ -179,16 +244,21 @@ def _auth_middleware(auth_token: str):
 def create_app(
     auth_token: str,
     recorder: Recorder | None = None,
+    pipeline_trigger: Callable[[Path, str, str | None], Awaitable[None]] | None = None,
 ) -> web.Application:
     """Create and return the daemon aiohttp application."""
     app = web.Application(middlewares=[_auth_middleware(auth_token)])
     app[_WS_CLIENTS_KEY] = set()
     if recorder is not None:
         app[_RECORDER_KEY] = recorder
+    if pipeline_trigger is not None:
+        app[_PIPELINE_TRIGGER_KEY] = pipeline_trigger
 
     app.router.add_get("/health", _health)
     app.router.add_get("/api/status", _api_status)
     app.router.add_post("/api/record/start", _record_start)
     app.router.add_post("/api/record/stop", _record_stop)
+    app.router.add_post("/api/meetings/reprocess", _reprocess)
+    app.router.add_post("/api/meetings/speakers", _speakers)
     app.router.add_get("/api/ws", _websocket_handler)
     return app
