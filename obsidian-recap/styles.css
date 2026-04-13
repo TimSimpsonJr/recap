@@ -184,3 +184,71 @@
     gap: 8px;
     margin-top: 16px;
 }
+
+/* Live transcript */
+.recap-live-transcript-container {
+    padding: 12px;
+}
+.recap-live-status {
+    padding: 8px 0;
+    color: var(--text-faint);
+    border-bottom: 1px solid var(--background-modifier-border);
+    margin-bottom: 8px;
+}
+.recap-live-transcript {
+    overflow-y: auto;
+    max-height: calc(100vh - 120px);
+}
+.recap-utterance {
+    padding: 4px 0;
+    line-height: 1.5;
+}
+.recap-utterance-speaker {
+    font-weight: 600;
+    color: var(--text-accent);
+}
+
+/* Notification history */
+.recap-notification-modal {
+    max-width: 600px;
+}
+.recap-notification-list {
+    max-height: 400px;
+    overflow-y: auto;
+}
+.recap-notification-row {
+    padding: 8px;
+    margin: 4px 0;
+    border-radius: 4px;
+    border-left: 3px solid var(--background-modifier-border);
+}
+.recap-notification-error {
+    border-left-color: var(--text-error);
+}
+.recap-notification-warning {
+    border-left-color: var(--color-yellow);
+}
+.recap-notification-info {
+    border-left-color: var(--text-accent);
+}
+.recap-notification-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+}
+.recap-notification-icon {
+    font-size: var(--font-ui-small);
+}
+.recap-notification-title {
+    font-weight: 600;
+    flex: 1;
+}
+.recap-notification-time {
+    color: var(--text-faint);
+    font-size: var(--font-ui-smaller);
+}
+.recap-notification-message {
+    color: var(--text-muted);
+    font-size: var(--font-ui-small);
+}

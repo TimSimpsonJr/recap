@@ -4,7 +4,10 @@ import { RecapStatusBar } from "./components/StatusBarItem";
 import { OrgPickerModal } from "./components/OrgPickerModal";
 import { RecapSettingTab } from "./settings";
 import { MeetingListView, VIEW_MEETING_LIST } from "./views/MeetingListView";
+import { LiveTranscriptView, VIEW_LIVE_TRANSCRIPT } from "./views/LiveTranscriptView";
 import { SpeakerCorrectionModal, SpeakerInfo } from "./views/SpeakerCorrectionModal";
+import { RenameProcessor } from "./renameProcessor";
+import { NotificationHistory, NotificationHistoryModal } from "./notificationHistory";
 
 interface RecapSettings {
     daemonUrl: string;
@@ -18,12 +21,15 @@ export default class RecapPlugin extends Plugin {
     settings: RecapSettings = DEFAULT_SETTINGS;
     client: DaemonClient | null = null;
     statusBar: RecapStatusBar | null = null;
+    renameProcessor: RenameProcessor | null = null;
+    notificationHistory: NotificationHistory = new NotificationHistory();
 
     async onload() {
         await this.loadSettings();
 
         // Register views
         this.registerView(VIEW_MEETING_LIST, (leaf) => new MeetingListView(leaf));
+        this.registerView(VIEW_LIVE_TRANSCRIPT, (leaf) => new LiveTranscriptView(leaf));
 
         // Read auth token from vault
         const tokenPath = "_Recap/.recap/auth-token";
@@ -42,6 +48,10 @@ export default class RecapPlugin extends Plugin {
         const statusBarEl = this.addStatusBarItem();
         this.statusBar = new RecapStatusBar(statusBarEl);
 
+        // Rename processor
+        this.renameProcessor = new RenameProcessor(this.app, "_Recap/.recap/rename-queue.json");
+        await this.renameProcessor.processQueue();
+
         // WebSocket connection
         if (this.client) {
             this.client.on("state_change", (event) => {
@@ -49,7 +59,31 @@ export default class RecapPlugin extends Plugin {
                     event.state as string,
                     event.org as string | undefined,
                 );
+                // Update live transcript view status
+                const leaves = this.app.workspace.getLeavesOfType(VIEW_LIVE_TRANSCRIPT);
+                for (const leaf of leaves) {
+                    (leaf.view as LiveTranscriptView).updateStatus(event.state as string);
+                }
             });
+
+            // Wire all events to notification history
+            this.client.on("*", (event) => {
+                if (event.event === "error") {
+                    this.notificationHistory.add("error", "Daemon Error", event.message as string || "Unknown error");
+                } else if (event.event === "processing_complete") {
+                    this.notificationHistory.add("info", "Processing Complete", event.recording_path as string || "");
+                } else if (event.event === "recording_started") {
+                    this.notificationHistory.add("info", "Recording Started", `Org: ${event.org || "unknown"}`);
+                } else if (event.event === "recording_stopped") {
+                    this.notificationHistory.add("info", "Recording Stopped", event.recording_path as string || "");
+                }
+            });
+
+            // Wire rename_queued events to trigger rename processing
+            this.client.on("rename_queued", async () => {
+                await this.renameProcessor?.processQueue();
+            });
+
             this.client.connectWebSocket(() => {
                 this.statusBar?.setOffline();
             });
@@ -107,6 +141,35 @@ export default class RecapPlugin extends Plugin {
             id: "open-dashboard",
             name: "Open meeting dashboard",
             callback: () => this.activateView(VIEW_MEETING_LIST),
+        });
+
+        this.addCommand({
+            id: "open-live-transcript",
+            name: "Open live transcript",
+            callback: () => this.activateView(VIEW_LIVE_TRANSCRIPT),
+        });
+
+        this.addCommand({
+            id: "view-notifications",
+            name: "View notification history",
+            callback: () => {
+                new NotificationHistoryModal(this.app, this.notificationHistory).open();
+            },
+        });
+
+        this.addCommand({
+            id: "reprocess-meeting",
+            name: "Reprocess current meeting",
+            checkCallback: (checking) => {
+                const file = this.app.workspace.getActiveFile();
+                if (file && file.path.startsWith("_Recap/") && file.path.includes("/Meetings/")) {
+                    if (!checking) {
+                        this.reprocessMeeting(file);
+                    }
+                    return true;
+                }
+                return false;
+            },
         });
 
         // Detect unidentified speakers on file open
@@ -204,6 +267,29 @@ export default class RecapPlugin extends Plugin {
             org,
             this.client,
         ).open();
+    }
+
+    private async reprocessMeeting(file: TFile): Promise<void> {
+        if (!this.client) {
+            new Notice("Daemon not connected");
+            return;
+        }
+        const cache = this.app.metadataCache.getFileCache(file);
+        const fm = cache?.frontmatter;
+        const recordingPath = fm?.recording?.replace(/\[\[|\]\]/g, "") || "";
+        const org = fm?.org || "";
+
+        if (!recordingPath) {
+            new Notice("No recording path found in frontmatter");
+            return;
+        }
+
+        try {
+            await this.client.reprocess(recordingPath, undefined, org);
+            new Notice("Reprocessing started...");
+        } catch (e) {
+            new Notice(`Failed to reprocess: ${e}`);
+        }
     }
 
     async activateView(viewType: string): Promise<void> {
