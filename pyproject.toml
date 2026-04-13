@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "recap"
-version = "0.1.0"
-description = "Meeting recording → transcription → analysis → Obsidian vault notes + Todoist tasks"
+version = "0.2.0"
+description = "Meeting recording → transcription → analysis → Obsidian vault notes"
 requires-python = ">=3.10"
 dependencies = [
     "pyyaml>=6.0",
@@ -13,12 +13,6 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-ml = [
-    "whisperx>=3.1.0",
-]
-todoist = [
-    "todoist-api-python>=2.1.0",
-]
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
