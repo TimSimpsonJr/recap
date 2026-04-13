@@ -2,6 +2,8 @@ import { Plugin, Notice } from "obsidian";
 import { DaemonClient } from "./api";
 import { RecapStatusBar } from "./components/StatusBarItem";
 import { OrgPickerModal } from "./components/OrgPickerModal";
+import { RecapSettingTab } from "./settings";
+import { MeetingListView, VIEW_MEETING_LIST } from "./views/MeetingListView";
 
 interface RecapSettings {
     daemonUrl: string;
@@ -18,6 +20,9 @@ export default class RecapPlugin extends Plugin {
 
     async onload() {
         await this.loadSettings();
+
+        // Register views
+        this.registerView(VIEW_MEETING_LIST, (leaf) => new MeetingListView(leaf));
 
         // Read auth token from vault
         const tokenPath = "_Recap/.recap/auth-token";
@@ -100,15 +105,14 @@ export default class RecapPlugin extends Plugin {
         this.addCommand({
             id: "open-dashboard",
             name: "Open meeting dashboard",
-            callback: () => {
-                new Notice("Meeting dashboard not yet implemented");
-            },
+            callback: () => this.activateView(VIEW_MEETING_LIST),
         });
 
+        // Settings tab
+        this.addSettingTab(new RecapSettingTab(this.app, this));
+
         // Ribbon icon
-        this.addRibbonIcon("mic", "Recap", () => {
-            new Notice("Meeting dashboard not yet implemented");
-        });
+        this.addRibbonIcon("mic", "Recap", () => this.activateView(VIEW_MEETING_LIST));
     }
 
     onunload() {
@@ -121,5 +125,20 @@ export default class RecapPlugin extends Plugin {
 
     async saveSettings() {
         await this.saveData(this.settings);
+    }
+
+    async activateView(viewType: string): Promise<void> {
+        const { workspace } = this.app;
+        let leaf = workspace.getLeavesOfType(viewType)[0];
+        if (!leaf) {
+            const newLeaf = workspace.getRightLeaf(false);
+            if (newLeaf) {
+                await newLeaf.setViewState({ type: viewType, active: true });
+                leaf = newLeaf;
+            }
+        }
+        if (leaf) {
+            workspace.revealLeaf(leaf);
+        }
     }
 }

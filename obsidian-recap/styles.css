@@ -1,0 +1,156 @@
+/* Status bar */
+.recap-status-bar {
+    cursor: default;
+}
+.recap-recording {
+    color: var(--text-error);
+    font-weight: 600;
+}
+.recap-processing {
+    color: var(--text-warning);
+}
+.recap-offline {
+    color: var(--text-faint);
+}
+
+/* Pipeline status dots */
+.recap-pipeline-dot {
+    display: inline-block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    margin-right: 6px;
+    flex-shrink: 0;
+}
+.recap-status-complete {
+    background-color: var(--color-green);
+}
+.recap-status-pending {
+    background-color: var(--text-faint);
+}
+.recap-status-failed {
+    background-color: var(--text-error);
+}
+.recap-status-processing {
+    background-color: var(--color-yellow);
+}
+
+/* Filter bar */
+.recap-filter-bar {
+    display: flex;
+    gap: 8px;
+    padding: 8px 0;
+    margin-bottom: 8px;
+    border-bottom: 1px solid var(--background-modifier-border);
+}
+.recap-filter-select {
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-primary);
+    color: var(--text-normal);
+    font-size: var(--font-ui-small);
+}
+.recap-filter-search {
+    flex: 1;
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--background-modifier-border);
+    background: var(--background-primary);
+    color: var(--text-normal);
+    font-size: var(--font-ui-small);
+}
+
+/* Meeting list */
+.recap-meeting-list-container {
+    padding: 12px;
+}
+.recap-meeting-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.recap-meeting-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: background-color 0.1s;
+}
+.recap-meeting-row:hover {
+    background-color: var(--background-modifier-hover);
+}
+.recap-meeting-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex: 1;
+    min-width: 0;
+}
+.recap-meeting-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-shrink: 0;
+}
+.recap-meeting-date {
+    color: var(--text-faint);
+    font-size: var(--font-ui-small);
+    white-space: nowrap;
+}
+.recap-meeting-title {
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.recap-meeting-duration {
+    color: var(--text-faint);
+    font-size: var(--font-ui-small);
+}
+.recap-meeting-participants {
+    color: var(--text-faint);
+    font-size: var(--font-ui-small);
+}
+
+/* Org badge */
+.recap-org-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 10px;
+    font-size: var(--font-ui-smaller);
+    background-color: var(--background-modifier-border);
+    color: var(--text-muted);
+    text-transform: capitalize;
+}
+
+/* Empty state */
+.recap-empty-state {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--text-faint);
+}
+
+/* Settings */
+.recap-settings-status {
+    margin: 8px 0 16px;
+    padding: 8px 12px;
+    border-radius: 4px;
+    background: var(--background-secondary);
+}
+.recap-status-connected {
+    color: var(--color-green);
+    font-weight: 600;
+}
+.recap-status-offline {
+    color: var(--text-error);
+    font-weight: 600;
+}
+.recap-daemon-status {
+    margin-bottom: 4px;
+}
+.recap-oauth-provider {
+    margin-bottom: 4px;
+}
