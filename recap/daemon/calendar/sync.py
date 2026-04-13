@@ -1,0 +1,192 @@
+"""Calendar sync — write and update calendar event vault notes."""
+from __future__ import annotations
+
+import json
+import logging
+import re
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import yaml
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class CalendarEvent:
+    event_id: str
+    title: str
+    date: str  # "2026-04-14"
+    time: str  # "14:00-15:00"
+    participants: list[str]
+    calendar_source: str  # "zoho" or "google"
+    org: str  # "disbursecloud"
+    meeting_link: str = ""
+    description: str = ""
+
+
+def _slugify(text: str) -> str:
+    """Lowercase, dashes, strip special chars."""
+    slug = text.lower()
+    slug = re.sub(r"[^a-z0-9\s-]", "", slug)
+    slug = re.sub(r"[\s]+", "-", slug)
+    return slug.strip("-")
+
+
+def _org_subfolder(org: str) -> str:
+    """Map org name to vault subfolder: 'disbursecloud' -> '_Recap/Disbursecloud'."""
+    return f"_Recap/{org[0].upper()}{org[1:]}"
+
+
+def _parse_frontmatter(content: str) -> dict | None:
+    """Parse YAML frontmatter from a markdown file's content."""
+    content = content.replace("\r\n", "\n")
+    parts = content.split("---\n", 2)
+    if len(parts) < 3:
+        return None
+    try:
+        return yaml.safe_load(parts[1])
+    except yaml.YAMLError:
+        return None
+
+
+def write_calendar_note(event: CalendarEvent, vault_path: Path) -> Path:
+    """Write a calendar event as a vault note. Returns the note path."""
+    subfolder = _org_subfolder(event.org)
+    meetings_dir = vault_path / subfolder / "Meetings"
+    meetings_dir.mkdir(parents=True, exist_ok=True)
+
+    slug = _slugify(event.title)
+    filename = f"{event.date} - {slug}.md"
+    note_path = meetings_dir / filename
+
+    # Build frontmatter
+    fm = {
+        "date": event.date,
+        "time": event.time,
+        "title": event.title,
+        "participants": [f"[[{p}]]" for p in event.participants],
+        "calendar-source": event.calendar_source,
+        "org": event.org,
+        "meeting-link": event.meeting_link,
+        "event-id": event.event_id,
+        "pipeline-status": "pending",
+    }
+
+    lines = ["---"]
+    lines.append(yaml.dump(fm, default_flow_style=False, sort_keys=False).strip())
+    lines.append("---")
+    lines.append("")
+
+    # Agenda section
+    lines.append("## Agenda")
+    lines.append("")
+    if event.description:
+        lines.append(event.description)
+        lines.append("")
+
+    note_path.write_text("\n".join(lines), encoding="utf-8")
+    logger.info("Wrote calendar note: %s", note_path)
+    return note_path
+
+
+def find_note_by_event_id(event_id: str, search_path: Path) -> Path | None:
+    """Scan markdown files in search_path for matching event-id in frontmatter."""
+    if not search_path.exists():
+        return None
+    for md_file in search_path.glob("*.md"):
+        content = md_file.read_text(encoding="utf-8")
+        fm = _parse_frontmatter(content)
+        if fm and fm.get("event-id") == event_id:
+            return md_file
+    return None
+
+
+def should_update_note(
+    event_id: str,
+    vault_path: Path,
+    org_subfolder: str,
+    new_time: str | None = None,
+    new_participants: list[str] | None = None,
+) -> str:
+    """Check whether a note needs creating, updating, or skipping.
+
+    Returns "create", "update", or "skip".
+    """
+    meetings_dir = vault_path / org_subfolder / "Meetings"
+    note = find_note_by_event_id(event_id, meetings_dir)
+
+    if note is None:
+        return "create"
+
+    content = note.read_text(encoding="utf-8")
+    fm = _parse_frontmatter(content)
+    if fm is None:
+        return "update"
+
+    changed = False
+    if new_time is not None and fm.get("time") != new_time:
+        changed = True
+    if new_participants is not None:
+        existing = fm.get("participants", [])
+        if existing != new_participants:
+            changed = True
+
+    return "update" if changed else "skip"
+
+
+def update_calendar_note(
+    note_path: Path,
+    new_time: str | None = None,
+    new_participants: list[str] | None = None,
+    rename_queue_path: Path | None = None,
+) -> None:
+    """Update time and/or participants in frontmatter only.
+
+    If the date portion of time changed, updates the frontmatter date and
+    queues a file rename as JSON to rename_queue_path.
+    """
+    content = note_path.read_text(encoding="utf-8")
+    normalized = content.replace("\r\n", "\n")
+    parts = normalized.split("---\n", 2)
+    if len(parts) < 3:
+        return
+
+    try:
+        fm = yaml.safe_load(parts[1])
+    except yaml.YAMLError:
+        return
+
+    if fm is None:
+        return
+
+    old_date = fm.get("date", "")
+
+    if new_time is not None:
+        fm["time"] = new_time
+        # Check if date changed (time string contains a date like "2026-04-15 14:00-15:00")
+        # For simple time ranges, extract date from the time if it differs
+        # The date change detection: if new_time starts with a date pattern
+        date_match = re.match(r"^(\d{4}-\d{2}-\d{2})\s", new_time)
+        if date_match:
+            new_date = date_match.group(1)
+            if new_date != old_date:
+                fm["date"] = new_date
+                if rename_queue_path is not None:
+                    old_name = note_path.name
+                    new_name = old_name.replace(old_date, new_date, 1)
+                    new_path = note_path.parent / new_name
+                    rename_queue_path.write_text(
+                        json.dumps({"old_path": str(note_path), "new_path": str(new_path)}),
+                        encoding="utf-8",
+                    )
+
+    if new_participants is not None:
+        fm["participants"] = new_participants
+
+    # Reconstruct file: frontmatter + body below
+    body = parts[2]
+    new_fm = yaml.dump(fm, default_flow_style=False, sort_keys=False).strip()
+    new_content = f"---\n{new_fm}\n---\n{body}"
+    note_path.write_text(new_content, encoding="utf-8")
+    logger.info("Updated calendar note: %s", note_path)
