@@ -147,13 +147,26 @@ def should_update_note(
     org_config: OrgConfig,
     new_time: str | None = None,
     new_participants: list[str] | None = None,
+    *,
+    event_index: "EventIndex | None" = None,
 ) -> str:
     """Check whether a note needs creating, updating, or skipping.
 
     Returns "create", "update", or "skip".
+
+    When *event_index* is supplied, the internal ``find_note_by_event_id``
+    call uses the index for O(1) lookup instead of scanning the meetings
+    directory. This matters because the scheduler invokes this function
+    once per event on every sync tick, so an O(n) scan-per-event compounds
+    into O(n × events) per tick without the index.
     """
     meetings_dir = org_config.resolve_subfolder(vault_path) / "Meetings"
-    note = find_note_by_event_id(event_id, meetings_dir)
+    note = find_note_by_event_id(
+        event_id,
+        meetings_dir,
+        vault_path=vault_path,
+        event_index=event_index,
+    )
 
     if note is None:
         return "create"

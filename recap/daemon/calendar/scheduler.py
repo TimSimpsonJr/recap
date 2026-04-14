@@ -120,6 +120,7 @@ class CalendarSyncScheduler:
                     org_config,
                     new_time=event.time,
                     new_participants=event.participants,
+                    event_index=self._event_index,
                 )
 
                 if action == "create":

@@ -148,13 +148,22 @@ def _update_index_if_applicable(
     """Add or refresh the EventIndex entry for a just-written note.
 
     No-op when any of these hold:
-    - ``event_index`` is ``None`` (caller didn't wire the index in).
-    - ``vault_path`` is ``None`` (can't compute a vault-relative path).
-    - ``frontmatter`` has no truthy ``event-id`` (nothing to key on).
-    - ``note_path`` is outside the vault root (shouldn't happen in
-      production, but we defensively skip rather than raise).
+    - Both ``event_index`` and ``vault_path`` are ``None`` (caller didn't
+      wire the index in — expected, silent).
+    - ``frontmatter`` has no truthy ``event-id`` (nothing to key on —
+      expected for non-calendar notes, silent).
+    - Exactly one of ``event_index`` or ``vault_path`` is provided
+      (misconfigured caller — logs a ``debug`` to aid diagnosis).
+    - ``note_path`` is outside the vault root (degraded mode — logs a
+      ``debug`` so stale-lookup bugs are traceable).
     """
+    if event_index is None and vault_path is None:
+        return
     if event_index is None or vault_path is None:
+        logger.debug(
+            "Skipping EventIndex update: missing %s",
+            "event_index" if event_index is None else "vault_path",
+        )
         return
     event_id = frontmatter.get("event-id")
     if not event_id:
@@ -162,7 +171,10 @@ def _update_index_if_applicable(
     try:
         rel_path = note_path.relative_to(vault_path)
     except ValueError:
-        # note_path outside vault — skip (shouldn't happen in production)
+        logger.debug(
+            "Skipping EventIndex update: note_path %s outside vault %s",
+            note_path, vault_path,
+        )
         return
     event_index.add(str(event_id), rel_path, str(frontmatter.get("org", "")))
 

@@ -327,6 +327,60 @@ def test_find_note_by_event_id_falls_back_to_scan_without_index(tmp_path):
     assert result == note
 
 
+def test_should_update_note_uses_event_index_when_provided(tmp_path):
+    """should_update_note's internal lookup uses the index for O(1).
+
+    We put the note at a path that meetings_dir.glob("*.md") cannot find
+    (a subdir inside Meetings) so only the index can resolve the event-id
+    to the note. If should_update_note returns "skip" (matching state),
+    that proves the index was what answered the lookup.
+    """
+    from recap.daemon.calendar.index import EventIndex
+    from recap.daemon.calendar.sync import should_update_note
+    from recap.daemon.config import OrgConfig
+
+    org = OrgConfig(name="d", subfolder="Clients/D")
+    vault = tmp_path
+    meetings = vault / "Clients/D/Meetings"
+    meetings.mkdir(parents=True)
+    # Place note in a subdir so the top-level *.md scan cannot find it.
+    subdir = meetings / "archive"
+    subdir.mkdir()
+    note = subdir / "2026-04-14 - x.md"
+    note.write_text(
+        "---\nevent-id: evt-1\ndate: 2026-04-14\ntime: 09:00-10:00\n"
+        "participants: []\n---\n\nbody\n",
+        encoding="utf-8",
+    )
+
+    index = EventIndex(vault / "_Recap" / ".recap" / "event-index.json")
+    index.add("evt-1", note.relative_to(vault), "d")
+
+    # Without the index, the scan would miss the note and return "create".
+    # With the index, it resolves to the note and returns "skip" since the
+    # time/participants match.
+    action = should_update_note(
+        "evt-1",
+        vault,
+        org,
+        new_time="09:00-10:00",
+        new_participants=[],
+        event_index=index,
+    )
+    assert action == "skip"
+
+    # Sanity: without the index, the same call returns "create"
+    # because the scan cannot find the note in the subdir.
+    action_no_index = should_update_note(
+        "evt-1",
+        vault,
+        org,
+        new_time="09:00-10:00",
+        new_participants=[],
+    )
+    assert action_no_index == "create"
+
+
 def test_find_note_by_event_id_logs_warning_on_stale_entry(tmp_path, caplog):
     import logging
     import pathlib

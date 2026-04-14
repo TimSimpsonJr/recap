@@ -222,7 +222,7 @@ def _resolve_note_path(
     recording_metadata: RecordingMetadata | None,
     meetings_dir: pathlib.Path,
     vault_path: pathlib.Path,
-    event_index=None,
+    event_index: "EventIndex | None" = None,
 ) -> pathlib.Path:
     from recap.artifacts import safe_note_title
 
