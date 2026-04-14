@@ -66,6 +66,40 @@ def build_canonical_frontmatter(
     }
 
 
+def upsert_note(
+    note_path: pathlib.Path,
+    frontmatter: dict,
+    body: str,
+) -> None:
+    """Upsert a meeting note with canonical frontmatter + body below the marker.
+
+    Four cases (design doc §0.1):
+    1. Note does not exist — create with frontmatter + marker + body.
+    2. Existing note, no frontmatter, no marker — add both.
+    3. Existing note with calendar frontmatter, no marker — field-level merge
+       of frontmatter (calendar keys preserved), append marker + body.
+    4. Existing note with marker — field-level merge of frontmatter (pipeline
+       authoritative for pipeline-owned keys), replace everything below marker.
+
+    This function is the sole writer of canonical notes. All callers
+    (calendar sync, pipeline export, manual tooling) route through here.
+    """
+    note_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if not note_path.exists():
+        _write_new_note(note_path, frontmatter, body)
+        return
+
+    # Cases 2, 3, 4 land here in future tasks.
+    raise NotImplementedError("upsert cases 2-4 not yet implemented")
+
+
+def _write_new_note(note_path: pathlib.Path, frontmatter: dict, body: str) -> None:
+    fm_block = yaml.dump(frontmatter, default_flow_style=False, sort_keys=False).strip()
+    content = f"---\n{fm_block}\n---\n\n{MEETING_RECORD_MARKER}\n\n{body.lstrip()}"
+    note_path.write_text(content, encoding="utf-8")
+
+
 def _format_action_item(
     item,
     user_name: str | None = None,
