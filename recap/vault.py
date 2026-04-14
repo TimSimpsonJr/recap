@@ -36,6 +36,36 @@ def _format_duration(seconds: float) -> str:
     return f"{minutes}m"
 
 
+def build_canonical_frontmatter(
+    metadata: MeetingMetadata,
+    analysis: AnalysisResult,
+    duration_seconds: float,
+    recording_path: pathlib.Path,
+    org: str,
+    org_subfolder: str,
+) -> dict:
+    """Build the canonical frontmatter dict for a completed meeting note.
+
+    Per docs/plans/2026-04-14-fix-everything-design.md §0.1. The `org` arg is
+    always the slug; `org_subfolder` is the filesystem path. Both go into the
+    frontmatter under their respective keys.
+    """
+    return {
+        "date": metadata.date.isoformat(),
+        "title": metadata.title,
+        "org": org,
+        "org-subfolder": org_subfolder,
+        "platform": metadata.platform,
+        "participants": [f"[[{p.name}]]" for p in metadata.participants],
+        "companies": [f"[[{c.name}]]" for c in analysis.companies],
+        "duration": _format_duration(duration_seconds),
+        "type": analysis.meeting_type,
+        "tags": [f"meeting/{analysis.meeting_type}"],
+        "pipeline-status": "complete",
+        "recording": recording_path.name,
+    }
+
+
 def _format_action_item(
     item,
     user_name: str | None = None,
