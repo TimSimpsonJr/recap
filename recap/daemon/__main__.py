@@ -24,10 +24,11 @@ from recap.daemon.recorder.recorder import Recorder
 from recap.daemon.recorder.recovery import find_orphaned_recordings
 from recap.daemon.recorder.signal_popup import show_signal_popup
 from recap.daemon.runtime_config import build_runtime_config
+from recap.daemon.signal_metadata import build_signal_metadata
 from recap.daemon.server import broadcast, create_app
 from recap.daemon.startup import validate_startup
 from recap.daemon.tray import RecapTray
-from recap.models import MeetingMetadata, Participant
+from recap.models import MeetingMetadata
 from recap.pipeline import run_pipeline
 
 logger = logging.getLogger("recap.daemon")
@@ -221,17 +222,7 @@ def main() -> None:
             )
             loop = _loop_holder[0]
             if loop is not None and loop.is_running():
-                metadata = RecordingMetadata(
-                    org=result["org"],
-                    note_path="",
-                    title=enriched_metadata.get("title", meeting_window.title),
-                    date=datetime.now().date().isoformat(),
-                    participants=[
-                        Participant(name=name)
-                        for name in enriched_metadata.get("participants", [])
-                    ],
-                    platform=enriched_metadata.get("platform", meeting_window.platform),
-                )
+                metadata = build_signal_metadata(result, meeting_window, enriched_metadata)
                 asyncio.run_coroutine_threadsafe(
                     recorder.start(result["org"], metadata=metadata, detected=True), loop,
                 )
