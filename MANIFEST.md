@@ -13,18 +13,20 @@
 recap/                                        # Python package
   __init__.py / __main__.py                   # Package init + CLI entry
   cli.py                                      # CLI argument parsing
-  config.py                                   # YAML config loader with env var interpolation
   analyze.py                                  # Claude CLI invocation for meeting analysis
+  artifacts.py                                # RecordingMetadata sidecar + note title helpers
   vault.py                                    # Obsidian vault note writer
   models.py                                   # Data models (MeetingMetadata, TranscriptSegment)
   errors.py                                   # Typed exceptions with actionable messages
   daemon/                                     # Background service
     __main__.py                               # `python -m recap.daemon` entry
     server.py                                 # aiohttp HTTP + WebSocket server
-    config.py                                 # Daemon-specific config (ports, paths, orgs)
+    config.py                                 # Daemon YAML config (DaemonConfig, OrgConfig, PipelineSettings)
+    runtime_config.py                         # Builds PipelineRuntimeConfig from settings + org + recording metadata
     startup.py                                # Service initialization and shutdown
     tray.py                                   # pystray system tray icon and menu
     auth.py                                   # Token-based daemon authentication
+    autostart.py                              # Windows Task Scheduler auto-start (stub)
     credentials.py                            # Credential storage (Windows DPAPI)
     logging_setup.py                          # Structured logging configuration
     notifications.py                          # Desktop toast notifications
@@ -48,7 +50,7 @@ recap/                                        # Python package
       transcriber.py                          # Live Parakeet ASR streaming
       diarizer.py                             # Live NeMo speaker diarization
   pipeline/                                   # Post-meeting processing
-    __init__.py                               # Stage-tracked orchestrator
+    __init__.py                               # Stage-tracked orchestrator + PipelineRuntimeConfig
     transcribe.py                             # Batch Parakeet transcription
     diarize.py                                # Batch NeMo diarization
     audio_convert.py                          # WAV-to-AAC conversion (ffmpeg)
@@ -69,7 +71,7 @@ extension/                                    # Chrome/Edge MV3 extension
 prompts/                                      # Claude prompt templates
   meeting_analysis.md                         # Post-meeting analysis prompt
   meeting_briefing.md                         # Pre-meeting briefing prompt
-tests/                                        # Pytest suite (32 modules)
+tests/                                        # Pytest suite
   conftest.py                                 # Shared fixtures
   fixtures/                                   # Test data (config.yaml, metadata)
 docs/plans/                                   # Design docs and phase plans
@@ -83,7 +85,7 @@ docs/plans/                                   # Design docs and phase plans
 - `daemon/streaming/transcriber.py` and `diarizer.py` feed live results through WebSocket to the plugin's `LiveTranscriptView`
 - `pipeline/` runs post-meeting: `transcribe.py` and `diarize.py` produce segments consumed by `analyze.py`, which writes via `vault.py`
 - `daemon/calendar/oauth.py` handles OAuth flows for both Google and Zoho; tokens stored via `credentials.py` (Windows DPAPI)
-- `config.py` (top-level) loads pipeline config; `daemon/config.py` extends it with daemon-specific settings (port, orgs, tray)
+- `daemon/config.py` loads the daemon YAML into `DaemonConfig` (server, orgs, `PipelineSettings`); `daemon/runtime_config.py` projects those settings plus an `OrgConfig` and `RecordingMetadata` into the `PipelineRuntimeConfig` consumed by `pipeline/`
 - `models.py` and `errors.py` are shared across daemon, pipeline, and analysis layers
 - `extension/background.js` detects meeting URLs and POSTs to `daemon/recorder/detection.py` endpoint
 - Tests mirror source structure: `test_daemon_server.py` tests `daemon/server.py`, `test_streaming_*.py` tests `streaming/`, etc.
