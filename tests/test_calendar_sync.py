@@ -233,6 +233,37 @@ class TestUpdateCalendarNote:
         queue = json.loads(queue_path.read_text())
         assert len(queue) == 2
 
+    def test_backfills_org_subfolder_on_pre_canonical_note(self, tmp_path):
+        """Notes written before the canonical shape get org-subfolder filled in on update."""
+        note = tmp_path / "2026-04-14 - test.md"
+        note.write_text(
+            '---\nevent-id: "abc"\ndate: "2026-04-14"\n'
+            'time: "10:00-11:00"\nparticipants: []\norg: "disbursecloud"\n---\nBody\n'
+        )
+        org = OrgConfig(name="disbursecloud", subfolder="Clients/Disbursecloud")
+
+        update_calendar_note(note, new_time="10:00-11:30", org_config=org)
+
+        _, fm_block, _ = note.read_text(encoding="utf-8").split("---\n", 2)
+        fm = yaml.safe_load(fm_block)
+        assert fm["org-subfolder"] == "Clients/Disbursecloud"
+
+    def test_does_not_overwrite_existing_org_subfolder(self, tmp_path):
+        """Backfill only fills missing keys; existing values stay intact."""
+        note = tmp_path / "2026-04-14 - test.md"
+        note.write_text(
+            '---\nevent-id: "abc"\ndate: "2026-04-14"\n'
+            'time: "10:00-11:00"\nparticipants: []\norg: "disbursecloud"\n'
+            'org-subfolder: "legacy/path"\n---\nBody\n'
+        )
+        org = OrgConfig(name="disbursecloud", subfolder="Clients/Disbursecloud")
+
+        update_calendar_note(note, new_time="10:00-11:30", org_config=org)
+
+        _, fm_block, _ = note.read_text(encoding="utf-8").split("---\n", 2)
+        fm = yaml.safe_load(fm_block)
+        assert fm["org-subfolder"] == "legacy/path"
+
 
 class TestFindNoteByEventId:
     def test_finds_note(self, tmp_path):

@@ -156,11 +156,16 @@ def update_calendar_note(
     new_participants: list[str] | None = None,
     rename_queue_path: Path | None = None,
     vault_path: Path | None = None,
+    org_config: OrgConfig | None = None,
 ) -> int:
     """Update time and/or participants in frontmatter only.
 
     If the date portion of time changed, updates the frontmatter date and
     queues a file rename as JSON to rename_queue_path.
+
+    If ``org_config`` is supplied, backfills ``org-subfolder`` into any
+    pre-canonical frontmatter that lacks it. Notes written before the
+    canonical shape landed will thus self-heal on their next scheduler pass.
     """
     content = note_path.read_text(encoding="utf-8")
     normalized = content.replace("\r\n", "\n")
@@ -176,6 +181,9 @@ def update_calendar_note(
 
     if fm is None:
         return 0
+
+    if org_config is not None:
+        fm.setdefault("org-subfolder", org_config.subfolder)
 
     old_date = fm.get("date", "")
     queued_renames = 0

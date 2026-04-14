@@ -10,7 +10,6 @@ from collections.abc import Awaitable, Callable
 
 from recap.daemon.calendar.sync import (
     CalendarEvent,
-    org_subfolder,
     find_note_by_event_id,
     should_update_note,
     update_calendar_note,
@@ -103,20 +102,28 @@ class CalendarSyncScheduler:
 
         for event in all_events:
             try:
-                subfolder = org_subfolder(event.org)
+                org_config = self._config.org_by_slug(event.org)
+                if org_config is None:
+                    logger.warning(
+                        "No OrgConfig for slug %s; skipping event %s",
+                        event.org,
+                        event.event_id,
+                    )
+                    continue
+
                 action = should_update_note(
                     event.event_id,
                     self._vault_path,
-                    subfolder,
+                    org_config,
                     new_time=event.time,
                     new_participants=event.participants,
                 )
 
                 if action == "create":
-                    write_calendar_note(event, self._vault_path)
+                    write_calendar_note(event, self._vault_path, org_config)
                     synced += 1
                 elif action == "update":
-                    meetings_dir = self._vault_path / subfolder / "Meetings"
+                    meetings_dir = org_config.resolve_subfolder(self._vault_path) / "Meetings"
                     note = find_note_by_event_id(event.event_id, meetings_dir)
                     if note is not None:
                         queued_renames += update_calendar_note(
@@ -125,6 +132,7 @@ class CalendarSyncScheduler:
                             new_participants=event.participants,
                             rename_queue_path=rename_queue_path,
                             vault_path=self._vault_path,
+                            org_config=org_config,
                         )
                         synced += 1
             except Exception:

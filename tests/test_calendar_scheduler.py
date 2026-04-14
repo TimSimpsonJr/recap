@@ -1,5 +1,6 @@
 """Tests for the calendar sync scheduler."""
 
+import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -12,6 +13,7 @@ from recap.daemon.config import (
     CalendarProviderConfig,
     CalendarSyncConfig,
     DaemonConfig,
+    OrgConfig,
 )
 
 
@@ -20,7 +22,10 @@ def _make_config(
     sync_on_startup: bool = False,
     interval_minutes: int = 15,
     calendars: dict | None = None,
+    orgs: list[OrgConfig] | None = None,
 ) -> DaemonConfig:
+    if orgs is None:
+        orgs = [OrgConfig(name="testorg", subfolder="_Recap/Testorg")]
     return DaemonConfig(
         vault_path=vault_path,
         recordings_path=vault_path / "recordings",
@@ -29,6 +34,7 @@ def _make_config(
             sync_on_startup=sync_on_startup,
         ),
         calendars=calendars or {},
+        _orgs=orgs,
     )
 
 
@@ -154,6 +160,40 @@ class TestSchedulerSync:
             await scheduler.sync()
 
         detector.arm_for_event.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_sync_skips_event_with_unknown_org_slug(self, tmp_path, caplog):
+        """Events referencing an org slug that is not configured are logged and skipped."""
+        config = _make_config(
+            tmp_path,
+            orgs=[OrgConfig(name="known", subfolder="_Recap/Known")],
+        )
+        scheduler = CalendarSyncScheduler(config, tmp_path)
+
+        known_event = _make_event(event_id="known-evt", org="known")
+        unknown_event = _make_event(event_id="unknown-evt", org="mystery")
+
+        with (
+            patch.object(scheduler, "_sync_provider", new_callable=AsyncMock) as mock_sync,
+            caplog.at_level(logging.WARNING, logger="recap.daemon.calendar.scheduler"),
+        ):
+            mock_sync.side_effect = (
+                lambda p: [known_event, unknown_event] if p == "google" else []
+            )
+            await scheduler.sync()
+
+        # Warning emitted for the unknown slug, mentioning both the slug and event id.
+        assert any(
+            "mystery" in rec.message and "unknown-evt" in rec.message
+            for rec in caplog.records
+            if rec.levelno == logging.WARNING
+        )
+        # Known event's note was still created — the unknown slug did not abort the loop.
+        known_notes = list((tmp_path / "_Recap" / "Known" / "Meetings").glob("*.md"))
+        assert len(known_notes) == 1
+        # The unknown event did not produce a note anywhere.
+        unknown_dir = tmp_path / "_Recap" / "Mystery"
+        assert not unknown_dir.exists()
 
 
 class TestSchedulerStartStop:
