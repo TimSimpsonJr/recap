@@ -295,3 +295,54 @@ def test_write_calendar_note_adds_to_index_when_provided(tmp_path):
     assert entry is not None
     # entry.path is PurePosixPath, note_path is concrete Path; compare via str:
     assert str(entry.path) == str(note_path.relative_to(tmp_path)).replace("\\", "/")
+
+
+def test_find_note_by_event_id_uses_index_when_provided(tmp_path):
+    from recap.daemon.calendar.index import EventIndex
+    from recap.daemon.calendar.sync import find_note_by_event_id
+
+    vault = tmp_path
+    meetings = vault / "Clients/D/Meetings"
+    meetings.mkdir(parents=True)
+    note = meetings / "2026-04-14 - x.md"
+    note.write_text("---\nevent-id: evt-1\n---\n\nbody\n", encoding="utf-8")
+
+    index = EventIndex(vault / "_Recap" / ".recap" / "event-index.json")
+    index.add("evt-1", note.relative_to(vault), "d")
+
+    result = find_note_by_event_id("evt-1", meetings, vault_path=vault, event_index=index)
+    assert result == note
+
+
+def test_find_note_by_event_id_falls_back_to_scan_without_index(tmp_path):
+    from recap.daemon.calendar.sync import find_note_by_event_id
+
+    meetings = tmp_path / "Meetings"
+    meetings.mkdir()
+    note = meetings / "2026-04-14 - a.md"
+    note.write_text("---\nevent-id: evt-1\n---\n\nbody\n", encoding="utf-8")
+
+    # No index → falls back to O(n) scan
+    result = find_note_by_event_id("evt-1", meetings)
+    assert result == note
+
+
+def test_find_note_by_event_id_logs_warning_on_stale_entry(tmp_path, caplog):
+    import logging
+    import pathlib
+    from recap.daemon.calendar.index import EventIndex
+    from recap.daemon.calendar.sync import find_note_by_event_id
+
+    vault = tmp_path
+    meetings = vault / "Clients/D/Meetings"
+    meetings.mkdir(parents=True)
+    # Index points at a note that never existed
+    index = EventIndex(vault / "_Recap" / ".recap" / "event-index.json")
+    index.add("evt-1", pathlib.Path("Clients/D/Meetings/gone.md"), "d")
+
+    with caplog.at_level(logging.WARNING, logger="recap.daemon.calendar.sync"):
+        result = find_note_by_event_id(
+            "evt-1", meetings, vault_path=vault, event_index=index,
+        )
+    assert result is None
+    assert any("Stale EventIndex entry" in rec.message for rec in caplog.records)

@@ -120,8 +120,25 @@ def write_calendar_note(
     return note_path
 
 
-def find_note_by_event_id(event_id: str, search_path: Path) -> Path | None:
-    """Scan markdown files in search_path for matching event-id in frontmatter."""
+def find_note_by_event_id(
+    event_id: str,
+    search_path: Path,
+    *,
+    vault_path: Path | None = None,
+    event_index: "EventIndex | None" = None,
+) -> Path | None:
+    """Find a note by event-id. Uses index when provided; else scans."""
+    if event_index is not None and vault_path is not None:
+        entry = event_index.lookup(event_id)
+        if entry is not None:
+            abs_path = vault_path / entry.path
+            if abs_path.exists():
+                return abs_path
+            # Stale index entry — log a warning and fall through to scan.
+            logger.warning(
+                "Stale EventIndex entry for %s: %s does not exist; falling back to scan",
+                event_id, abs_path,
+            )
     if not search_path.exists():
         return None
     for md_file in search_path.glob("*.md"):
