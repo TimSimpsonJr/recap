@@ -105,7 +105,35 @@ def upsert_note(
         _merge_fm_and_append_body(note_path, existing, frontmatter, body)
         return
 
-    raise NotImplementedError("upsert case 4 not yet implemented")
+    _merge_fm_and_replace_below_marker(note_path, existing, frontmatter, body)
+
+
+def _merge_fm_and_replace_below_marker(
+    note_path: pathlib.Path, existing: str, canonical: dict, body: str,
+) -> None:
+    """Case 4: existing frontmatter + marker. Merge FM, replace below marker."""
+    _, fm_block, remainder = existing.split("---\n", 2)
+    try:
+        existing_fm = yaml.safe_load(fm_block) or {}
+    except yaml.YAMLError:
+        existing_fm = {}
+
+    merged = _merge_frontmatter(existing_fm, canonical)
+
+    # Drop pipeline-error if pipeline-status no longer starts with "failed:"
+    if not str(merged.get("pipeline-status", "")).startswith("failed:"):
+        merged.pop("pipeline-error", None)
+
+    marker_idx = remainder.index(MEETING_RECORD_MARKER)
+    above = remainder[:marker_idx]
+    fm_out = yaml.dump(merged, default_flow_style=False, sort_keys=False).strip()
+    new_content = (
+        f"---\n{fm_out}\n---\n"
+        f"{above.rstrip()}\n\n"
+        f"{MEETING_RECORD_MARKER}\n\n"
+        f"{body.lstrip()}"
+    )
+    note_path.write_text(new_content, encoding="utf-8")
 
 
 def _write_new_note(note_path: pathlib.Path, frontmatter: dict, body: str) -> None:

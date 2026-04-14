@@ -129,3 +129,68 @@ class TestUpsertCase3CalendarSeeded:
         marker_idx = rest.index(MEETING_RECORD_MARKER)
         assert "## Agenda" in rest[:marker_idx]
         assert "Great meeting." in rest[marker_idx:]
+
+
+class TestUpsertCase4WithMarker:
+    def test_merges_fm_and_replaces_below_marker(self, tmp_path: pathlib.Path):
+        note_path = tmp_path / "with-marker.md"
+        note_path.write_text(
+            "---\n"
+            "date: 2026-04-14\n"
+            "time: 14:00-15:00\n"
+            "title: Q2 Review\n"
+            "calendar-source: google\n"
+            "event-id: evt-123\n"
+            "meeting-link: https://meet.google.com/abc\n"
+            "pipeline-status: failed:analyze\n"
+            "pipeline-error: old error\n"
+            "duration: old-value\n"
+            "---\n"
+            "\n"
+            "## Agenda\n\nOld agenda.\n\n"
+            "## Meeting Record\n\n"
+            "## Summary\n\nStale content.\n",
+            encoding="utf-8",
+        )
+
+        canonical = {
+            "date": "2026-04-14",
+            "title": "Q2 Review",
+            "org": "disbursecloud",
+            "org-subfolder": "Clients/Disbursecloud",
+            "platform": "google_meet",
+            "participants": ["[[Alice]]"],
+            "companies": ["[[Acme]]"],
+            "duration": "1h 12m",
+            "type": "quarterly_review",
+            "tags": ["meeting/quarterly_review"],
+            "pipeline-status": "complete",
+            "recording": "rec.m4a",
+        }
+        body = "## Summary\n\nFresh content.\n"
+
+        upsert_note(note_path, canonical, body)
+
+        content = note_path.read_text(encoding="utf-8")
+        _, fm_block, rest = content.split("---\n", 2)
+        fm = yaml.safe_load(fm_block)
+
+        # Calendar keys preserved
+        assert fm["time"] == "14:00-15:00"
+        assert fm["calendar-source"] == "google"
+        assert fm["event-id"] == "evt-123"
+
+        # Pipeline keys authoritative
+        assert fm["pipeline-status"] == "complete"
+        assert fm["duration"] == "1h 12m"
+        assert fm["recording"] == "rec.m4a"
+        # pipeline-error removed since pipeline-status is no longer failed
+        assert "pipeline-error" not in fm
+
+        # Agenda preserved above marker, fresh body below
+        assert "## Agenda" in rest
+        assert "Old agenda." in rest
+        marker_idx = rest.index(MEETING_RECORD_MARKER)
+        assert "## Agenda" in rest[:marker_idx]
+        assert "Fresh content." in rest[marker_idx:]
+        assert "Stale content." not in rest  # replaced below marker
