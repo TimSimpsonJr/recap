@@ -151,6 +151,7 @@ class TestStageOrder:
                 audio_path=audio_file,
                 metadata=mock_metadata,
                 config=pipeline_config,
+                org_slug="org",
                 org_subfolder="org",
                 vault_path=vault_path,
                 user_name="Tim",
@@ -194,6 +195,7 @@ class TestStreamingTranscript:
                 audio_path=audio_file,
                 metadata=mock_metadata,
                 config=pipeline_config,
+                org_slug="org",
                 org_subfolder="org",
                 vault_path=vault_path,
                 user_name="Tim",
@@ -239,6 +241,7 @@ class TestStreamingTranscript:
                 audio_path=audio_file,
                 metadata=mock_metadata,
                 config=pipeline_config,
+                org_slug="org",
                 org_subfolder="org",
                 vault_path=vault_path,
                 user_name="Tim",
@@ -288,6 +291,7 @@ class TestStatusTracking:
                 audio_path=audio_file,
                 metadata=mock_metadata,
                 config=pipeline_config,
+                org_slug="org",
                 org_subfolder="org",
                 vault_path=vault_path,
                 user_name="Tim",
@@ -327,6 +331,7 @@ class TestStatusTracking:
                 audio_path=audio_file,
                 metadata=mock_metadata,
                 config=pipeline_config,
+                org_slug="org",
                 org_subfolder="org",
                 vault_path=vault_path,
                 user_name="Tim",
@@ -353,6 +358,7 @@ class TestFailureStatus:
                 audio_path=audio_file,
                 metadata=mock_metadata,
                 config=pipeline_config,
+                org_slug="org",
                 org_subfolder="org",
                 vault_path=vault_path,
                 user_name="Tim",
@@ -385,6 +391,7 @@ class TestFailureStatus:
                 audio_path=audio_file,
                 metadata=mock_metadata,
                 config=pipeline_config,
+                org_slug="org",
                 org_subfolder="org",
                 vault_path=vault_path,
                 user_name="Tim",
@@ -430,6 +437,7 @@ class TestFromStage:
                 audio_path=audio_file,
                 metadata=mock_metadata,
                 config=pipeline_config,
+                org_slug="org",
                 org_subfolder="org",
                 vault_path=vault_path,
                 user_name="Tim",
@@ -481,6 +489,7 @@ class TestMeetingNoteFrontmatter:
                 audio_path=audio_file,
                 metadata=mock_metadata,
                 config=pipeline_config,
+                org_slug="org",
                 org_subfolder="org",
                 vault_path=vault_path,
                 user_name="Tim",
@@ -520,9 +529,80 @@ class TestReturnValue:
                 audio_path=audio_file,
                 metadata=mock_metadata,
                 config=pipeline_config,
+                org_slug="org",
                 org_subfolder="org",
                 vault_path=vault_path,
                 user_name="Tim",
             )
 
         assert result == expected_note
+
+
+def test_run_pipeline_export_writes_canonical_frontmatter(tmp_path, monkeypatch):
+    """End-to-end test of the export stage: pipeline produces canonical frontmatter."""
+    from recap.artifacts import save_transcript, save_analysis
+    from recap.models import (
+        AnalysisResult, MeetingMetadata, Participant, ProfileStub,
+        TranscriptResult, Utterance,
+    )
+    from recap.pipeline import run_pipeline, PipelineRuntimeConfig
+    from datetime import date
+    import yaml
+
+    # Arrange: a fake audio path with pre-existing transcript + analysis artifacts
+    audio_path = tmp_path / "2026-04-14-140000-disbursecloud.flac"
+    audio_path.touch()
+
+    transcript = TranscriptResult(
+        utterances=[Utterance(speaker="Alice", start=0.0, end=1.0, text="hi")],
+        raw_text="hi", language="en",
+    )
+    save_transcript(audio_path, transcript)
+
+    analysis = AnalysisResult(
+        speaker_mapping={},
+        meeting_type="standup", summary="s",
+        key_points=[], decisions=[], action_items=[], follow_ups=[],
+        relationship_notes=None,
+        people=[],
+        companies=[ProfileStub(name="Acme")],
+    )
+    save_analysis(audio_path, analysis)
+
+    metadata = MeetingMetadata(
+        title="Standup",
+        date=date(2026, 4, 14),
+        participants=[Participant(name="Alice")],
+        platform="google_meet",
+    )
+
+    vault = tmp_path / "vault"
+    config = PipelineRuntimeConfig(
+        archive_format="flac",  # skip convert stage
+    )
+
+    # Act: run pipeline from export stage
+    note_path = run_pipeline(
+        audio_path=audio_path,
+        metadata=metadata,
+        config=config,
+        org_slug="disbursecloud",
+        org_subfolder="Clients/Disbursecloud",
+        vault_path=vault,
+        user_name="Tim",
+        from_stage="export",
+    )
+
+    # Assert: canonical frontmatter present, org is slug, org-subfolder is path
+    content = note_path.read_text(encoding="utf-8")
+    _, fm_block, _ = content.split("---\n", 2)
+    fm = yaml.safe_load(fm_block)
+
+    assert fm["org"] == "disbursecloud"  # slug, not path
+    assert fm["org-subfolder"] == "Clients/Disbursecloud"
+    assert fm["duration"]  # set (non-empty)
+    assert fm["type"] == "standup"
+    assert fm["tags"] == ["meeting/standup"]
+    assert fm["companies"] == ["[[Acme]]"]
+    assert fm["recording"] == "2026-04-14-140000-disbursecloud.flac"
+    assert fm["pipeline-status"] == "complete"

@@ -89,6 +89,7 @@ def main(argv: list[str] | None = None) -> None:
             audio_path=audio_path,
             metadata=metadata,
             config=pipeline_config,
+            org_slug=args.org,
             org_subfolder=args.org,
             vault_path=vault_path,
             user_name=args.user,

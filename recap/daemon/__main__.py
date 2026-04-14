@@ -76,6 +76,7 @@ def _make_process_recording(
                 audio_path=flac_path,
                 metadata=metadata,
                 config=pipeline_config,
+                org_slug=org_config.name,
                 org_subfolder=org_config.subfolder,
                 vault_path=config.vault_path,
                 user_name=config.user_name,
