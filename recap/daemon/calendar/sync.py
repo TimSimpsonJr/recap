@@ -119,26 +119,51 @@ def find_note_by_event_id(
     vault_path: Path | None = None,
     event_index: "EventIndex | None" = None,
 ) -> Path | None:
-    """Find a note by event-id. Uses index when provided; else scans."""
+    """Find a note by event-id. Uses index when provided; else scans.
+
+    On stale lookup (entry exists but file does not), the helper logs a
+    warning and falls back to scan. If the scan finds the note at a
+    different location, the index is updated to the new path; if the scan
+    finds nothing, the stale entry is removed. This keeps the index
+    self-healing for in-session renames detected via scan-fallback.
+    """
+    stale_entry_event_id: str | None = None
     if event_index is not None and vault_path is not None:
         entry = event_index.lookup(event_id)
         if entry is not None:
             abs_path = vault_path / entry.path
             if abs_path.exists():
                 return abs_path
-            # Stale index entry — log a warning and fall through to scan.
+            # Stale index entry — log + remember to heal after the scan.
             logger.warning(
                 "Stale EventIndex entry for %s: %s does not exist; falling back to scan",
                 event_id, abs_path,
             )
-    if not search_path.exists():
-        return None
-    for md_file in search_path.glob("*.md"):
-        content = md_file.read_text(encoding="utf-8")
-        fm = _parse_frontmatter(content)
-        if fm and fm.get("event-id") == event_id:
-            return md_file
-    return None
+            stale_entry_event_id = event_id
+
+    found: Path | None = None
+    if search_path.exists():
+        for md_file in search_path.glob("*.md"):
+            content = md_file.read_text(encoding="utf-8")
+            fm = _parse_frontmatter(content)
+            if fm and fm.get("event-id") == event_id:
+                found = md_file
+                break
+
+    # Heal the stale entry: update if scan found, remove if not.
+    if stale_entry_event_id is not None and event_index is not None and vault_path is not None:
+        if found is not None:
+            try:
+                rel = found.relative_to(vault_path)
+            except ValueError:
+                rel = None
+            if rel is not None:
+                # Preserve the existing org by going through rename(), not add().
+                event_index.rename(stale_entry_event_id, rel)
+        else:
+            event_index.remove(stale_entry_event_id)
+
+    return found
 
 
 def should_update_note(

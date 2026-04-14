@@ -400,3 +400,52 @@ def test_find_note_by_event_id_logs_warning_on_stale_entry(tmp_path, caplog):
         )
     assert result is None
     assert any("Stale EventIndex entry" in rec.message for rec in caplog.records)
+
+
+def test_find_note_by_event_id_heals_stale_entry_when_scan_finds(tmp_path):
+    """Self-healing: stale index entry gets updated when scan finds the note."""
+    from recap.daemon.calendar.index import EventIndex
+    from recap.daemon.calendar.sync import find_note_by_event_id
+    import pathlib
+
+    vault = tmp_path
+    meetings = vault / "Clients/D/Meetings"
+    meetings.mkdir(parents=True)
+    # Note exists at "moved.md", but index points to "stale.md"
+    moved = meetings / "moved.md"
+    moved.write_text("---\nevent-id: evt-1\n---\n\nbody\n", encoding="utf-8")
+
+    index = EventIndex(vault / "_Recap" / ".recap" / "event-index.json")
+    index.add("evt-1", pathlib.Path("Clients/D/Meetings/stale.md"), "d")
+
+    result = find_note_by_event_id(
+        "evt-1", meetings, vault_path=vault, event_index=index,
+    )
+    assert result == moved
+    # Index should now point to moved.md, preserving org="d"
+    entry = index.lookup("evt-1")
+    assert entry is not None
+    assert str(entry.path) == "Clients/D/Meetings/moved.md"
+    assert entry.org == "d"
+
+
+def test_find_note_by_event_id_removes_stale_entry_when_scan_misses(tmp_path):
+    """Self-healing: stale index entry gets removed when scan also fails."""
+    from recap.daemon.calendar.index import EventIndex
+    from recap.daemon.calendar.sync import find_note_by_event_id
+    import pathlib
+
+    vault = tmp_path
+    meetings = vault / "Clients/D/Meetings"
+    meetings.mkdir(parents=True)
+    # No notes on disk at all
+
+    index = EventIndex(vault / "_Recap" / ".recap" / "event-index.json")
+    index.add("evt-1", pathlib.Path("Clients/D/Meetings/gone.md"), "d")
+
+    result = find_note_by_event_id(
+        "evt-1", meetings, vault_path=vault, event_index=index,
+    )
+    assert result is None
+    # Stale entry should be evicted
+    assert index.lookup("evt-1") is None

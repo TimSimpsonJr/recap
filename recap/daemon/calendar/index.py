@@ -92,6 +92,11 @@ class EventIndex:
 
         Drops any stale entries pointing to notes that no longer exist or no
         longer have a matching event-id.
+
+        Note: only notes under `**/Meetings/*.md` are indexed by rebuild.
+        Notes added via add() outside of Meetings/ directories will be
+        dropped on the next rebuild. Current code only writes notes to
+        Meetings/ subfolders, so this is not an active limitation.
         """
         with self._lock:
             new_entries: dict[str, IndexEntry] = {}
