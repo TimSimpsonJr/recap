@@ -461,6 +461,7 @@ def run_pipeline(
                 previous_meeting=previous,
                 user_name=user_name,
                 note_path=note_path,
+                recording_metadata=recording_metadata,
             )
             write_profile_stubs(
                 analysis=analysis,

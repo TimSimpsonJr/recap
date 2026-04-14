@@ -8,7 +8,7 @@ from datetime import date
 
 import yaml
 
-from recap.artifacts import safe_note_title
+from recap.artifacts import RecordingMetadata, safe_note_title
 from recap.models import (
     AnalysisResult,
     MeetingMetadata,
@@ -46,14 +46,21 @@ def build_canonical_frontmatter(
     recording_path: pathlib.Path,
     org: str,
     org_subfolder: str,
+    recording_metadata: RecordingMetadata | None = None,
 ) -> dict:
     """Build the canonical frontmatter dict for a completed meeting note.
 
     Per docs/plans/2026-04-14-fix-everything-design.md §0.1. The `org` arg is
     always the slug; `org_subfolder` is the filesystem path. Both go into the
     frontmatter under their respective keys.
+
+    When *recording_metadata* is supplied, truthy calendar-owned fields
+    (`calendar-source`, `event-id`, `meeting-link`) are included so brand-new
+    notes (cases 1 and 5 in `upsert_note`) record what we know about the
+    meeting. Falsy values are omitted so the merge path (cases 3, 4) still
+    treats those keys as "preserved from existing" rather than overwritten.
     """
-    return {
+    fm: dict = {
         "date": metadata.date.isoformat(),
         "title": metadata.title,
         "org": org,
@@ -67,6 +74,16 @@ def build_canonical_frontmatter(
         "pipeline-status": "complete",
         "recording": recording_path.name,
     }
+
+    if recording_metadata is not None:
+        if recording_metadata.calendar_source:
+            fm["calendar-source"] = recording_metadata.calendar_source
+        if recording_metadata.event_id:
+            fm["event-id"] = recording_metadata.event_id
+        if recording_metadata.meeting_link:
+            fm["meeting-link"] = recording_metadata.meeting_link
+
+    return fm
 
 
 def upsert_note(
@@ -320,11 +337,17 @@ def write_meeting_note(
     previous_meeting: str | None = None,
     user_name: str | None = None,
     note_path: pathlib.Path | None = None,
+    recording_metadata: RecordingMetadata | None = None,
 ) -> pathlib.Path:
     """Upsert a canonical meeting note.
 
     Delegates to `upsert_note` — handles new notes, bare notes, calendar-seeded
     notes, and fully-processed notes via field-level frontmatter merge.
+
+    When *recording_metadata* is supplied, its truthy calendar fields
+    (`calendar_source`, `event_id`, `meeting_link`) flow into the emitted
+    frontmatter so brand-new notes (cases 1 and 5) carry the calendar
+    provenance instead of silently dropping it.
     """
     if note_path is None:
         filename = f"{metadata.date.isoformat()} - {safe_note_title(metadata.title)}.md"
@@ -337,6 +360,7 @@ def write_meeting_note(
         recording_path=recording_path,
         org=org or "",
         org_subfolder=org_subfolder or (org or ""),
+        recording_metadata=recording_metadata,
     )
 
     body = _generate_pipeline_content(

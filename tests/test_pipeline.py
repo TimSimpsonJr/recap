@@ -647,3 +647,85 @@ def test_run_pipeline_against_calendar_seeded_note_backfills_frontmatter(tmp_pat
     assert "## Agenda" in rest[:marker_idx]
     assert "Discuss Q2 targets." in rest[:marker_idx]
     assert "## Summary" in rest[marker_idx:]
+
+
+def test_run_pipeline_creates_new_note_with_calendar_fields_from_recording_metadata(
+    tmp_path, monkeypatch,
+):
+    """Codex-reported bug: creating a brand-new note (no pre-seeded calendar note)
+    dropped event_id, meeting_link, and calendar_source from the frontmatter
+    because build_canonical_frontmatter only saw MeetingMetadata.
+    """
+    from recap.artifacts import save_transcript, save_analysis, RecordingMetadata
+    from recap.models import (
+        AnalysisResult, MeetingMetadata, Participant, ProfileStub,
+        TranscriptResult, Utterance,
+    )
+    from recap.pipeline import run_pipeline, PipelineRuntimeConfig
+    from datetime import date
+    import yaml
+
+    audio_path = tmp_path / "2026-04-14-140000-disbursecloud.flac"
+    audio_path.touch()
+
+    transcript = TranscriptResult(
+        utterances=[Utterance(speaker="Alice", start=0.0, end=1.0, text="hi")],
+        raw_text="hi", language="en",
+    )
+    save_transcript(audio_path, transcript)
+
+    analysis = AnalysisResult(
+        speaker_mapping={}, meeting_type="standup", summary="s",
+        key_points=[], decisions=[], action_items=[], follow_ups=[],
+        relationship_notes=None, people=[],
+        companies=[ProfileStub(name="Acme")],
+    )
+    save_analysis(audio_path, analysis)
+
+    metadata = MeetingMetadata(
+        title="Standup",
+        date=date(2026, 4, 14),
+        participants=[Participant(name="Alice")],
+        platform="google_meet",
+    )
+
+    recording_metadata = RecordingMetadata(
+        org="disbursecloud",
+        note_path="",
+        title="Standup",
+        date="2026-04-14",
+        participants=[Participant(name="Alice")],
+        platform="google_meet",
+        calendar_source="google",
+        event_id="evt-123",
+        meeting_link="https://meet.google.com/abc",
+    )
+
+    vault = tmp_path / "vault"
+    config = PipelineRuntimeConfig(archive_format="flac")
+
+    note_path = run_pipeline(
+        audio_path=audio_path,
+        metadata=metadata,
+        config=config,
+        org_slug="disbursecloud",
+        org_subfolder="Clients/Disbursecloud",
+        vault_path=vault,
+        user_name="Tim",
+        from_stage="export",
+        recording_metadata=recording_metadata,
+    )
+
+    content = note_path.read_text(encoding="utf-8")
+    _, fm_block, _ = content.split("---\n", 2)
+    fm = yaml.safe_load(fm_block)
+
+    # Calendar fields present on brand-new note
+    assert fm["calendar-source"] == "google"
+    assert fm["event-id"] == "evt-123"
+    assert fm["meeting-link"] == "https://meet.google.com/abc"
+
+    # Pipeline fields also present
+    assert fm["pipeline-status"] == "complete"
+    assert fm["org"] == "disbursecloud"
+    assert fm["org-subfolder"] == "Clients/Disbursecloud"
