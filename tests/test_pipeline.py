@@ -91,16 +91,24 @@ def audio_file(tmp_path):
     return af
 
 
+@pytest.fixture
+def expected_note_path(vault_path):
+    """The note path run_pipeline will actually produce given the standard fixtures."""
+    return vault_path / "org" / "Meetings" / "2026-04-14 - Test Meeting.md"
+
+
 # ---------------------------------------------------------------------------
 # Patch targets (all lazy-imported inside run_pipeline)
+#
+# Intentionally omits `write_meeting_note`: tests let the real vault writer
+# run and assert on actual file contents, per docs/plans/2026-04-14-fix-everything-design.md.
+# ML stages (transcribe/diarize/analyze) stay mocked because running them
+# under test is out of scope.
 # ---------------------------------------------------------------------------
 _PATCH_TRANSCRIBE = "recap.pipeline.transcribe.transcribe"
 _PATCH_DIARIZE = "recap.pipeline.diarize.diarize"
 _PATCH_ASSIGN = "recap.pipeline.diarize.assign_speakers"
 _PATCH_ANALYZE = "recap.analyze.analyze"
-_PATCH_WRITE_NOTE = "recap.vault.write_meeting_note"
-_PATCH_WRITE_STUBS = "recap.vault.write_profile_stubs"
-_PATCH_FIND_PREV = "recap.vault.find_previous_meeting"
 _PATCH_CONVERT = "recap.pipeline.audio_convert.convert_flac_to_aac"
 _PATCH_DELETE_SRC = "recap.pipeline.audio_convert.delete_source_if_configured"
 _PATCH_DURATION = "recap.pipeline._get_audio_duration"  # lives in recap/pipeline/__init__.py
@@ -115,8 +123,9 @@ class TestStageOrder:
 
     def test_all_stages_run_in_order(
         self, audio_file, mock_metadata, mock_transcript, mock_analysis,
-        pipeline_config, vault_path,
+        pipeline_config, vault_path, expected_note_path,
     ):
+        """Assert ML stages run in order and export actually produces a real note file."""
         call_order = []
 
         def track(name, return_value=None):
@@ -133,7 +142,6 @@ class TestStageOrder:
             raw_text="Hello Hi",
             language="en",
         )
-        note_path = vault_path / "org" / "Meetings" / "2026-04-14 - Test Meeting.md"
 
         with (
             patch(_PATCH_DURATION, return_value=120.0),
@@ -141,13 +149,10 @@ class TestStageOrder:
             patch(_PATCH_DIARIZE, side_effect=track("diarize", [{"start": 0, "end": 5, "speaker": "SPK_0"}])),
             patch(_PATCH_ASSIGN, side_effect=track("assign_speakers", diarized)),
             patch(_PATCH_ANALYZE, side_effect=track("analyze", mock_analysis)),
-            patch(_PATCH_WRITE_NOTE, side_effect=track("write_note", note_path)),
-            patch(_PATCH_WRITE_STUBS, side_effect=track("write_stubs", [])),
-            patch(_PATCH_FIND_PREV, return_value=None),
             patch(_PATCH_CONVERT, side_effect=track("convert", audio_file.with_suffix(".m4a"))),
             patch(_PATCH_DELETE_SRC),
         ):
-            run_pipeline(
+            result = run_pipeline(
                 audio_path=audio_file,
                 metadata=mock_metadata,
                 config=pipeline_config,
@@ -157,17 +162,25 @@ class TestStageOrder:
                 user_name="Tim",
             )
 
+        # ML stages fired in the right order, with convert coming last (after export).
         assert call_order == [
             "transcribe", "diarize", "assign_speakers",
-            "analyze", "write_note", "write_stubs", "convert",
+            "analyze", "convert",
         ]
+        # The real export wrote a real file with canonical frontmatter.
+        assert result == expected_note_path
+        assert expected_note_path.exists()
+        content = expected_note_path.read_text(encoding="utf-8")
+        assert "pipeline-status: complete" in content
+        assert "title: Test Meeting" in content
 
 
 class TestStreamingTranscript:
     """When a streaming transcript with real speakers is provided, skip transcribe + diarize."""
 
     def test_skips_transcribe_and_diarize(
-        self, audio_file, mock_metadata, mock_analysis, pipeline_config, vault_path,
+        self, audio_file, mock_metadata, mock_analysis, pipeline_config,
+        vault_path, expected_note_path,
     ):
         streaming = TranscriptResult(
             utterances=[
@@ -177,7 +190,6 @@ class TestStreamingTranscript:
             raw_text="Hello Hi",
             language="en",
         )
-        note_path = vault_path / "org" / "Meetings" / "2026-04-14 - Test Meeting.md"
 
         with (
             patch(_PATCH_DURATION, return_value=60.0),
@@ -185,9 +197,6 @@ class TestStreamingTranscript:
             patch(_PATCH_DIARIZE) as m_diarize,
             patch(_PATCH_ASSIGN) as m_assign,
             patch(_PATCH_ANALYZE, return_value=mock_analysis),
-            patch(_PATCH_WRITE_NOTE, return_value=note_path),
-            patch(_PATCH_WRITE_STUBS, return_value=[]),
-            patch(_PATCH_FIND_PREV, return_value=None),
             patch(_PATCH_CONVERT, return_value=audio_file.with_suffix(".m4a")),
             patch(_PATCH_DELETE_SRC),
         ):
@@ -205,10 +214,12 @@ class TestStreamingTranscript:
         m_transcribe.assert_not_called()
         m_diarize.assert_not_called()
         m_assign.assert_not_called()
+        # Export still ran -- real note on disk proves it.
+        assert expected_note_path.exists()
 
     def test_all_unknown_speakers_falls_through(
         self, audio_file, mock_metadata, mock_transcript, mock_analysis,
-        pipeline_config, vault_path,
+        pipeline_config, vault_path, expected_note_path,
     ):
         """If streaming transcript has only UNKNOWN speakers, do NOT skip transcribe."""
         streaming = TranscriptResult(
@@ -223,7 +234,6 @@ class TestStreamingTranscript:
             raw_text="Hello",
             language="en",
         )
-        note_path = vault_path / "org" / "Meetings" / "2026-04-14 - Test Meeting.md"
 
         with (
             patch(_PATCH_DURATION, return_value=60.0),
@@ -231,9 +241,6 @@ class TestStreamingTranscript:
             patch(_PATCH_DIARIZE, return_value=[{"start": 0, "end": 5, "speaker": "SPK_0"}]),
             patch(_PATCH_ASSIGN, return_value=diarized),
             patch(_PATCH_ANALYZE, return_value=mock_analysis),
-            patch(_PATCH_WRITE_NOTE, return_value=note_path),
-            patch(_PATCH_WRITE_STUBS, return_value=[]),
-            patch(_PATCH_FIND_PREV, return_value=None),
             patch(_PATCH_CONVERT, return_value=audio_file.with_suffix(".m4a")),
             patch(_PATCH_DELETE_SRC),
         ):
@@ -249,6 +256,7 @@ class TestStreamingTranscript:
             )
 
         m_transcribe.assert_called_once()
+        assert expected_note_path.exists()
 
 
 class TestStatusTracking:
@@ -263,7 +271,6 @@ class TestStatusTracking:
             raw_text="Hello",
             language="en",
         )
-        note_path = vault_path / "org" / "Meetings" / "2026-04-14 - Test Meeting.md"
 
         statuses_seen = []
 
@@ -280,9 +287,6 @@ class TestStatusTracking:
             patch(_PATCH_DIARIZE, return_value=[]),
             patch(_PATCH_ASSIGN, return_value=diarized),
             patch(_PATCH_ANALYZE, return_value=mock_analysis),
-            patch(_PATCH_WRITE_NOTE, return_value=note_path),
-            patch(_PATCH_WRITE_STUBS, return_value=[]),
-            patch(_PATCH_FIND_PREV, return_value=None),
             patch(_PATCH_CONVERT, return_value=audio_file.with_suffix(".m4a")),
             patch(_PATCH_DELETE_SRC),
             patch.object(Path, "write_text", spy_write_text),
@@ -297,50 +301,12 @@ class TestStatusTracking:
                 user_name="Tim",
             )
 
-        # Should have status writes for: transcribe start/complete, diarize start/complete,
-        # analyze start/complete, export start/complete, convert start/complete, final complete
+        # Status file should have recorded each stage transition in order.
         pipeline_statuses = [s.get("pipeline-status") for s in statuses_seen]
         assert "transcribing" in pipeline_statuses
         assert "analyzing" in pipeline_statuses
+        assert "exporting" in pipeline_statuses
         assert "complete" in pipeline_statuses
-
-    def test_final_status_is_complete(
-        self, audio_file, mock_metadata, mock_transcript, mock_analysis,
-        pipeline_config, vault_path,
-    ):
-        diarized = TranscriptResult(
-            utterances=[Utterance(speaker="SPK_0", start=0.0, end=5.0, text="Hello")],
-            raw_text="Hello",
-            language="en",
-        )
-        note_path = vault_path / "org" / "Meetings" / "2026-04-14 - Test Meeting.md"
-
-        with (
-            patch(_PATCH_DURATION, return_value=60.0),
-            patch(_PATCH_TRANSCRIBE, return_value=mock_transcript),
-            patch(_PATCH_DIARIZE, return_value=[]),
-            patch(_PATCH_ASSIGN, return_value=diarized),
-            patch(_PATCH_ANALYZE, return_value=mock_analysis),
-            patch(_PATCH_WRITE_NOTE, return_value=note_path),
-            patch(_PATCH_WRITE_STUBS, return_value=[]),
-            patch(_PATCH_FIND_PREV, return_value=None),
-            patch(_PATCH_CONVERT, return_value=audio_file.with_suffix(".m4a")),
-            patch(_PATCH_DELETE_SRC),
-        ):
-            run_pipeline(
-                audio_path=audio_file,
-                metadata=mock_metadata,
-                config=pipeline_config,
-                org_slug="org",
-                org_subfolder="org",
-                vault_path=vault_path,
-                user_name="Tim",
-            )
-
-        status_file = pipeline_config.status_dir / "recording.json"
-        assert status_file.exists()
-        final = json.loads(status_file.read_text())
-        assert final["pipeline-status"] == "complete"
 
 
 class TestFailureStatus:
@@ -406,7 +372,8 @@ class TestFromStage:
     """from_stage should skip all stages before the specified one."""
 
     def test_from_analyze_skips_transcribe_and_diarize(
-        self, audio_file, mock_metadata, mock_analysis, pipeline_config, vault_path,
+        self, audio_file, mock_metadata, mock_analysis, pipeline_config,
+        vault_path, expected_note_path,
     ):
         # Create a saved transcript file so the skip-load works
         transcript_save = audio_file.with_suffix(".transcript.json")
@@ -419,17 +386,12 @@ class TestFromStage:
         }
         transcript_save.write_text(json.dumps(transcript_data))
 
-        note_path = vault_path / "org" / "Meetings" / "2026-04-14 - Test Meeting.md"
-
         with (
             patch(_PATCH_DURATION, return_value=60.0),
             patch(_PATCH_TRANSCRIBE) as m_transcribe,
             patch(_PATCH_DIARIZE) as m_diarize,
             patch(_PATCH_ASSIGN) as m_assign,
             patch(_PATCH_ANALYZE, return_value=mock_analysis) as m_analyze,
-            patch(_PATCH_WRITE_NOTE, return_value=note_path),
-            patch(_PATCH_WRITE_STUBS, return_value=[]),
-            patch(_PATCH_FIND_PREV, return_value=None),
             patch(_PATCH_CONVERT, return_value=audio_file.with_suffix(".m4a")),
             patch(_PATCH_DELETE_SRC),
         ):
@@ -448,55 +410,8 @@ class TestFromStage:
         m_diarize.assert_not_called()
         m_assign.assert_not_called()
         m_analyze.assert_called_once()
-
-
-class TestMeetingNoteFrontmatter:
-    """Verify that note frontmatter is updated on completion."""
-
-    def test_frontmatter_updated_on_complete(
-        self, audio_file, mock_metadata, mock_transcript, mock_analysis,
-        pipeline_config, vault_path,
-    ):
-        meetings_dir = vault_path / "org" / "Meetings"
-        meetings_dir.mkdir(parents=True, exist_ok=True)
-        note_path = meetings_dir / "2026-04-14 - Test Meeting.md"
-
-        # Create a note with frontmatter that write_meeting_note would create
-        note_path.write_text(
-            "---\npipeline-status: analyzing\n---\n\n## Meeting Record\n\nContent here\n",
-            encoding="utf-8",
-        )
-
-        diarized = TranscriptResult(
-            utterances=[Utterance(speaker="SPK_0", start=0.0, end=5.0, text="Hello")],
-            raw_text="Hello",
-            language="en",
-        )
-
-        with (
-            patch(_PATCH_DURATION, return_value=60.0),
-            patch(_PATCH_TRANSCRIBE, return_value=mock_transcript),
-            patch(_PATCH_DIARIZE, return_value=[]),
-            patch(_PATCH_ASSIGN, return_value=diarized),
-            patch(_PATCH_ANALYZE, return_value=mock_analysis),
-            patch(_PATCH_WRITE_NOTE, return_value=note_path),
-            patch(_PATCH_WRITE_STUBS, return_value=[]),
-            patch(_PATCH_FIND_PREV, return_value=None),
-            patch(_PATCH_CONVERT, return_value=audio_file.with_suffix(".m4a")),
-            patch(_PATCH_DELETE_SRC),
-        ):
-            run_pipeline(
-                audio_path=audio_file,
-                metadata=mock_metadata,
-                config=pipeline_config,
-                org_slug="org",
-                org_subfolder="org",
-                vault_path=vault_path,
-                user_name="Tim",
-            )
-
-        content = note_path.read_text(encoding="utf-8")
-        assert "pipeline-status: complete" in content
+        # Export still ran even though we started from "analyze".
+        assert expected_note_path.exists()
 
 
 class TestReturnValue:
@@ -504,14 +419,13 @@ class TestReturnValue:
 
     def test_returns_note_path(
         self, audio_file, mock_metadata, mock_transcript, mock_analysis,
-        pipeline_config, vault_path,
+        pipeline_config, vault_path, expected_note_path,
     ):
         diarized = TranscriptResult(
             utterances=[Utterance(speaker="SPK_0", start=0.0, end=5.0, text="Hello")],
             raw_text="Hello",
             language="en",
         )
-        expected_note = vault_path / "org" / "Meetings" / "2026-04-14 - Test Meeting.md"
 
         with (
             patch(_PATCH_DURATION, return_value=60.0),
@@ -519,9 +433,6 @@ class TestReturnValue:
             patch(_PATCH_DIARIZE, return_value=[]),
             patch(_PATCH_ASSIGN, return_value=diarized),
             patch(_PATCH_ANALYZE, return_value=mock_analysis),
-            patch(_PATCH_WRITE_NOTE, return_value=expected_note),
-            patch(_PATCH_WRITE_STUBS, return_value=[]),
-            patch(_PATCH_FIND_PREV, return_value=None),
             patch(_PATCH_CONVERT, return_value=audio_file.with_suffix(".m4a")),
             patch(_PATCH_DELETE_SRC),
         ):
@@ -535,7 +446,8 @@ class TestReturnValue:
                 user_name="Tim",
             )
 
-        assert result == expected_note
+        assert result == expected_note_path
+        assert result.exists()
 
 
 def test_run_pipeline_export_writes_canonical_frontmatter(tmp_path, monkeypatch):
