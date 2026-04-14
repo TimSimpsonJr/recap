@@ -104,7 +104,7 @@ def test_write_calendar_note_frontmatter_org_is_slug_not_subfolder(tmp_path):
     _, fm_block, _ = content.split("---\n", 2)
     fm = yaml.safe_load(fm_block)
     assert fm["org"] == "disbursecloud"  # slug, not the folder path
-    # Subfolder is part of file layout, not part of the stored metadata.
+    assert fm["org-subfolder"] == "Clients/Disbursecloud"  # filesystem location
 
 
 class TestShouldUpdateNote:

@@ -76,6 +76,7 @@ def write_calendar_note(
         "participants": [f"[[{p}]]" for p in event.participants],
         "calendar-source": event.calendar_source,
         "org": event.org,
+        "org-subfolder": org_config.subfolder,
         "meeting-link": event.meeting_link,
         "event-id": event.event_id,
         "pipeline-status": "pending",
