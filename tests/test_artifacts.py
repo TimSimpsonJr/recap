@@ -8,7 +8,7 @@ from recap.models import Participant
 
 
 class TestRecordingMetadataLLMBackend:
-    def test_default_llm_backend_is_claude(self):
+    def test_default_llm_backend_is_none(self):
         metadata = RecordingMetadata(
             org="test",
             note_path="",
@@ -17,7 +17,7 @@ class TestRecordingMetadataLLMBackend:
             participants=[],
             platform="manual",
         )
-        assert metadata.llm_backend == "claude"
+        assert metadata.llm_backend is None
 
     def test_explicit_llm_backend_round_trips(self, tmp_path: pathlib.Path):
         audio_path = tmp_path / "recording.flac"
@@ -37,7 +37,7 @@ class TestRecordingMetadataLLMBackend:
         assert loaded is not None
         assert loaded.llm_backend == "ollama"
 
-    def test_legacy_metadata_without_llm_backend_loads_as_claude(self, tmp_path: pathlib.Path):
+    def test_legacy_metadata_without_llm_backend_loads_as_none(self, tmp_path: pathlib.Path):
         import json
 
         audio_path = tmp_path / "legacy.flac"
@@ -54,4 +54,4 @@ class TestRecordingMetadataLLMBackend:
 
         loaded = load_recording_metadata(audio_path)
         assert loaded is not None
-        assert loaded.llm_backend == "claude"
+        assert loaded.llm_backend is None

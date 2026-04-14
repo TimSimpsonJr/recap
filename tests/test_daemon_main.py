@@ -46,14 +46,22 @@ class TestBuildRuntimeConfig:
         assert runtime.llm_backend == "ollama"
 
     def test_falls_back_to_org_config_when_metadata_backend_absent(self):
+        """Metadata with llm_backend=None must not override a non-Claude org default."""
         daemon_config = _make_daemon_config()
-        org = _make_org(llm_backend="claude")
-        # Simulate legacy metadata by setting the default
+        org = _make_org(llm_backend="ollama")
         metadata = RecordingMetadata(
             org="test", note_path="", title="t",
             date="2026-04-14", participants=[], platform="manual",
-            # llm_backend defaults to "claude", which matches org default
+            llm_backend=None,  # explicit: no override, org default wins
         )
 
         runtime = build_runtime_config(daemon_config, org, metadata)
-        assert runtime.llm_backend == "claude"
+        assert runtime.llm_backend == "ollama"
+
+    def test_falls_back_to_org_config_when_metadata_is_none(self):
+        """When no recording metadata is supplied, the org default must win."""
+        daemon_config = _make_daemon_config()
+        org = _make_org(llm_backend="ollama")
+
+        runtime = build_runtime_config(daemon_config, org, recording_metadata=None)
+        assert runtime.llm_backend == "ollama"

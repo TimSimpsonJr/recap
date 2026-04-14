@@ -17,12 +17,15 @@ def build_runtime_config(
 ) -> PipelineRuntimeConfig:
     """Build a PipelineRuntimeConfig from daemon config, org config, and (optionally) recording metadata.
 
-    If recording_metadata has an llm_backend set, it overrides org_config.llm_backend.
-    This is how the Signal popup's backend choice reaches analyze.
+    If recording_metadata has an llm_backend explicitly set (non-None), it overrides
+    org_config.llm_backend. This is how the Signal popup's backend choice reaches
+    analyze. A `None` llm_backend (the default) means "no explicit override," so the
+    org default wins — avoiding a silent regression where the default "claude" value
+    masks an org configured for ollama.
     """
     backend = (
         recording_metadata.llm_backend
-        if recording_metadata is not None and recording_metadata.llm_backend
+        if recording_metadata is not None and recording_metadata.llm_backend is not None
         else org_config.llm_backend
     )
     return PipelineRuntimeConfig(

@@ -31,7 +31,7 @@ class RecordingMetadata:
     calendar_source: str | None = None
     event_id: str | None = None
     meeting_link: str = ""
-    llm_backend: str = "claude"
+    llm_backend: str | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> RecordingMetadata:
@@ -49,7 +49,7 @@ class RecordingMetadata:
             calendar_source=data.get("calendar_source"),
             event_id=data.get("event_id"),
             meeting_link=data.get("meeting_link", ""),
-            llm_backend=data.get("llm_backend", "claude"),
+            llm_backend=data.get("llm_backend"),
         )
 
     def to_dict(self) -> dict[str, Any]:
