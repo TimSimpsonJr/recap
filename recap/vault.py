@@ -5,6 +5,7 @@ import logging
 import pathlib
 import re
 from datetime import date
+from typing import TYPE_CHECKING
 
 import yaml
 
@@ -14,6 +15,9 @@ from recap.models import (
     MeetingMetadata,
     ProfileStub,
 )
+
+if TYPE_CHECKING:
+    from recap.daemon.calendar.index import EventIndex
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +94,9 @@ def upsert_note(
     note_path: pathlib.Path,
     frontmatter: dict,
     body: str,
+    *,
+    event_index: "EventIndex | None" = None,
+    vault_path: pathlib.Path | None = None,
 ) -> None:
     """Upsert a meeting note with canonical frontmatter + body below the marker.
 
@@ -106,30 +113,58 @@ def upsert_note(
 
     This function is the sole writer of canonical notes. All callers
     (calendar sync, pipeline export, manual tooling) route through here.
+
+    When *event_index* and *vault_path* are both supplied and the frontmatter
+    carries an ``event-id``, the index is updated with the vault-relative
+    path so subsequent lookups avoid scanning the filesystem.
     """
     note_path.parent.mkdir(parents=True, exist_ok=True)
 
     if not note_path.exists():
         _write_new_note(note_path, frontmatter, body)
+    else:
+        existing = note_path.read_text(encoding="utf-8").replace("\r\n", "\n")
+        has_frontmatter = existing.startswith("---\n") and existing.count("---\n") >= 2
+        has_marker = MEETING_RECORD_MARKER in existing
+
+        if not has_frontmatter and not has_marker:
+            _prepend_fm_and_append_body(note_path, existing, frontmatter, body)
+        elif has_frontmatter and not has_marker:
+            _merge_fm_and_append_body(note_path, existing, frontmatter, body)
+        elif has_marker and not has_frontmatter:
+            _prepend_fm_and_replace_below_marker(note_path, existing, frontmatter, body)
+        else:
+            _merge_fm_and_replace_below_marker(note_path, existing, frontmatter, body)
+
+    _update_index_if_applicable(note_path, frontmatter, event_index, vault_path)
+
+
+def _update_index_if_applicable(
+    note_path: pathlib.Path,
+    frontmatter: dict,
+    event_index: "EventIndex | None",
+    vault_path: pathlib.Path | None,
+) -> None:
+    """Add or refresh the EventIndex entry for a just-written note.
+
+    No-op when any of these hold:
+    - ``event_index`` is ``None`` (caller didn't wire the index in).
+    - ``vault_path`` is ``None`` (can't compute a vault-relative path).
+    - ``frontmatter`` has no truthy ``event-id`` (nothing to key on).
+    - ``note_path`` is outside the vault root (shouldn't happen in
+      production, but we defensively skip rather than raise).
+    """
+    if event_index is None or vault_path is None:
         return
-
-    existing = note_path.read_text(encoding="utf-8").replace("\r\n", "\n")
-    has_frontmatter = existing.startswith("---\n") and existing.count("---\n") >= 2
-    has_marker = MEETING_RECORD_MARKER in existing
-
-    if not has_frontmatter and not has_marker:
-        _prepend_fm_and_append_body(note_path, existing, frontmatter, body)
+    event_id = frontmatter.get("event-id")
+    if not event_id:
         return
-
-    if has_frontmatter and not has_marker:
-        _merge_fm_and_append_body(note_path, existing, frontmatter, body)
+    try:
+        rel_path = note_path.relative_to(vault_path)
+    except ValueError:
+        # note_path outside vault — skip (shouldn't happen in production)
         return
-
-    if has_marker and not has_frontmatter:
-        _prepend_fm_and_replace_below_marker(note_path, existing, frontmatter, body)
-        return
-
-    _merge_fm_and_replace_below_marker(note_path, existing, frontmatter, body)
+    event_index.add(str(event_id), rel_path, str(frontmatter.get("org", "")))
 
 
 def _merge_fm_and_replace_below_marker(

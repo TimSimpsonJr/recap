@@ -6,10 +6,14 @@ import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import yaml
 
 from recap.daemon.config import OrgConfig
+
+if TYPE_CHECKING:
+    from recap.daemon.calendar.index import EventIndex
 
 logger = logging.getLogger(__name__)
 
@@ -58,9 +62,18 @@ def _to_vault_relative(path: Path, vault_path: Path | None) -> str:
 
 
 def write_calendar_note(
-    event: CalendarEvent, vault_path: Path, org_config: OrgConfig,
+    event: CalendarEvent,
+    vault_path: Path,
+    org_config: OrgConfig,
+    *,
+    event_index: "EventIndex | None" = None,
 ) -> Path:
-    """Write a calendar event as a vault note. Returns the note path."""
+    """Write a calendar event as a vault note. Returns the note path.
+
+    When *event_index* is supplied, the index is updated with the note's
+    vault-relative path so subsequent event-id lookups avoid scanning the
+    filesystem.
+    """
     meetings_dir = org_config.resolve_subfolder(vault_path) / "Meetings"
     meetings_dir.mkdir(parents=True, exist_ok=True)
 
@@ -96,6 +109,14 @@ def write_calendar_note(
 
     note_path.write_text("\n".join(lines), encoding="utf-8")
     logger.info("Wrote calendar note: %s", note_path)
+
+    if event_index is not None and event.event_id:
+        try:
+            rel_path = note_path.relative_to(vault_path)
+            event_index.add(event.event_id, rel_path, event.org)
+        except ValueError:
+            logger.warning("Note written outside vault root: %s", note_path)
+
     return note_path
 
 

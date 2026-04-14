@@ -275,3 +275,23 @@ class TestFindNoteByEventId:
     def test_returns_none_when_not_found(self, tmp_path):
         result = find_note_by_event_id("nonexistent", tmp_path)
         assert result is None
+
+
+def test_write_calendar_note_adds_to_index_when_provided(tmp_path):
+    from recap.daemon.calendar.index import EventIndex
+    from recap.daemon.calendar.sync import CalendarEvent, write_calendar_note
+    from recap.daemon.config import OrgConfig
+
+    org = OrgConfig(name="d", subfolder="Clients/D")
+    event = CalendarEvent(
+        event_id="evt-1", title="M", date="2026-04-14", time="09:00-10:00",
+        participants=[], calendar_source="google", org="d",
+        meeting_link="", description="",
+    )
+    index = EventIndex(tmp_path / "_Recap" / ".recap" / "event-index.json")
+    note_path = write_calendar_note(event, tmp_path, org, event_index=index)
+
+    entry = index.lookup("evt-1")
+    assert entry is not None
+    # entry.path is PurePosixPath, note_path is concrete Path; compare via str:
+    assert str(entry.path) == str(note_path.relative_to(tmp_path)).replace("\\", "/")

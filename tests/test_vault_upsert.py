@@ -265,3 +265,48 @@ class TestUpsertCase4WithMarker:
         assert "## Agenda" in rest[:marker_idx]
         assert "Fresh content." in rest[marker_idx:]
         assert "Stale content." not in rest  # replaced below marker
+
+
+class TestUpsertIndexIntegration:
+    def test_upsert_adds_to_index_when_frontmatter_has_event_id(self, tmp_path):
+        from recap.daemon.calendar.index import EventIndex
+        from recap.vault import upsert_note
+
+        vault = tmp_path / "vault"
+        meetings_dir = vault / "Clients/Disbursecloud/Meetings"
+        note_path = meetings_dir / "2026-04-14 - q2.md"
+
+        index = EventIndex(vault / "_Recap" / ".recap" / "event-index.json")
+
+        frontmatter = {
+            "date": "2026-04-14",
+            "title": "Q2",
+            "org": "disbursecloud",
+            "event-id": "evt-abc",
+            "pipeline-status": "complete",
+        }
+        body = "## Summary\n\nHi.\n"
+
+        upsert_note(note_path, frontmatter, body, event_index=index, vault_path=vault)
+
+        entry = index.lookup("evt-abc")
+        assert entry is not None
+        assert entry.path == pathlib.PurePosixPath("Clients/Disbursecloud/Meetings/2026-04-14 - q2.md")
+        assert entry.org == "disbursecloud"
+
+    def test_upsert_without_event_id_does_not_touch_index(self, tmp_path):
+        from recap.daemon.calendar.index import EventIndex
+        from recap.vault import upsert_note
+
+        vault = tmp_path / "vault"
+        note_path = vault / "Personal/Meetings/2026-04-14 - adhoc.md"
+        index = EventIndex(vault / "_Recap" / ".recap" / "event-index.json")
+
+        upsert_note(
+            note_path,
+            {"date": "2026-04-14", "title": "Adhoc", "org": "personal", "pipeline-status": "complete"},
+            "## Summary\n\nx\n",
+            event_index=index,
+            vault_path=vault,
+        )
+        assert index.all_entries() == []
