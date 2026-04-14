@@ -278,54 +278,6 @@ def _generate_pipeline_content(
     return "\n".join(lines)
 
 
-def _generate_meeting_markdown(
-    metadata: MeetingMetadata,
-    analysis: AnalysisResult,
-    duration_seconds: float,
-    recording_path: pathlib.Path,
-    org: str | None = None,
-    previous_meeting: str | None = None,
-    user_name: str | None = None,
-) -> str:
-    """Generate a complete meeting note with frontmatter, marker, and pipeline content."""
-    # Frontmatter
-    fm: dict = {
-        "date": metadata.date.isoformat(),
-        "participants": [f"[[{p.name}]]" for p in metadata.participants],
-        "companies": [f"[[{c.name}]]" for c in analysis.companies],
-        "platform": metadata.platform,
-        "duration": _format_duration(duration_seconds),
-        "recording": str(recording_path),
-        "type": analysis.meeting_type,
-        "tags": [f"meeting/{analysis.meeting_type}"],
-        "pipeline-status": "complete",
-    }
-    if org:
-        fm["org"] = org
-
-    lines = ["---"]
-    lines.append(yaml.dump(fm, default_flow_style=False, sort_keys=False).strip())
-    lines.append("---")
-    lines.append("")
-
-    # Meeting Record marker
-    lines.append(MEETING_RECORD_MARKER)
-    lines.append("")
-
-    # Pipeline content
-    pipeline_content = _generate_pipeline_content(
-        metadata=metadata,
-        analysis=analysis,
-        duration_seconds=duration_seconds,
-        recording_path=recording_path,
-        previous_meeting=previous_meeting,
-        user_name=user_name,
-    )
-    lines.append(pipeline_content)
-
-    return "\n".join(lines)
-
-
 def write_meeting_note(
     metadata: MeetingMetadata,
     analysis: AnalysisResult,
@@ -333,61 +285,40 @@ def write_meeting_note(
     recording_path: pathlib.Path,
     meetings_dir: pathlib.Path,
     org: str | None = None,
+    org_subfolder: str | None = None,
     previous_meeting: str | None = None,
     user_name: str | None = None,
     note_path: pathlib.Path | None = None,
-) -> pathlib.Path | None:
+) -> pathlib.Path:
+    """Upsert a canonical meeting note.
+
+    Delegates to `upsert_note` — handles new notes, bare notes, calendar-seeded
+    notes, and fully-processed notes via field-level frontmatter merge.
+    """
     if note_path is None:
         filename = f"{metadata.date.isoformat()} - {safe_note_title(metadata.title)}.md"
         note_path = meetings_dir / filename
-    else:
-        note_path.parent.mkdir(parents=True, exist_ok=True)
 
-    if note_path.exists():
-        content = note_path.read_text(encoding="utf-8")
-        if MEETING_RECORD_MARKER in content:
-            # Reprocess: replace everything below the marker
-            marker_idx = content.index(MEETING_RECORD_MARKER)
-            above_marker = content[:marker_idx]
-            pipeline_content = _generate_pipeline_content(
-                metadata=metadata,
-                analysis=analysis,
-                duration_seconds=duration_seconds,
-                recording_path=recording_path,
-                previous_meeting=previous_meeting,
-                user_name=user_name,
-            )
-            new_content = above_marker + MEETING_RECORD_MARKER + "\n\n" + pipeline_content
-            note_path.write_text(new_content, encoding="utf-8")
-            logger.info("Reprocessed meeting note (replaced below marker): %s", note_path)
-            return note_path
-        else:
-            # Marker doesn't exist: append marker + content
-            pipeline_content = _generate_pipeline_content(
-                metadata=metadata,
-                analysis=analysis,
-                duration_seconds=duration_seconds,
-                recording_path=recording_path,
-                previous_meeting=previous_meeting,
-                user_name=user_name,
-            )
-            new_content = content.rstrip("\n") + "\n\n" + MEETING_RECORD_MARKER + "\n\n" + pipeline_content
-            note_path.write_text(new_content, encoding="utf-8")
-            logger.info("Appended meeting record to existing note: %s", note_path)
-            return note_path
-
-    md = _generate_meeting_markdown(
+    frontmatter = build_canonical_frontmatter(
         metadata=metadata,
         analysis=analysis,
         duration_seconds=duration_seconds,
         recording_path=recording_path,
-        org=org,
+        org=org or "",
+        org_subfolder=org_subfolder or (org or ""),
+    )
+
+    body = _generate_pipeline_content(
+        metadata=metadata,
+        analysis=analysis,
+        duration_seconds=duration_seconds,
+        recording_path=recording_path,
         previous_meeting=previous_meeting,
         user_name=user_name,
     )
 
-    note_path.write_text(md, encoding="utf-8")
-    logger.info("Wrote meeting note: %s", note_path)
+    upsert_note(note_path, frontmatter, body)
+    logger.info("Upserted meeting note: %s", note_path)
     return note_path
 
 

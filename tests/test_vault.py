@@ -20,7 +20,6 @@ from recap.vault import (
     write_meeting_note,
     write_profile_stubs,
     find_previous_meeting,
-    _generate_meeting_markdown,
     _format_action_item,
     _format_duration,
     slugify,
@@ -60,6 +59,30 @@ def sample_analysis() -> AnalysisResult:
         people=[ProfileStub(name="Jane Smith", company="Acme Corp", role="VP Engineering")],
         companies=[ProfileStub(name="Acme Corp", industry="SaaS")],
     )
+
+
+def _call_write(
+    tmp_path: pathlib.Path,
+    metadata: MeetingMetadata,
+    analysis: AnalysisResult,
+    duration_seconds: float = 2700.0,
+    recording_path: pathlib.Path = pathlib.Path("C:/rec/test.m4a"),
+    org: str | None = None,
+    user_name: str | None = None,
+) -> tuple[pathlib.Path, str]:
+    """Write a meeting note into tmp_path and return (path, content)."""
+    note_path = tmp_path / "note.md"
+    write_meeting_note(
+        metadata=metadata,
+        analysis=analysis,
+        duration_seconds=duration_seconds,
+        recording_path=recording_path,
+        meetings_dir=tmp_path,
+        org=org,
+        user_name=user_name,
+        note_path=note_path,
+    )
+    return note_path, note_path.read_text(encoding="utf-8")
 
 
 class TestSlugify:
@@ -111,16 +134,16 @@ class TestFormatActionItem:
         assert result == "- [ ] [[Tim]]: Task 🔼"
 
 
-class TestGenerateMeetingMarkdown:
-    def test_includes_frontmatter(self, sample_metadata, sample_analysis):
-        md = _generate_meeting_markdown(
-            metadata=sample_metadata,
-            analysis=sample_analysis,
-            duration_seconds=2700.0,
+class TestMeetingNoteContent:
+    """Covers the note content produced by write_meeting_note end-to-end."""
+
+    def test_includes_frontmatter(self, tmp_path, sample_metadata, sample_analysis):
+        _, content = _call_write(
+            tmp_path, sample_metadata, sample_analysis,
             recording_path=pathlib.Path("C:/recap-data/recordings/2026-03-16-kickoff.m4a"),
         )
         # Parse frontmatter
-        parts = md.split("---\n")
+        parts = content.split("---\n")
         assert len(parts) >= 3
         fm = yaml.safe_load(parts[1])
         assert fm["date"] == "2026-03-16"
@@ -130,144 +153,87 @@ class TestGenerateMeetingMarkdown:
         assert fm["type"] == "client-call"
         assert "meeting/client-call" in fm["tags"]
 
-    def test_pipeline_status_in_frontmatter(self, sample_metadata, sample_analysis):
-        md = _generate_meeting_markdown(
-            metadata=sample_metadata,
-            analysis=sample_analysis,
-            duration_seconds=2700.0,
-            recording_path=pathlib.Path("C:/rec/test.m4a"),
-        )
-        parts = md.split("---\n")
+    def test_pipeline_status_in_frontmatter(self, tmp_path, sample_metadata, sample_analysis):
+        _, content = _call_write(tmp_path, sample_metadata, sample_analysis)
+        parts = content.split("---\n")
         fm = yaml.safe_load(parts[1])
         assert fm["pipeline-status"] == "complete"
 
-    def test_org_in_frontmatter(self, sample_metadata, sample_analysis):
-        md = _generate_meeting_markdown(
-            metadata=sample_metadata,
-            analysis=sample_analysis,
-            duration_seconds=2700.0,
-            recording_path=pathlib.Path("C:/rec/test.m4a"),
-            org="disbursecloud",
+    def test_org_in_frontmatter(self, tmp_path, sample_metadata, sample_analysis):
+        _, content = _call_write(
+            tmp_path, sample_metadata, sample_analysis, org="disbursecloud",
         )
-        parts = md.split("---\n")
+        parts = content.split("---\n")
         fm = yaml.safe_load(parts[1])
         assert fm["org"] == "disbursecloud"
+        # org_subfolder defaults to org when not explicitly passed
+        assert fm["org-subfolder"] == "disbursecloud"
 
-    def test_org_omitted_when_none(self, sample_metadata, sample_analysis):
-        md = _generate_meeting_markdown(
-            metadata=sample_metadata,
-            analysis=sample_analysis,
-            duration_seconds=2700.0,
-            recording_path=pathlib.Path("C:/rec/test.m4a"),
-        )
-        parts = md.split("---\n")
+    def test_org_empty_string_when_none(self, tmp_path, sample_metadata, sample_analysis):
+        """Canonical frontmatter always has org; empty string when no org given."""
+        _, content = _call_write(tmp_path, sample_metadata, sample_analysis)
+        parts = content.split("---\n")
         fm = yaml.safe_load(parts[1])
-        assert "org" not in fm
+        assert fm["org"] == ""
+        assert fm["org-subfolder"] == ""
 
-    def test_includes_meeting_record_marker(self, sample_metadata, sample_analysis):
-        md = _generate_meeting_markdown(
-            metadata=sample_metadata,
-            analysis=sample_analysis,
-            duration_seconds=2700.0,
-            recording_path=pathlib.Path("C:/rec/test.m4a"),
-        )
-        assert MEETING_RECORD_MARKER in md
+    def test_includes_meeting_record_marker(self, tmp_path, sample_metadata, sample_analysis):
+        _, content = _call_write(tmp_path, sample_metadata, sample_analysis)
+        assert MEETING_RECORD_MARKER in content
 
-    def test_includes_summary(self, sample_metadata, sample_analysis):
-        md = _generate_meeting_markdown(
-            metadata=sample_metadata,
-            analysis=sample_analysis,
-            duration_seconds=2700.0,
-            recording_path=pathlib.Path("C:/rec/test.m4a"),
-        )
-        assert "## Summary" in md
-        assert "Discussed project kickoff" in md
+    def test_includes_summary(self, tmp_path, sample_metadata, sample_analysis):
+        _, content = _call_write(tmp_path, sample_metadata, sample_analysis)
+        assert "## Summary" in content
+        assert "Discussed project kickoff" in content
 
-    def test_includes_key_points(self, sample_metadata, sample_analysis):
-        md = _generate_meeting_markdown(
-            metadata=sample_metadata,
-            analysis=sample_analysis,
-            duration_seconds=2700.0,
-            recording_path=pathlib.Path("C:/rec/test.m4a"),
-        )
-        assert "## Key Points" in md
-        assert "Timeline" in md
+    def test_includes_key_points(self, tmp_path, sample_metadata, sample_analysis):
+        _, content = _call_write(tmp_path, sample_metadata, sample_analysis)
+        assert "## Key Points" in content
+        assert "Timeline" in content
 
-    def test_includes_decisions_when_present(self, sample_metadata, sample_analysis):
-        md = _generate_meeting_markdown(
-            metadata=sample_metadata,
-            analysis=sample_analysis,
-            duration_seconds=2700.0,
-            recording_path=pathlib.Path("C:/rec/test.m4a"),
-        )
-        assert "## Decisions Made" in md
-        assert "Use vendor X" in md
+    def test_includes_decisions_when_present(self, tmp_path, sample_metadata, sample_analysis):
+        _, content = _call_write(tmp_path, sample_metadata, sample_analysis)
+        assert "## Decisions Made" in content
+        assert "Use vendor X" in content
 
-    def test_omits_decisions_when_empty(self, sample_metadata, sample_analysis):
+    def test_omits_decisions_when_empty(self, tmp_path, sample_metadata, sample_analysis):
         sample_analysis.decisions = []
-        md = _generate_meeting_markdown(
-            metadata=sample_metadata,
-            analysis=sample_analysis,
-            duration_seconds=2700.0,
-            recording_path=pathlib.Path("C:/rec/test.m4a"),
-        )
-        assert "## Decisions Made" not in md
+        _, content = _call_write(tmp_path, sample_metadata, sample_analysis)
+        assert "## Decisions Made" not in content
 
-    def test_action_items_emoji_format(self, sample_metadata, sample_analysis):
-        md = _generate_meeting_markdown(
-            metadata=sample_metadata,
-            analysis=sample_analysis,
-            duration_seconds=2700.0,
-            recording_path=pathlib.Path("C:/rec/test.m4a"),
-            user_name="Tim",
+    def test_action_items_emoji_format(self, tmp_path, sample_metadata, sample_analysis):
+        _, content = _call_write(
+            tmp_path, sample_metadata, sample_analysis, user_name="Tim",
         )
-        assert "## Action Items" in md
+        assert "## Action Items" in content
         # Tim is user: no wikilink, high priority, due date
-        assert "- [ ] Tim: Send proposal by Friday 📅 2026-03-20 ⏫" in md
+        assert "- [ ] Tim: Send proposal by Friday 📅 2026-03-20 ⏫" in content
         # Jane is not user: wikilinked, normal priority, no due date
-        assert "- [ ] [[Jane Smith]]: Review budget numbers 🔼" in md
+        assert "- [ ] [[Jane Smith]]: Review budget numbers 🔼" in content
 
-    def test_action_items_no_user_name(self, sample_metadata, sample_analysis):
-        md = _generate_meeting_markdown(
-            metadata=sample_metadata,
-            analysis=sample_analysis,
-            duration_seconds=2700.0,
-            recording_path=pathlib.Path("C:/rec/test.m4a"),
-        )
+    def test_action_items_no_user_name(self, tmp_path, sample_metadata, sample_analysis):
+        _, content = _call_write(tmp_path, sample_metadata, sample_analysis)
         # Without user_name, all assignees get wikilinked
-        assert "[[Tim]]" in md
-        assert "[[Jane Smith]]" in md
+        assert "[[Tim]]" in content
+        assert "[[Jane Smith]]" in content
 
-    def test_omits_relationship_notes_when_null(self, sample_metadata, sample_analysis):
-        md = _generate_meeting_markdown(
-            metadata=sample_metadata,
-            analysis=sample_analysis,
-            duration_seconds=2700.0,
-            recording_path=pathlib.Path("C:/rec/test.m4a"),
-        )
-        assert "## Relationship Notes" not in md
+    def test_omits_relationship_notes_when_null(self, tmp_path, sample_metadata, sample_analysis):
+        _, content = _call_write(tmp_path, sample_metadata, sample_analysis)
+        assert "## Relationship Notes" not in content
 
-    def test_includes_relationship_notes_when_present(self, sample_metadata, sample_analysis):
+    def test_includes_relationship_notes_when_present(self, tmp_path, sample_metadata, sample_analysis):
         sample_analysis.relationship_notes = "Jane prefers async communication."
-        md = _generate_meeting_markdown(
-            metadata=sample_metadata,
-            analysis=sample_analysis,
-            duration_seconds=2700.0,
-            recording_path=pathlib.Path("C:/rec/test.m4a"),
-        )
-        assert "## Relationship Notes" in md
-        assert "Jane prefers async" in md
+        _, content = _call_write(tmp_path, sample_metadata, sample_analysis)
+        assert "## Relationship Notes" in content
+        assert "Jane prefers async" in content
 
-    def test_recording_path_m4a(self, sample_metadata, sample_analysis):
-        """Recording path should use .m4a extension."""
+    def test_recording_path_m4a(self, tmp_path, sample_metadata, sample_analysis):
+        """Recording path should use .m4a extension (stored as filename)."""
         rec = pathlib.Path("C:/recap-data/recordings/2026-03-16-kickoff.m4a")
-        md = _generate_meeting_markdown(
-            metadata=sample_metadata,
-            analysis=sample_analysis,
-            duration_seconds=2700.0,
-            recording_path=rec,
+        _, content = _call_write(
+            tmp_path, sample_metadata, sample_analysis, recording_path=rec,
         )
-        parts = md.split("---\n")
+        parts = content.split("---\n")
         fm = yaml.safe_load(parts[1])
         assert fm["recording"].endswith(".m4a")
 
@@ -315,10 +281,30 @@ class TestWriteMeetingNote:
         fm = yaml.safe_load(parts[1])
         assert fm["org"] == "disbursecloud"
 
+    def test_org_subfolder_param_independent_of_org(
+        self, tmp_vault, sample_metadata, sample_analysis,
+    ):
+        """org_subfolder can differ from org (additive parameter, defaults to org)."""
+        meetings_dir = tmp_vault / "Work" / "Meetings"
+        note_path = write_meeting_note(
+            metadata=sample_metadata,
+            analysis=sample_analysis,
+            duration_seconds=2700.0,
+            recording_path=pathlib.Path("C:/rec/test.m4a"),
+            meetings_dir=meetings_dir,
+            org="disbursecloud",
+            org_subfolder="DisburseCloud",  # explicit, differs from slug
+        )
+        content = note_path.read_text(encoding="utf-8")
+        parts = content.split("---\n")
+        fm = yaml.safe_load(parts[1])
+        assert fm["org"] == "disbursecloud"
+        assert fm["org-subfolder"] == "DisburseCloud"
+
     def test_append_below_marker_when_file_exists_without_marker(
         self, tmp_vault, sample_metadata, sample_analysis
     ):
-        """If file exists but has no marker, append marker + pipeline content."""
+        """If file exists but has no marker, prepend frontmatter + append marker + pipeline content."""
         meetings_dir = tmp_vault / "Work" / "Meetings"
         existing = meetings_dir / "2026-03-16 - Project Kickoff with Acme Corp.md"
         existing.write_text("## Agenda\n\n- Item 1\n- Item 2", encoding="utf-8")
@@ -339,6 +325,11 @@ class TestWriteMeetingNote:
         assert MEETING_RECORD_MARKER in content
         # Pipeline content added below marker
         assert "## Summary" in content
+        # Canonical frontmatter now added (previously this note had none)
+        parts = content.split("---\n")
+        assert len(parts) >= 3
+        fm = yaml.safe_load(parts[1])
+        assert fm["pipeline-status"] == "complete"
 
     def test_reprocess_replaces_below_marker(
         self, tmp_vault, sample_metadata, sample_analysis
@@ -347,6 +338,7 @@ class TestWriteMeetingNote:
         meetings_dir = tmp_vault / "Work" / "Meetings"
         existing = meetings_dir / "2026-03-16 - Project Kickoff with Acme Corp.md"
         existing.write_text(
+            "---\ntitle: Old Title\n---\n\n"
             "## Agenda\n\n- Item 1\n\n"
             + MEETING_RECORD_MARKER
             + "\n\n## Summary\n\nOld summary that should be replaced.\n",
@@ -362,7 +354,7 @@ class TestWriteMeetingNote:
         )
         assert note_path is not None
         content = note_path.read_text(encoding="utf-8")
-        # Manual content preserved
+        # Manual content above marker preserved
         assert "## Agenda" in content
         assert "- Item 1" in content
         # Old summary replaced
@@ -373,10 +365,17 @@ class TestWriteMeetingNote:
     def test_reprocess_preserves_above_marker(
         self, tmp_vault, sample_metadata, sample_analysis
     ):
-        """Content above marker is never touched during reprocess."""
+        """Content above marker (body, not frontmatter keys) is preserved during reprocess."""
         meetings_dir = tmp_vault / "Work" / "Meetings"
         existing = meetings_dir / "2026-03-16 - Project Kickoff with Acme Corp.md"
-        above = "---\ntitle: My Manual Notes\n---\n\n## My Briefing\n\nImportant context here.\n\n"
+        # Calendar-owned keys (time, meeting-link) should be preserved by the merge.
+        above = (
+            "---\n"
+            "time: \"10:00\"\n"
+            "meeting-link: \"https://zoom.us/j/123\"\n"
+            "---\n\n"
+            "## My Briefing\n\nImportant context here.\n\n"
+        )
         existing.write_text(
             above + MEETING_RECORD_MARKER + "\n\nOld content\n",
             encoding="utf-8",
@@ -390,9 +389,17 @@ class TestWriteMeetingNote:
             meetings_dir=meetings_dir,
         )
         content = existing.read_text(encoding="utf-8")
-        assert "My Manual Notes" in content
+        # Above-marker body preserved
         assert "My Briefing" in content
         assert "Important context here." in content
+        # Calendar-owned frontmatter keys preserved through merge
+        parts = content.split("---\n")
+        fm = yaml.safe_load(parts[1])
+        assert str(fm["time"]) == "10:00"
+        assert fm["meeting-link"] == "https://zoom.us/j/123"
+        # Canonical pipeline keys also present
+        assert fm["pipeline-status"] == "complete"
+        assert fm["type"] == "client-call"
 
 
 class TestWriteProfileStubs:
