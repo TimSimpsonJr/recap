@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Callable
 
-from recap.artifacts import RecordingMetadata
+from recap.artifacts import RecordingMetadata, to_vault_relative
 from recap.daemon.recorder.detection import MeetingWindow, detect_meeting_windows
 from recap.daemon.recorder.enrichment import enrich_meeting_metadata
 from recap.models import Participant
@@ -87,13 +87,16 @@ class MeetingDetector:
         try:
             from recap.daemon.calendar.sync import find_note_by_event_id
 
+            vault_path = Path(self._config.vault_path)
             meetings_dir = (
-                Path(self._config.vault_path)
+                vault_path
                 / self._org_subfolder(org)
                 / "Meetings"
             )
             note = find_note_by_event_id(event_id, meetings_dir)
-            return str(note) if note is not None else ""
+            if note is None:
+                return ""
+            return to_vault_relative(note, vault_path)
         except Exception:
             logger.debug("Failed to resolve calendar note for event %s", event_id, exc_info=True)
             return ""

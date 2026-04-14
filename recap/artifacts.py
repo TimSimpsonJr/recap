@@ -20,6 +20,28 @@ def safe_note_title(title: str) -> str:
     return sanitized or "Meeting"
 
 
+def resolve_note_path(note_path_str: str, vault_path: pathlib.Path) -> pathlib.Path:
+    """Resolve a stored note_path against the vault root.
+
+    Accepts both absolute (legacy) and vault-relative (new) forms.
+    """
+    p = pathlib.Path(note_path_str)
+    if p.is_absolute():
+        return p
+    return vault_path / p
+
+
+def to_vault_relative(note_path: pathlib.Path, vault_path: pathlib.Path) -> str:
+    """Convert an absolute path to a vault-relative string with forward slashes.
+
+    Falls back to the path as-is if it lies outside *vault_path* (degraded mode).
+    """
+    try:
+        return str(note_path.relative_to(vault_path)).replace("\\", "/")
+    except ValueError:
+        return str(note_path)
+
+
 @dataclass
 class RecordingMetadata:
     org: str

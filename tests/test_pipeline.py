@@ -1,5 +1,6 @@
 """Tests for pipeline orchestrator."""
 import json
+import pathlib
 from datetime import date
 from pathlib import Path
 from unittest.mock import patch
@@ -729,3 +730,108 @@ def test_run_pipeline_creates_new_note_with_calendar_fields_from_recording_metad
     assert fm["pipeline-status"] == "complete"
     assert fm["org"] == "disbursecloud"
     assert fm["org-subfolder"] == "Clients/Disbursecloud"
+
+
+def test_run_pipeline_writes_vault_relative_note_path(tmp_path):
+    """After Phase 2, recording_metadata.note_path is vault-relative after pipeline run."""
+    from recap.artifacts import (
+        save_transcript, save_analysis, load_recording_metadata, RecordingMetadata,
+    )
+    from recap.models import (
+        AnalysisResult, MeetingMetadata, Participant,
+        TranscriptResult, Utterance,
+    )
+    from recap.pipeline import run_pipeline, PipelineRuntimeConfig
+    from datetime import date
+
+    audio_path = tmp_path / "2026-04-14-140000-d.flac"
+    audio_path.touch()
+    save_transcript(audio_path, TranscriptResult(
+        utterances=[Utterance(speaker="Alice", start=0, end=1, text="hi")],
+        raw_text="hi", language="en",
+    ))
+    save_analysis(audio_path, AnalysisResult(
+        speaker_mapping={}, meeting_type="standup", summary="s",
+        key_points=[], decisions=[], action_items=[], follow_ups=[],
+        relationship_notes=None, people=[], companies=[],
+    ))
+    metadata = MeetingMetadata(
+        title="Standup", date=date(2026, 4, 14),
+        participants=[Participant(name="Alice")], platform="manual",
+    )
+    recording_metadata = RecordingMetadata(
+        org="d", note_path="", title="Standup", date="2026-04-14",
+        participants=[Participant(name="Alice")], platform="manual",
+    )
+    vault = tmp_path / "vault"
+    config = PipelineRuntimeConfig(archive_format="flac")
+
+    run_pipeline(
+        audio_path=audio_path, metadata=metadata, config=config,
+        org_slug="d", org_subfolder="DFolder", vault_path=vault, user_name="T",
+        from_stage="export", recording_metadata=recording_metadata,
+    )
+
+    # After the run, metadata file should have a vault-relative note_path
+    reloaded = load_recording_metadata(audio_path)
+    assert reloaded is not None
+    assert reloaded.note_path  # non-empty
+    assert not pathlib.Path(reloaded.note_path).is_absolute()
+    # And the path should resolve correctly
+    abs_path = vault / reloaded.note_path
+    assert abs_path.exists()
+
+
+def test_run_pipeline_reads_legacy_absolute_note_path(tmp_path):
+    """Legacy metadata files with absolute note_path should still work."""
+    from recap.artifacts import (
+        save_transcript, save_analysis, write_recording_metadata, RecordingMetadata,
+    )
+    from recap.models import (
+        AnalysisResult, MeetingMetadata, Participant,
+        TranscriptResult, Utterance,
+    )
+    from recap.pipeline import run_pipeline, PipelineRuntimeConfig
+    from datetime import date
+
+    audio_path = tmp_path / "rec.flac"
+    audio_path.touch()
+    save_transcript(audio_path, TranscriptResult(
+        utterances=[Utterance(speaker="A", start=0, end=1, text="hi")],
+        raw_text="hi", language="en",
+    ))
+    save_analysis(audio_path, AnalysisResult(
+        speaker_mapping={}, meeting_type="standup", summary="s",
+        key_points=[], decisions=[], action_items=[], follow_ups=[],
+        relationship_notes=None, people=[], companies=[],
+    ))
+
+    vault = tmp_path / "vault"
+    meetings = vault / "DFolder/Meetings"
+    meetings.mkdir(parents=True)
+    legacy_note = meetings / "2026-04-14 - Standup.md"
+    legacy_note.write_text(
+        "---\ndate: 2026-04-14\n---\n\n## Agenda\n", encoding="utf-8",
+    )
+
+    recording_metadata = RecordingMetadata(
+        org="d", note_path=str(legacy_note),  # absolute — legacy shape
+        title="Standup", date="2026-04-14", participants=[], platform="manual",
+    )
+    write_recording_metadata(audio_path, recording_metadata)
+
+    metadata = MeetingMetadata(
+        title="Standup", date=date(2026, 4, 14),
+        participants=[], platform="manual",
+    )
+    config = PipelineRuntimeConfig(archive_format="flac")
+
+    run_pipeline(
+        audio_path=audio_path, metadata=metadata, config=config,
+        org_slug="d", org_subfolder="DFolder", vault_path=vault, user_name="T",
+        from_stage="export", recording_metadata=recording_metadata,
+    )
+
+    # The absolute path was resolved correctly and the note was updated
+    content = legacy_note.read_text(encoding="utf-8")
+    assert "pipeline-status: complete" in content

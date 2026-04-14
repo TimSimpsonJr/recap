@@ -13,9 +13,11 @@ from recap.artifacts import (
     RecordingMetadata,
     load_analysis,
     load_transcript,
+    resolve_note_path,
     save_analysis,
     save_transcript,
     speakers_path,
+    to_vault_relative,
     transcript_path,
     write_recording_metadata,
 )
@@ -215,18 +217,25 @@ def _resolve_note_path(
     metadata: MeetingMetadata,
     recording_metadata: RecordingMetadata | None,
     meetings_dir: pathlib.Path,
+    vault_path: pathlib.Path,
+    event_index=None,
 ) -> pathlib.Path:
     from recap.artifacts import safe_note_title
 
     if recording_metadata is not None:
         if recording_metadata.note_path:
-            return pathlib.Path(recording_metadata.note_path)
+            return resolve_note_path(recording_metadata.note_path, vault_path)
         if recording_metadata.event_id:
             from recap.daemon.calendar.sync import find_note_by_event_id
 
-            note = find_note_by_event_id(recording_metadata.event_id, meetings_dir)
+            note = find_note_by_event_id(
+                recording_metadata.event_id,
+                meetings_dir,
+                vault_path=vault_path,
+                event_index=event_index,
+            )
             if note is not None:
-                recording_metadata.note_path = str(note)
+                recording_metadata.note_path = to_vault_relative(note, vault_path)
                 return note
 
     return meetings_dir / f"{metadata.date.isoformat()} - {safe_note_title(metadata.title)}.md"
@@ -323,11 +332,15 @@ def run_pipeline(
     if prerequisite_error is not None:
         raise FileNotFoundError(prerequisite_error)
 
-    note_path = _resolve_note_path(metadata, recording_metadata, meetings_dir)
+    note_path = _resolve_note_path(
+        metadata, recording_metadata, meetings_dir, vault_path,
+    )
     note_filename = note_path.name
-    if recording_metadata is not None and str(note_path) != recording_metadata.note_path:
-        recording_metadata.note_path = str(note_path)
-        write_recording_metadata(audio_path, recording_metadata)
+    if recording_metadata is not None:
+        relative = to_vault_relative(note_path, vault_path)
+        if relative != recording_metadata.note_path:
+            recording_metadata.note_path = relative
+            write_recording_metadata(audio_path, recording_metadata)
 
     transcript: TranscriptResult | None = None
     recording_reference_path = (
@@ -476,9 +489,11 @@ def run_pipeline(
         if result_note is not None:
             note_path = result_note
             note_filename = note_path.name
-            if recording_metadata is not None and str(note_path) != recording_metadata.note_path:
-                recording_metadata.note_path = str(note_path)
-                write_recording_metadata(audio_path, recording_metadata)
+            if recording_metadata is not None:
+                relative = to_vault_relative(note_path, vault_path)
+                if relative != recording_metadata.note_path:
+                    recording_metadata.note_path = relative
+                    write_recording_metadata(audio_path, recording_metadata)
         _stage_completed(config, recording_stem, "export")
 
     # ------------------------------------------------------------------
