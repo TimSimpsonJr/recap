@@ -90,14 +90,35 @@ def upsert_note(
         _write_new_note(note_path, frontmatter, body)
         return
 
-    # Cases 2, 3, 4 land here in future tasks.
-    raise NotImplementedError("upsert cases 2-4 not yet implemented")
+    existing = note_path.read_text(encoding="utf-8").replace("\r\n", "\n")
+    has_frontmatter = existing.startswith("---\n") and existing.count("---\n") >= 2
+    has_marker = MEETING_RECORD_MARKER in existing
+
+    if not has_frontmatter and not has_marker:
+        _prepend_fm_and_append_body(note_path, existing, frontmatter, body)
+        return
+
+    # Cases 3 and 4 land in future tasks.
+    raise NotImplementedError("upsert cases 3-4 not yet implemented")
 
 
 def _write_new_note(note_path: pathlib.Path, frontmatter: dict, body: str) -> None:
     fm_block = yaml.dump(frontmatter, default_flow_style=False, sort_keys=False).strip()
     content = f"---\n{fm_block}\n---\n\n{MEETING_RECORD_MARKER}\n\n{body.lstrip()}"
     note_path.write_text(content, encoding="utf-8")
+
+
+def _prepend_fm_and_append_body(
+    note_path: pathlib.Path, existing: str, frontmatter: dict, body: str,
+) -> None:
+    fm_block = yaml.dump(frontmatter, default_flow_style=False, sort_keys=False).strip()
+    new_content = (
+        f"---\n{fm_block}\n---\n\n"
+        f"{existing.rstrip()}\n\n"
+        f"{MEETING_RECORD_MARKER}\n\n"
+        f"{body.lstrip()}"
+    )
+    note_path.write_text(new_content, encoding="utf-8")
 
 
 def _format_action_item(
