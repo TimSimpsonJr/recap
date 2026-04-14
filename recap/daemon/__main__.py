@@ -23,7 +23,7 @@ from recap.daemon.recorder.detector import MeetingDetector
 from recap.daemon.recorder.recorder import Recorder
 from recap.daemon.recorder.recovery import find_orphaned_recordings
 from recap.daemon.recorder.signal_popup import show_signal_popup
-from recap.daemon.runtime_config import build_runtime_config as _build_runtime_config
+from recap.daemon.runtime_config import build_runtime_config
 from recap.daemon.server import broadcast, create_app
 from recap.daemon.startup import validate_startup
 from recap.daemon.tray import RecapTray
@@ -65,7 +65,7 @@ def _make_process_recording(
                     platform="unknown",
                 )
             metadata = recording_metadata.to_meeting_metadata()
-            pipeline_config = _build_runtime_config(config, org_config, recording_metadata)
+            pipeline_config = build_runtime_config(config, org_config, recording_metadata)
 
             # Pass the streaming transcript (if available) so the pipeline
             # can skip batch transcription + diarization when streaming succeeded.
