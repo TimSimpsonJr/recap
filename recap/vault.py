@@ -19,6 +19,9 @@ logger = logging.getLogger(__name__)
 
 MEETING_RECORD_MARKER = "## Meeting Record"
 
+# Field ownership for canonical merge (design doc §0.1)
+_CALENDAR_OWNED_KEYS = {"time", "event-id", "meeting-link", "calendar-source"}
+
 
 def slugify(text: str) -> str:
     slug = text.lower()
@@ -98,8 +101,11 @@ def upsert_note(
         _prepend_fm_and_append_body(note_path, existing, frontmatter, body)
         return
 
-    # Cases 3 and 4 land in future tasks.
-    raise NotImplementedError("upsert cases 3-4 not yet implemented")
+    if has_frontmatter and not has_marker:
+        _merge_fm_and_append_body(note_path, existing, frontmatter, body)
+        return
+
+    raise NotImplementedError("upsert case 4 not yet implemented")
 
 
 def _write_new_note(note_path: pathlib.Path, frontmatter: dict, body: str) -> None:
@@ -119,6 +125,37 @@ def _prepend_fm_and_append_body(
         f"{body.lstrip()}"
     )
     note_path.write_text(new_content, encoding="utf-8")
+
+
+def _merge_fm_and_append_body(
+    note_path: pathlib.Path, existing: str, canonical: dict, body: str,
+) -> None:
+    """Case 3: existing frontmatter + agenda, no marker. Merge + append."""
+    _, fm_block, remainder = existing.split("---\n", 2)
+    try:
+        existing_fm = yaml.safe_load(fm_block) or {}
+    except yaml.YAMLError:
+        existing_fm = {}
+
+    merged = _merge_frontmatter(existing_fm, canonical)
+    fm_out = yaml.dump(merged, default_flow_style=False, sort_keys=False).strip()
+    new_content = (
+        f"---\n{fm_out}\n---\n"
+        f"{remainder.rstrip()}\n\n"
+        f"{MEETING_RECORD_MARKER}\n\n"
+        f"{body.lstrip()}"
+    )
+    note_path.write_text(new_content, encoding="utf-8")
+
+
+def _merge_frontmatter(existing: dict, canonical: dict) -> dict:
+    """Field-level merge: calendar-owned keys preserve existing; canonical wins elsewhere."""
+    merged = dict(existing)
+    for key, value in canonical.items():
+        if key in _CALENDAR_OWNED_KEYS and key in existing:
+            continue  # preserve calendar-written value
+        merged[key] = value
+    return merged
 
 
 def _format_action_item(
