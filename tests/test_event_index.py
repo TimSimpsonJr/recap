@@ -17,7 +17,7 @@ class TestEventIndexAddLookup:
         idx.add("evt-1", pathlib.Path("Clients/Disbursecloud/Meetings/2026-04-14 - q2.md"), "disbursecloud")
         entry = idx.lookup("evt-1")
         assert entry is not None
-        assert entry.path == pathlib.Path("Clients/Disbursecloud/Meetings/2026-04-14 - q2.md")
+        assert entry.path == pathlib.PurePosixPath("Clients/Disbursecloud/Meetings/2026-04-14 - q2.md")
         assert entry.org == "disbursecloud"
 
     def test_lookup_missing_returns_none(self, tmp_path):
@@ -28,7 +28,7 @@ class TestEventIndexAddLookup:
         idx = _make_index(tmp_path)
         idx.add("evt-1", pathlib.Path("old.md"), "o")
         idx.add("evt-1", pathlib.Path("new.md"), "o")
-        assert idx.lookup("evt-1").path == pathlib.Path("new.md")
+        assert idx.lookup("evt-1").path == pathlib.PurePosixPath("new.md")
 
 
 class TestEventIndexRemoveRename:
@@ -46,7 +46,7 @@ class TestEventIndexRemoveRename:
         idx = _make_index(tmp_path)
         idx.add("evt-1", pathlib.Path("old.md"), "o")
         idx.rename("evt-1", pathlib.Path("new.md"))
-        assert idx.lookup("evt-1").path == pathlib.Path("new.md")
+        assert idx.lookup("evt-1").path == pathlib.PurePosixPath("new.md")
 
     def test_rename_nonexistent_is_noop(self, tmp_path):
         idx = _make_index(tmp_path)
@@ -74,6 +74,25 @@ class TestEventIndexPersistence:
         idx2 = _make_index(tmp_path)
         assert idx2.lookup("evt-1") is not None
 
+    def test_persisted_path_uses_forward_slashes_on_disk(self, tmp_path):
+        """Persisted paths use forward slashes regardless of input separator."""
+        idx = _make_index(tmp_path)
+        # Pass a Path that on Windows might use backslashes internally
+        idx.add("evt-1", pathlib.Path("Clients/D/Meetings/2026-04-14 - q.md"), "d")
+        index_file = tmp_path / "_Recap" / ".recap" / "event-index.json"
+        data = json.loads(index_file.read_text(encoding="utf-8"))
+        assert data["entries"]["evt-1"]["path"] == "Clients/D/Meetings/2026-04-14 - q.md"
+
+    def test_path_round_trips_as_forward_slash_after_reload(self, tmp_path):
+        """Regression: persisted paths must reload as forward-slash form on every OS."""
+        idx1 = _make_index(tmp_path)
+        idx1.add("evt-1", pathlib.Path("Clients/D/Meetings/2026-04-14 - q.md"), "d")
+        # Fresh instance reads from disk
+        idx2 = _make_index(tmp_path)
+        entry = idx2.lookup("evt-1")
+        assert entry is not None
+        assert str(entry.path) == "Clients/D/Meetings/2026-04-14 - q.md"
+
 
 class TestEventIndexRebuild:
     def test_rebuild_scans_vault_and_populates_entries(self, tmp_path):
@@ -95,7 +114,7 @@ class TestEventIndexRebuild:
         idx.rebuild(tmp_path)
 
         assert idx.lookup("evt-a") is not None
-        assert idx.lookup("evt-a").path == pathlib.Path("Clients/Disbursecloud/Meetings/2026-04-14 - a.md")
+        assert idx.lookup("evt-a").path == pathlib.PurePosixPath("Clients/Disbursecloud/Meetings/2026-04-14 - a.md")
         assert idx.lookup("evt-b") is not None
         # Note without event-id is not indexed
         assert len([e for e in idx.all_entries() if e.event_id == "adhoc"]) == 0
@@ -113,3 +132,28 @@ class TestEventIndexRebuild:
         idx.add("evt-2", pathlib.Path("b.md"), "o")
         entries = idx.all_entries()
         assert {e.event_id for e in entries} == {"evt-1", "evt-2"}
+
+
+class TestEventIndexLoadResilience:
+    def test_load_with_unknown_schema_version_is_empty_with_warning(self, tmp_path, caplog):
+        import logging
+        idx_path = tmp_path / "_Recap" / ".recap" / "event-index.json"
+        idx_path.parent.mkdir(parents=True)
+        idx_path.write_text(
+            json.dumps({"version": 99, "entries": {"e": {"path": "x.md", "org": "o", "mtime": ""}}}),
+            encoding="utf-8",
+        )
+        with caplog.at_level(logging.WARNING, logger="recap.daemon.calendar.index"):
+            idx = EventIndex(idx_path)
+        assert idx.all_entries() == []
+        assert any("schema version" in rec.message.lower() for rec in caplog.records)
+
+    def test_load_with_corrupt_json_is_empty_with_warning(self, tmp_path, caplog):
+        import logging
+        idx_path = tmp_path / "_Recap" / ".recap" / "event-index.json"
+        idx_path.parent.mkdir(parents=True)
+        idx_path.write_text("not json{{", encoding="utf-8")
+        with caplog.at_level(logging.WARNING, logger="recap.daemon.calendar.index"):
+            idx = EventIndex(idx_path)
+        assert idx.all_entries() == []
+        assert any("could not load" in rec.message.lower() for rec in caplog.records)

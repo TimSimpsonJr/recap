@@ -30,7 +30,7 @@ _SCHEMA_VERSION = 1
 @dataclass(frozen=True)
 class IndexEntry:
     event_id: str
-    path: pathlib.Path   # vault-relative
+    path: pathlib.PurePosixPath   # vault-relative, always forward-slash
     org: str
     mtime: str           # ISO timestamp
 
@@ -61,7 +61,7 @@ class EventIndex:
         with self._lock:
             self._entries[event_id] = IndexEntry(
                 event_id=event_id,
-                path=pathlib.Path(path),
+                path=pathlib.PurePosixPath(pathlib.Path(path).as_posix()),
                 org=org,
                 mtime=datetime.now().isoformat(timespec="seconds"),
             )
@@ -81,7 +81,7 @@ class EventIndex:
                 return
             self._entries[event_id] = IndexEntry(
                 event_id=event_id,
-                path=pathlib.Path(new_path),
+                path=pathlib.PurePosixPath(pathlib.Path(new_path).as_posix()),
                 org=existing.org,
                 mtime=datetime.now().isoformat(timespec="seconds"),
             )
@@ -113,7 +113,7 @@ class EventIndex:
                 org = fm.get("org")
                 if not event_id:
                     continue
-                rel = md_file.relative_to(vault_path)
+                rel = pathlib.PurePosixPath(md_file.relative_to(vault_path).as_posix())
                 new_entries[str(event_id)] = IndexEntry(
                     event_id=str(event_id),
                     path=rel,
@@ -147,7 +147,7 @@ class EventIndex:
         for event_id, raw in data.get("entries", {}).items():
             self._entries[event_id] = IndexEntry(
                 event_id=event_id,
-                path=pathlib.Path(raw["path"]),
+                path=pathlib.PurePosixPath(raw["path"]),
                 org=raw.get("org", ""),
                 mtime=raw.get("mtime", ""),
             )
@@ -158,7 +158,7 @@ class EventIndex:
             "version": _SCHEMA_VERSION,
             "entries": {
                 eid: {
-                    "path": str(entry.path).replace("\\", "/"),
+                    "path": str(pathlib.PurePosixPath(entry.path)),
                     "org": entry.org,
                     "mtime": entry.mtime,
                 }
