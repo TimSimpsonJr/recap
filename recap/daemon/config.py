@@ -60,7 +60,7 @@ class RecordingConfig:
 
 
 @dataclass
-class PipelineConfig:
+class PipelineSettings:
     transcription_model: str = "nvidia/parakeet-tdt-0.6b-v2"
     diarization_model: str = "nvidia/diar_streaming_sortformer_4spk-v2.1"
     auto_retry: bool = True
@@ -101,7 +101,7 @@ class DaemonConfig:
     user_name: str = "Tim"
     detection: DetectionConfig = field(default_factory=DetectionConfig)
     recording: RecordingConfig = field(default_factory=RecordingConfig)
-    pipeline: PipelineConfig = field(default_factory=PipelineConfig)
+    pipeline: PipelineSettings = field(default_factory=PipelineSettings)
     calendar_sync: CalendarSyncConfig = field(default_factory=CalendarSyncConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     daemon_ports: DaemonPortConfig = field(default_factory=DaemonPortConfig)
@@ -220,7 +220,7 @@ def load_daemon_config(path: pathlib.Path) -> DaemonConfig:
 
     # Parse pipeline
     pipe_raw = raw.get("pipeline", {})
-    pipeline = PipelineConfig(
+    pipeline = PipelineSettings(
         transcription_model=pipe_raw.get(
             "transcription-model", "nvidia/parakeet-tdt-0.6b-v2",
         ),
