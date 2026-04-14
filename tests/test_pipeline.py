@@ -518,3 +518,132 @@ def test_run_pipeline_export_writes_canonical_frontmatter(tmp_path, monkeypatch)
     assert fm["companies"] == ["[[Acme]]"]
     assert fm["recording"] == "2026-04-14-140000-disbursecloud.flac"
     assert fm["pipeline-status"] == "complete"
+
+
+def test_run_pipeline_against_calendar_seeded_note_backfills_frontmatter(tmp_path):
+    """End-to-end: pipeline running against a pre-seeded calendar note backfills canonical
+    frontmatter without discarding calendar-owned keys or the agenda section.
+
+    This is the load-bearing Bug A fix: the primitive-level test in test_vault_upsert.py
+    verifies the merge semantics directly, but this test exercises the full export stage
+    via run_pipeline so a future regression in either layer surfaces here.
+    """
+    from recap.artifacts import RecordingMetadata, save_transcript, save_analysis
+    from recap.models import (
+        AnalysisResult, MeetingMetadata, Participant, ProfileStub,
+        TranscriptResult, Utterance,
+    )
+    from recap.pipeline import run_pipeline, PipelineRuntimeConfig
+    from datetime import date
+    import yaml
+
+    # Arrange: audio + artifacts in the recordings dir
+    audio_path = tmp_path / "2026-04-14-140000-disbursecloud.flac"
+    audio_path.touch()
+
+    transcript = TranscriptResult(
+        utterances=[Utterance(speaker="Alice", start=0.0, end=1.0, text="hi")],
+        raw_text="hi", language="en",
+    )
+    save_transcript(audio_path, transcript)
+
+    analysis = AnalysisResult(
+        speaker_mapping={},
+        meeting_type="quarterly_review", summary="Productive Q2 discussion.",
+        key_points=[], decisions=[], action_items=[], follow_ups=[],
+        relationship_notes=None,
+        people=[],
+        companies=[ProfileStub(name="Acme")],
+    )
+    save_analysis(audio_path, analysis)
+
+    # Pre-seed a calendar-written note (frontmatter + agenda, no marker)
+    vault = tmp_path / "vault"
+    meetings_dir = vault / "Clients/Disbursecloud" / "Meetings"
+    meetings_dir.mkdir(parents=True)
+    calendar_note = meetings_dir / "2026-04-14 - Q2 Review.md"
+    calendar_note.write_text(
+        "---\n"
+        "date: 2026-04-14\n"
+        "time: 14:00-15:00\n"
+        "title: Q2 Review\n"
+        "participants:\n"
+        "- '[[Alice]]'\n"
+        "calendar-source: google\n"
+        "org: disbursecloud\n"
+        "meeting-link: https://meet.google.com/abc\n"
+        "event-id: evt-123\n"
+        "pipeline-status: pending\n"
+        "---\n"
+        "\n"
+        "## Agenda\n\nDiscuss Q2 targets.\n",
+        encoding="utf-8",
+    )
+
+    metadata = MeetingMetadata(
+        title="Q2 Review",
+        date=date(2026, 4, 14),
+        participants=[Participant(name="Alice")],
+        platform="google_meet",
+    )
+
+    # RecordingMetadata with note_path set — this is how __main__.py tells run_pipeline
+    # which pre-existing calendar note to upsert into.
+    recording_metadata = RecordingMetadata(
+        org="disbursecloud",
+        note_path=str(calendar_note),
+        title="Q2 Review",
+        date="2026-04-14",
+        participants=[Participant(name="Alice")],
+        platform="google_meet",
+        calendar_source="google",
+        event_id="evt-123",
+        meeting_link="https://meet.google.com/abc",
+    )
+
+    config = PipelineRuntimeConfig(
+        archive_format="flac",  # skip convert stage
+    )
+
+    # Act: run pipeline from export stage against the pre-seeded calendar note
+    note_path = run_pipeline(
+        audio_path=audio_path,
+        metadata=metadata,
+        config=config,
+        org_slug="disbursecloud",
+        org_subfolder="Clients/Disbursecloud",
+        vault_path=vault,
+        user_name="Tim",
+        from_stage="export",
+        recording_metadata=recording_metadata,
+    )
+
+    # The resolved path should be the pre-existing calendar note
+    assert note_path == calendar_note
+
+    # Assert: merged frontmatter + agenda preserved + body below marker
+    content = note_path.read_text(encoding="utf-8")
+    _, fm_block, rest = content.split("---\n", 2)
+    fm = yaml.safe_load(fm_block)
+
+    # Calendar-owned keys preserved
+    assert fm["time"] == "14:00-15:00"
+    assert fm["event-id"] == "evt-123"
+    assert fm["calendar-source"] == "google"
+    assert fm["meeting-link"] == "https://meet.google.com/abc"
+
+    # Pipeline-owned keys present and authoritative
+    assert fm["duration"]  # non-empty
+    assert fm["type"] == "quarterly_review"
+    assert fm["tags"] == ["meeting/quarterly_review"]
+    assert fm["companies"] == ["[[Acme]]"]
+    assert fm["recording"] == "2026-04-14-140000-disbursecloud.flac"
+    assert fm["pipeline-status"] == "complete"
+
+    # Agenda preserved above marker; body below marker
+    from recap.vault import MEETING_RECORD_MARKER
+    assert MEETING_RECORD_MARKER in rest
+    marker_idx = rest.index(MEETING_RECORD_MARKER)
+    assert "## Agenda" in rest[:marker_idx]
+    assert "Discuss Q2 targets." in rest[:marker_idx]
+    assert "## Summary" in rest[marker_idx:]
