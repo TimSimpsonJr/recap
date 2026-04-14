@@ -9,6 +9,8 @@ from pathlib import Path
 
 import yaml
 
+from recap.daemon.config import OrgConfig
+
 logger = logging.getLogger(__name__)
 
 
@@ -33,11 +35,6 @@ def _slugify(text: str) -> str:
     return slug.strip("-")
 
 
-def org_subfolder(org: str) -> str:
-    """Map org name to vault subfolder: 'disbursecloud' -> '_Recap/Disbursecloud'."""
-    return f"_Recap/{org[0].upper()}{org[1:]}"
-
-
 def _parse_frontmatter(content: str) -> dict | None:
     """Parse YAML frontmatter from a markdown file's content."""
     content = content.replace("\r\n", "\n")
@@ -60,10 +57,11 @@ def _to_vault_relative(path: Path, vault_path: Path | None) -> str:
         return str(path)
 
 
-def write_calendar_note(event: CalendarEvent, vault_path: Path) -> Path:
+def write_calendar_note(
+    event: CalendarEvent, vault_path: Path, org_config: OrgConfig,
+) -> Path:
     """Write a calendar event as a vault note. Returns the note path."""
-    subfolder = org_subfolder(event.org)
-    meetings_dir = vault_path / subfolder / "Meetings"
+    meetings_dir = org_config.resolve_subfolder(vault_path) / "Meetings"
     meetings_dir.mkdir(parents=True, exist_ok=True)
 
     slug = _slugify(event.title)
@@ -115,7 +113,7 @@ def find_note_by_event_id(event_id: str, search_path: Path) -> Path | None:
 def should_update_note(
     event_id: str,
     vault_path: Path,
-    org_subfolder: str,
+    org_config: OrgConfig,
     new_time: str | None = None,
     new_participants: list[str] | None = None,
 ) -> str:
@@ -123,7 +121,7 @@ def should_update_note(
 
     Returns "create", "update", or "skip".
     """
-    meetings_dir = vault_path / org_subfolder / "Meetings"
+    meetings_dir = org_config.resolve_subfolder(vault_path) / "Meetings"
     note = find_note_by_event_id(event_id, meetings_dir)
 
     if note is None:

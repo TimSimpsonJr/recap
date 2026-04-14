@@ -1,5 +1,8 @@
 """Tests for calendar sync."""
 import json
+
+import yaml
+
 from recap.daemon.calendar.sync import (
     CalendarEvent,
     write_calendar_note,
@@ -7,6 +10,7 @@ from recap.daemon.calendar.sync import (
     update_calendar_note,
     find_note_by_event_id,
 )
+from recap.daemon.config import OrgConfig
 
 
 class TestWriteCalendarNote:
@@ -22,7 +26,8 @@ class TestWriteCalendarNote:
             meeting_link="https://teams.microsoft.com/...",
             description="Review sprint goals",
         )
-        path = write_calendar_note(event, tmp_path)
+        org = OrgConfig(name="disbursecloud", subfolder="_Recap/Disbursecloud")
+        path = write_calendar_note(event, tmp_path, org)
         assert path.exists()
         content = path.read_text()
         assert "event-id:" in content
@@ -41,7 +46,8 @@ class TestWriteCalendarNote:
             calendar_source="zoho",
             org="disbursecloud",
         )
-        path = write_calendar_note(event, tmp_path)
+        org = OrgConfig(name="disbursecloud", subfolder="_Recap/Disbursecloud")
+        path = write_calendar_note(event, tmp_path, org)
         assert path.parent.exists()
 
     def test_pipeline_status_is_pending(self, tmp_path):
@@ -54,17 +60,60 @@ class TestWriteCalendarNote:
             calendar_source="zoho",
             org="disbursecloud",
         )
-        path = write_calendar_note(event, tmp_path)
+        org = OrgConfig(name="disbursecloud", subfolder="_Recap/Disbursecloud")
+        path = write_calendar_note(event, tmp_path, org)
         content = path.read_text()
         assert "pipeline-status: pending" in content
 
 
+def test_write_calendar_note_uses_configured_subfolder(tmp_path):
+    from recap.daemon.calendar.sync import CalendarEvent, write_calendar_note
+    from recap.daemon.config import OrgConfig
+
+    org = OrgConfig(name="disbursecloud", subfolder="Clients/Disbursecloud")
+    event = CalendarEvent(
+        event_id="evt-1",
+        title="Meeting",
+        date="2026-04-14",
+        time="14:00-15:00",
+        participants=["Alice"],
+        calendar_source="google",
+        org="disbursecloud",  # still the slug — frontmatter identity
+        meeting_link="https://meet.google.com/x",
+        description="",
+    )
+
+    note_path = write_calendar_note(event, tmp_path, org)
+    assert note_path == tmp_path / "Clients/Disbursecloud/Meetings/2026-04-14 - meeting.md"
+    assert note_path.exists()
+
+
+def test_write_calendar_note_frontmatter_org_is_slug_not_subfolder(tmp_path):
+    import yaml
+    from recap.daemon.calendar.sync import CalendarEvent, write_calendar_note
+    from recap.daemon.config import OrgConfig
+
+    org = OrgConfig(name="disbursecloud", subfolder="Clients/Disbursecloud")
+    event = CalendarEvent(
+        event_id="evt-1", title="X", date="2026-04-14", time="09:00-10:00",
+        participants=[], calendar_source="google", org="disbursecloud",
+        meeting_link="", description="",
+    )
+    note_path = write_calendar_note(event, tmp_path, org)
+    content = note_path.read_text(encoding="utf-8")
+    _, fm_block, _ = content.split("---\n", 2)
+    fm = yaml.safe_load(fm_block)
+    assert fm["org"] == "disbursecloud"  # slug, not the folder path
+    # Subfolder is part of file layout, not part of the stored metadata.
+
+
 class TestShouldUpdateNote:
     def test_new_event_returns_create(self, tmp_path):
+        org = OrgConfig(name="disbursecloud", subfolder="_Recap/Disbursecloud")
         result = should_update_note(
             event_id="new-event",
             vault_path=tmp_path,
-            org_subfolder="_Recap/Disbursecloud",
+            org_config=org,
         )
         assert result == "create"
 
@@ -74,10 +123,11 @@ class TestShouldUpdateNote:
         meetings_dir.mkdir(parents=True)
         note = meetings_dir / "2026-04-14 - test.md"
         note.write_text('---\nevent-id: "abc"\ntime: "10:00-11:00"\nparticipants: []\n---\n')
+        org = OrgConfig(name="disbursecloud", subfolder="_Recap/Disbursecloud")
         result = should_update_note(
             event_id="abc",
             vault_path=tmp_path,
-            org_subfolder="_Recap/Disbursecloud",
+            org_config=org,
             new_time="10:00-11:00",
         )
         assert result == "skip"
@@ -87,10 +137,11 @@ class TestShouldUpdateNote:
         meetings_dir.mkdir(parents=True)
         note = meetings_dir / "2026-04-14 - test.md"
         note.write_text('---\nevent-id: "abc"\ntime: "10:00-11:00"\nparticipants: []\n---\n')
+        org = OrgConfig(name="disbursecloud", subfolder="_Recap/Disbursecloud")
         result = should_update_note(
             event_id="abc",
             vault_path=tmp_path,
-            org_subfolder="_Recap/Disbursecloud",
+            org_config=org,
             new_time="14:00-15:00",
         )
         assert result == "update"
@@ -105,10 +156,11 @@ class TestShouldUpdateNote:
             '---\nevent-id: "abc"\ntime: "10:00-11:00"\n'
             'participants:\n- "[[Alice]]"\n- "[[Bob]]"\n---\n'
         )
+        org = OrgConfig(name="disbursecloud", subfolder="_Recap/Disbursecloud")
         result = should_update_note(
             event_id="abc",
             vault_path=tmp_path,
-            org_subfolder="_Recap/Disbursecloud",
+            org_config=org,
             new_time="10:00-11:00",
             new_participants=["Alice", "Bob"],
         )
@@ -123,10 +175,11 @@ class TestShouldUpdateNote:
             '---\nevent-id: "abc"\ntime: "10:00-11:00"\n'
             'participants:\n- "[[Alice]]"\n- "[[Bob]]"\n---\n'
         )
+        org = OrgConfig(name="disbursecloud", subfolder="_Recap/Disbursecloud")
         result = should_update_note(
             event_id="abc",
             vault_path=tmp_path,
-            org_subfolder="_Recap/Disbursecloud",
+            org_config=org,
             new_time="10:00-11:00",
             new_participants=["Alice", "Charlie"],
         )
