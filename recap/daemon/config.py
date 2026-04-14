@@ -15,6 +15,12 @@ class OrgConfig:
     llm_backend: str = "claude"
     default: bool = False
 
+    def resolve_subfolder(self, vault_path: pathlib.Path) -> pathlib.Path:
+        """Return the absolute path to this org's subfolder under the vault."""
+        if not self.subfolder:
+            return vault_path
+        return vault_path / self.subfolder
+
 
 @dataclass
 class CalendarProviderConfig:
@@ -121,6 +127,13 @@ class DaemonConfig:
             if org.default:
                 return org
         return self._orgs[0]
+
+    def org_by_slug(self, slug: str) -> Optional[OrgConfig]:
+        """Return the org config with matching slug, or None. Case-sensitive."""
+        for org in self._orgs:
+            if org.name == slug:
+                return org
+        return None
 
 
 def _parse_detection_app(raw: dict) -> DetectionAppConfig:

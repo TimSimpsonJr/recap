@@ -1,8 +1,53 @@
 """Tests for daemon config loading."""
+from __future__ import annotations
+
+import pathlib
+
 import pytest
 import yaml
 
-from recap.daemon.config import load_daemon_config
+from recap.daemon.config import DaemonConfig, OrgConfig, load_daemon_config
+
+
+def _make_config_with_orgs(orgs: list[OrgConfig]) -> DaemonConfig:
+    cfg = DaemonConfig.__new__(DaemonConfig)
+    cfg.vault_path = pathlib.Path("/tmp/vault")
+    cfg.recordings_path = pathlib.Path("/tmp/rec")
+    cfg._orgs = orgs
+    return cfg
+
+
+class TestOrgBySlug:
+    def test_returns_matching_org(self):
+        a = OrgConfig(name="disbursecloud", subfolder="Clients/Disbursecloud")
+        b = OrgConfig(name="personal", subfolder="Personal")
+        cfg = _make_config_with_orgs([a, b])
+        assert cfg.org_by_slug("personal") is b
+        assert cfg.org_by_slug("disbursecloud") is a
+
+    def test_returns_none_for_unknown_slug(self):
+        cfg = _make_config_with_orgs([OrgConfig(name="a", subfolder="A")])
+        assert cfg.org_by_slug("nope") is None
+
+    def test_case_sensitive_match(self):
+        """Slugs are lowercase per §0.2; lookup does not fuzzy-match."""
+        cfg = _make_config_with_orgs([OrgConfig(name="disbursecloud", subfolder="X")])
+        assert cfg.org_by_slug("DisburseCloud") is None
+
+
+class TestResolveSubfolder:
+    def test_returns_absolute_path_under_vault(self):
+        org = OrgConfig(name="disbursecloud", subfolder="Clients/Disbursecloud")
+        vault = pathlib.Path("/tmp/vault")
+        assert org.resolve_subfolder(vault) == vault / "Clients/Disbursecloud"
+
+    def test_handles_nested_subfolder(self):
+        org = OrgConfig(name="x", subfolder="a/b/c")
+        assert org.resolve_subfolder(pathlib.Path("/v")) == pathlib.Path("/v/a/b/c")
+
+    def test_empty_subfolder_resolves_to_vault_root(self):
+        org = OrgConfig(name="x", subfolder="")
+        assert org.resolve_subfolder(pathlib.Path("/v")) == pathlib.Path("/v")
 
 
 class TestLoadDaemonConfig:
