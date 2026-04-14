@@ -3,7 +3,13 @@ from __future__ import annotations
 
 import pathlib
 
-from recap.artifacts import RecordingMetadata, load_recording_metadata, write_recording_metadata
+from recap.artifacts import (
+    RecordingMetadata,
+    load_recording_metadata,
+    resolve_note_path,
+    to_vault_relative,
+    write_recording_metadata,
+)
 from recap.models import Participant
 
 
@@ -55,3 +61,34 @@ class TestRecordingMetadataLLMBackend:
         loaded = load_recording_metadata(audio_path)
         assert loaded is not None
         assert loaded.llm_backend is None
+
+
+class TestResolveNotePath:
+    def test_resolve_relative_path_joins_with_vault(self):
+        vault = pathlib.Path("/v")
+        result = resolve_note_path("Clients/D/Meetings/x.md", vault)
+        assert result == vault / "Clients/D/Meetings/x.md"
+
+    def test_resolve_absolute_path_returns_as_is(self, tmp_path):
+        # Use a real absolute path to work cross-platform (Windows treats
+        # "/foo" as non-absolute without a drive letter).
+        absolute = tmp_path / "absolute" / "path" / "x.md"
+        vault = tmp_path / "v"
+        result = resolve_note_path(str(absolute), vault)
+        assert result == absolute
+
+
+class TestToVaultRelative:
+    def test_relative_to_vault_returns_forward_slash_string(self, tmp_path):
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        note = vault / "Clients/D/Meetings/x.md"
+        result = to_vault_relative(note, vault)
+        assert result == "Clients/D/Meetings/x.md"
+
+    def test_outside_vault_returns_absolute_string_degraded(self, tmp_path):
+        vault = tmp_path / "vault"
+        outside = tmp_path / "outside" / "x.md"
+        result = to_vault_relative(outside, vault)
+        # Degraded mode: returns the absolute path as-is (str)
+        assert result == str(outside)

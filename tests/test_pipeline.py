@@ -835,3 +835,10 @@ def test_run_pipeline_reads_legacy_absolute_note_path(tmp_path):
     # The absolute path was resolved correctly and the note was updated
     content = legacy_note.read_text(encoding="utf-8")
     assert "pipeline-status: complete" in content
+
+    # Verify the metadata file was migrated to vault-relative form
+    from recap.artifacts import load_recording_metadata
+    reloaded = load_recording_metadata(audio_path)
+    assert reloaded is not None
+    assert not pathlib.Path(reloaded.note_path).is_absolute()
+    assert reloaded.note_path == "DFolder/Meetings/2026-04-14 - Standup.md"

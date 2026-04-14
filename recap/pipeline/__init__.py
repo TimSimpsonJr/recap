@@ -235,7 +235,6 @@ def _resolve_note_path(
                 event_index=event_index,
             )
             if note is not None:
-                recording_metadata.note_path = to_vault_relative(note, vault_path)
                 return note
 
     return meetings_dir / f"{metadata.date.isoformat()} - {safe_note_title(metadata.title)}.md"

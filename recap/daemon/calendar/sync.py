@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING
 
 import yaml
 
+from recap.artifacts import to_vault_relative
 from recap.daemon.config import OrgConfig
 
 if TYPE_CHECKING:
@@ -50,15 +51,6 @@ def _parse_frontmatter(content: str) -> dict | None:
     except yaml.YAMLError as e:
         logger.warning("Failed to parse frontmatter: %s", e)
         return None
-
-
-def _to_vault_relative(path: Path, vault_path: Path | None) -> str:
-    if vault_path is None:
-        return str(path)
-    try:
-        return path.relative_to(vault_path).as_posix()
-    except ValueError:
-        return str(path)
 
 
 def write_calendar_note(
@@ -250,10 +242,18 @@ def update_calendar_note(
                         except (json.JSONDecodeError, ValueError) as e:
                             logger.warning("Could not parse rename queue %s: %s", rename_queue_path, e)
                             queue = []
+                    # Preserve vault_path=None fallback: callers without a
+                    # vault root get str(path) directly.
+                    if vault_path is None:
+                        old_path_str = str(note_path)
+                        new_path_str = str(new_path)
+                    else:
+                        old_path_str = to_vault_relative(note_path, vault_path)
+                        new_path_str = to_vault_relative(new_path, vault_path)
                     queue.append(
                         {
-                            "old_path": _to_vault_relative(note_path, vault_path),
-                            "new_path": _to_vault_relative(new_path, vault_path),
+                            "old_path": old_path_str,
+                            "new_path": new_path_str,
                         }
                     )
                     rename_queue_path.parent.mkdir(parents=True, exist_ok=True)
