@@ -39,7 +39,7 @@ The plugin is the non-critical path. It displays recording state, lets you brows
 
 ## Status
 
-Active development. All 9 implementation phases are complete. Two items remain unimplemented: PyInstaller packaging (single-exe distribution) and Claude Desktop scheduled tasks (pre-meeting briefings).
+Active development. The daemon, plugin, calendar sync, and browser-extension flows are working, and the current stabilization pass has the repo back to a green test/build baseline. Packaging and scheduled briefing automation are still not implemented.
 
 ## Prerequisites
 
@@ -48,7 +48,7 @@ Active development. All 9 implementation phases are complete. Two items remain u
 - Windows 11
 - ffmpeg on PATH (for AAC audio conversion)
 - [Claude CLI](https://docs.anthropic.com/en/docs/claude-cli) installed and authenticated
-- Obsidian with [Dataview](https://github.com/blacksmithgu/obsidian-dataview) and [Full Calendar](https://github.com/davish/obsidian-full-calendar) plugins
+- Obsidian
 - SSD for recordings storage (multi-stream audio capture needs the throughput)
 
 ## Development Setup
@@ -60,12 +60,20 @@ pip install uv
 uv sync --extra dev
 ```
 
-PyTorch CUDA 12.6 wheels are configured in `pyproject.toml`.
+This is enough for tests and codebase work.
+
+To run the daemon locally, install the daemon runtime extras too:
+
+```bash
+uv sync --extra dev --extra daemon
+```
+
+PyTorch CUDA 12.6 wheels are configured in `pyproject.toml`. Install `--extra ml` when you want to run the full local transcription/diarization stack.
 
 ### Running the daemon
 
 ```bash
-python -m recap.daemon config.yaml
+uv run python -m recap.daemon config.yaml
 ```
 
 ### Installing the Obsidian plugin
@@ -81,7 +89,7 @@ Copy `obsidian-recap/main.js`, `obsidian-recap/manifest.json`, and `obsidian-rec
 ### Running tests
 
 ```bash
-pytest
+uv run pytest -q
 ```
 
 32 test modules covering daemon, pipeline, recorder, streaming, calendar, and plugin integration.

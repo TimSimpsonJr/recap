@@ -81,6 +81,7 @@ class LoggingConfig:
 
 @dataclass
 class DaemonPortConfig:
+    # Deprecated compatibility fields. The extension now uses plugin_port directly.
     extension_port_start: int = 17839
     extension_port_end: int = 17845
     plugin_port: int = 9847

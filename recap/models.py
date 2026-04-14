@@ -10,6 +10,12 @@ class Participant:
     name: str
     email: str | None = None
 
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "email": self.email,
+        }
+
 
 @dataclass
 class MeetingMetadata:
@@ -34,6 +40,14 @@ class MeetingMetadata:
             platform=data["platform"],
         )
 
+    def to_dict(self) -> dict:
+        return {
+            "title": self.title,
+            "date": self.date.isoformat(),
+            "participants": [p.to_dict() for p in self.participants],
+            "platform": self.platform,
+        }
+
 
 @dataclass
 class Utterance:
@@ -41,6 +55,14 @@ class Utterance:
     start: float
     end: float
     text: str
+
+    def to_dict(self) -> dict:
+        return {
+            "speaker": self.speaker,
+            "start": self.start,
+            "end": self.end,
+            "text": self.text,
+        }
 
 
 @dataclass
@@ -55,6 +77,21 @@ class TranscriptResult:
             lines.append(f"{u.speaker}: {u.text}")
         return "\n".join(lines)
 
+    @classmethod
+    def from_dict(cls, data: dict) -> TranscriptResult:
+        return cls(
+            utterances=[Utterance(**u) for u in data.get("utterances", [])],
+            raw_text=data.get("raw_text", ""),
+            language=data.get("language", "en"),
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "utterances": [u.to_dict() for u in self.utterances],
+            "raw_text": self.raw_text,
+            "language": self.language,
+        }
+
 
 @dataclass
 class KeyPoint:
@@ -64,6 +101,12 @@ class KeyPoint:
     @classmethod
     def from_dict(cls, data: dict) -> KeyPoint:
         return cls(topic=data["topic"], detail=data["detail"])
+
+    def to_dict(self) -> dict:
+        return {
+            "topic": self.topic,
+            "detail": self.detail,
+        }
 
 
 @dataclass
@@ -75,6 +118,12 @@ class Decision:
     def from_dict(cls, data: dict) -> Decision:
         return cls(decision=data["decision"], made_by=data["made_by"])
 
+    def to_dict(self) -> dict:
+        return {
+            "decision": self.decision,
+            "made_by": self.made_by,
+        }
+
 
 @dataclass
 class FollowUp:
@@ -84,6 +133,12 @@ class FollowUp:
     @classmethod
     def from_dict(cls, data: dict) -> FollowUp:
         return cls(item=data["item"], context=data["context"])
+
+    def to_dict(self) -> dict:
+        return {
+            "item": self.item,
+            "context": self.context,
+        }
 
 
 @dataclass
@@ -102,6 +157,14 @@ class ActionItem:
             priority=data.get("priority", "normal"),
         )
 
+    def to_dict(self) -> dict:
+        return {
+            "assignee": self.assignee,
+            "description": self.description,
+            "due_date": self.due_date,
+            "priority": self.priority,
+        }
+
 
 @dataclass
 class ProfileStub:
@@ -109,6 +172,14 @@ class ProfileStub:
     company: str | None = None
     role: str | None = None
     industry: str | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "name": self.name,
+            "company": self.company,
+            "role": self.role,
+            "industry": self.industry,
+        }
 
 
 @dataclass
@@ -159,3 +230,17 @@ class AnalysisResult:
                 for c in (data.get("companies") or [])
             ],
         )
+
+    def to_dict(self) -> dict:
+        return {
+            "speaker_mapping": dict(self.speaker_mapping),
+            "meeting_type": self.meeting_type,
+            "summary": self.summary,
+            "key_points": [kp.to_dict() for kp in self.key_points],
+            "decisions": [d.to_dict() for d in self.decisions],
+            "action_items": [a.to_dict() for a in self.action_items],
+            "follow_ups": [f.to_dict() for f in self.follow_ups],
+            "relationship_notes": self.relationship_notes,
+            "people": [p.to_dict() for p in self.people],
+            "companies": [c.to_dict() for c in self.companies],
+        }

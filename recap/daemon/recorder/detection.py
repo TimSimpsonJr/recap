@@ -4,7 +4,10 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-import win32gui  # type: ignore[import-untyped]
+try:
+    import win32gui  # type: ignore[import-untyped]
+except Exception:  # pragma: no cover - depends on Windows runtime
+    win32gui = None  # type: ignore[assignment]
 
 
 # Patterns for matching active meeting windows by platform.
@@ -28,6 +31,10 @@ class MeetingWindow:
 
 def _enumerate_windows() -> list[tuple[int, str]]:
     """Return (hwnd, title) for all visible windows with non-empty titles."""
+    if win32gui is None:
+        raise RuntimeError(
+            "win32gui is required for meeting window detection on Windows.",
+        )
     results: list[tuple[int, str]] = []
 
     def _callback(hwnd: int, _: object) -> None:

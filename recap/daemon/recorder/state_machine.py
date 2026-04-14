@@ -52,6 +52,13 @@ class RecorderStateMachine:
         """Which org this recording is for, or None when IDLE."""
         return self._current_org
 
+    def set_on_state_change(
+        self,
+        callback: Callable[[RecorderState, RecorderState], None] | None,
+    ) -> None:
+        """Update the state-change callback without replacing the state machine."""
+        self._on_state_change = callback
+
     def _transition(self, new_state: RecorderState) -> None:
         old = self._state
         self._state = new_state
@@ -102,5 +109,13 @@ class RecorderStateMachine:
     def decline(self) -> None:
         """DETECTED -> IDLE. Clears current_org."""
         self._require(RecorderState.DETECTED, action="decline")
+        self._current_org = None
+        self._transition(RecorderState.IDLE)
+
+    def reset(self) -> None:
+        """Return to IDLE from any non-idle state, clearing current_org."""
+        if self._state == RecorderState.IDLE:
+            self._current_org = None
+            return
         self._current_org = None
         self._transition(RecorderState.IDLE)

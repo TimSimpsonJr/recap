@@ -6,6 +6,7 @@ import subprocess
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+FFMPEG_TIMEOUT_SECONDS = 300
 
 
 def convert_flac_to_aac(flac_path: Path, bitrate: str = "64k") -> Path:
@@ -34,7 +35,17 @@ def convert_flac_to_aac(flac_path: Path, bitrate: str = "64k") -> Path:
     ]
 
     logger.info("Converting %s to AAC (%s)", flac_path.name, bitrate)
-    result = subprocess.run(cmd, capture_output=True, text=True)
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=FFMPEG_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"ffmpeg conversion timed out after {FFMPEG_TIMEOUT_SECONDS}s",
+        ) from exc
 
     if result.returncode != 0:
         raise RuntimeError(f"ffmpeg conversion failed: {result.stderr}")

@@ -10,13 +10,68 @@ import threading
 from pathlib import Path
 from typing import Any
 
-import numpy as np
-import pyaudiowpatch as pyaudio
-import pyflac
+try:
+    import numpy as np
+except Exception:  # pragma: no cover - depends on local env
+    np = None  # type: ignore[assignment]
+
+try:
+    import pyaudiowpatch as pyaudio
+except Exception:  # pragma: no cover - depends on local env
+    pyaudio = None  # type: ignore[assignment]
+
+try:
+    import pyflac
+except Exception:  # pragma: no cover - depends on local env
+    pyflac = None  # type: ignore[assignment]
 
 
 class AudioDeviceError(Exception):
     """Raised when no suitable audio device is found."""
+
+
+def _require_audio_runtime() -> tuple[Any, Any]:
+    global pyaudio, pyflac
+    return _require_pyaudio(), _require_pyflac()
+
+
+def _require_pyaudio() -> Any:
+    global pyaudio
+    if pyaudio is None:
+        try:
+            import pyaudiowpatch as imported_pyaudio
+        except Exception as exc:  # pragma: no cover - depends on local env
+            raise RuntimeError(
+                "PyAudioWPatch is required for recording audio. Install the daemon extras.",
+            ) from exc
+        pyaudio = imported_pyaudio
+    return pyaudio
+
+
+def _require_pyflac() -> Any:
+    global pyflac
+    if pyflac is None:
+        try:
+            import pyflac as imported_pyflac
+        except Exception as exc:  # pragma: no cover - depends on local env
+            raise RuntimeError(
+                "pyflac is required for FLAC recording. Install the daemon extras.",
+            ) from exc
+        pyflac = imported_pyflac
+    return pyflac
+
+
+def _require_numpy() -> Any:
+    global np
+    if np is None:
+        try:
+            import numpy as imported_np
+        except Exception as exc:  # pragma: no cover - depends on local env
+            raise RuntimeError(
+                "numpy is required for audio processing. Install the daemon extras.",
+            ) from exc
+        np = imported_np
+    return np
 
 
 def find_loopback_device() -> dict[str, Any]:
@@ -28,9 +83,10 @@ def find_loopback_device() -> dict[str, Any]:
     Raises:
         AudioDeviceError: If no WASAPI loopback device is available.
     """
-    p = pyaudio.PyAudio()
+    runtime_pyaudio = _require_pyaudio()
+    p = runtime_pyaudio.PyAudio()
     try:
-        p.get_host_api_info_by_type(pyaudio.paWASAPI)
+        p.get_host_api_info_by_type(runtime_pyaudio.paWASAPI)
         return p.get_default_wasapi_loopback()
     except OSError as exc:
         raise AudioDeviceError(f"No WASAPI loopback device found: {exc}") from exc
@@ -47,9 +103,10 @@ def find_microphone_device() -> dict[str, Any]:
     Raises:
         AudioDeviceError: If no WASAPI microphone device is available.
     """
-    p = pyaudio.PyAudio()
+    runtime_pyaudio = _require_pyaudio()
+    p = runtime_pyaudio.PyAudio()
     try:
-        p.get_host_api_info_by_type(pyaudio.paWASAPI)
+        p.get_host_api_info_by_type(runtime_pyaudio.paWASAPI)
         device = p.get_default_wasapi_device("input")
         if device.get("maxInputChannels", 0) < 1:
             raise AudioDeviceError(
@@ -84,10 +141,10 @@ class AudioCapture:
         self._lock = threading.Lock()
 
         # Initialized on start()
-        self._pa: pyaudio.PyAudio | None = None
+        self._pa: Any = None
         self._mic_stream: Any = None
         self._loopback_stream: Any = None
-        self._encoder: pyflac.StreamEncoder | None = None
+        self._encoder: Any = None
         self._output_file: Any = None
         self._mic_buffer: bytes = b""
         self._loopback_buffer: bytes = b""
@@ -120,9 +177,10 @@ class AudioCapture:
 
     def _compute_rms(self, samples: np.ndarray) -> float:
         """Compute RMS level from audio samples."""
+        numpy = _require_numpy()
         if samples.size == 0:
             return 0.0
-        rms = np.sqrt(np.mean(samples.astype(np.float64) ** 2))
+        rms = numpy.sqrt(numpy.mean(samples.astype(numpy.float64) ** 2))
         # Normalize int16 range to 0.0-1.0
         return float(rms / 32768.0)
 
@@ -132,6 +190,7 @@ class AudioCapture:
         Channel layout: [mic_sample, loopback_sample] per frame.
         Both sources are mono int16; output is stereo int16.
         """
+        numpy = _require_numpy()
         bytes_needed = chunk_frames * 2  # 2 bytes per int16 sample
 
         with self._lock:
@@ -146,11 +205,11 @@ class AudioCapture:
         if len(lb_data) < bytes_needed:
             lb_data += b"\x00" * (bytes_needed - len(lb_data))
 
-        mic_samples = np.frombuffer(mic_data, dtype=np.int16)
-        lb_samples = np.frombuffer(lb_data, dtype=np.int16)
+        mic_samples = numpy.frombuffer(mic_data, dtype=numpy.int16)
+        lb_samples = numpy.frombuffer(lb_data, dtype=numpy.int16)
 
         # Interleave: [mic0, lb0, mic1, lb1, ...]
-        interleaved = np.empty(chunk_frames * 2, dtype=np.int16)
+        interleaved = numpy.empty(chunk_frames * 2, dtype=numpy.int16)
         interleaved[0::2] = mic_samples[:chunk_frames]
         interleaved[1::2] = lb_samples[:chunk_frames]
 
@@ -164,15 +223,17 @@ class AudioCapture:
 
     def _mic_callback(self, in_data: bytes, frame_count: int, time_info: dict, status: int) -> tuple[None, int]:
         """PyAudioWPatch callback for microphone stream."""
+        runtime_pyaudio = _require_pyaudio()
         with self._lock:
             self._mic_buffer += in_data
-        return (None, pyaudio.paContinue)
+        return (None, runtime_pyaudio.paContinue)
 
     def _loopback_callback(self, in_data: bytes, frame_count: int, time_info: dict, status: int) -> tuple[None, int]:
         """PyAudioWPatch callback for loopback stream."""
+        runtime_pyaudio = _require_pyaudio()
         with self._lock:
             self._loopback_buffer += in_data
-        return (None, pyaudio.paContinue)
+        return (None, runtime_pyaudio.paContinue)
 
     def start(self) -> None:
         """Open audio streams and begin recording to FLAC.
@@ -184,15 +245,17 @@ class AudioCapture:
         if self._recording:
             return
 
+        runtime_pyaudio = _require_pyaudio()
+        runtime_pyflac = _require_pyflac()
         self._output_file = open(self._output_path, "wb")
 
-        self._encoder = pyflac.StreamEncoder(
+        self._encoder = runtime_pyflac.StreamEncoder(
             write_callback=self._write_callback,
             sample_rate=self._sample_rate,
             channels=self._channels,
         )
 
-        self._pa = pyaudio.PyAudio()
+        self._pa = runtime_pyaudio.PyAudio()
 
         # Find devices
         loopback_info = self._pa.get_default_wasapi_loopback()
@@ -202,7 +265,7 @@ class AudioCapture:
 
         # Open loopback stream (system audio)
         self._loopback_stream = self._pa.open(
-            format=pyaudio.paInt16,
+            format=runtime_pyaudio.paInt16,
             channels=1,
             rate=self._sample_rate,
             input=True,
@@ -213,7 +276,7 @@ class AudioCapture:
 
         # Open microphone stream
         self._mic_stream = self._pa.open(
-            format=pyaudio.paInt16,
+            format=runtime_pyaudio.paInt16,
             channels=1,
             rate=self._sample_rate,
             input=True,

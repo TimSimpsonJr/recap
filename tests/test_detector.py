@@ -62,7 +62,11 @@ class TestMeetingDetector:
             with patch("recap.daemon.recorder.detector.enrich_meeting_metadata", return_value={"title": "Sprint", "participants": [], "platform": "teams"}):
                 await detector._poll_once()
 
-        mock_recorder.start.assert_called_once_with("disbursecloud")
+        mock_recorder.start.assert_called_once()
+        args, kwargs = mock_recorder.start.call_args
+        assert args == ("disbursecloud",)
+        assert kwargs["detected"] is True
+        assert kwargs["metadata"].title == "Sprint"
 
     @pytest.mark.asyncio
     async def test_prompt_behavior_calls_callback(self, mock_config):

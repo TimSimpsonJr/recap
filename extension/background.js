@@ -1,6 +1,4 @@
-const RECAP_PORT_START = 17839;
-const RECAP_PORT_END = 17845;
-const HEALTH_CHECK_INTERVAL_MS = 30000;
+const RECAP_PORT = 9847;
 
 const DEFAULT_MEETING_PATTERNS = [
   { pattern: "meet.google.com/", platform: "google_meet", excludeExact: "meet.google.com/" },
@@ -16,24 +14,23 @@ let recapPort = null;
 let activeMeetingTabs = new Map();
 
 async function findRecapPort() {
-  for (let port = RECAP_PORT_START; port <= RECAP_PORT_END; port++) {
-    try {
-      const resp = await fetch(`http://localhost:${port}/health`, {
-        signal: AbortSignal.timeout(1000),
-      });
-      if (resp.ok) {
-        recapPort = port;
-        chrome.action.setBadgeBackgroundColor({ color: "#4baa55" });
-        chrome.action.setBadgeText({ text: "ON" });
-        chrome.action.setTitle({ title: "Recap — Connected" });
-        return port;
-      }
-    } catch (_) {}
-  }
+  try {
+    const resp = await fetch(`http://localhost:${RECAP_PORT}/health`, {
+      signal: AbortSignal.timeout(1000),
+    });
+    if (resp.ok) {
+      recapPort = RECAP_PORT;
+      chrome.action.setBadgeBackgroundColor({ color: "#4baa55" });
+      chrome.action.setBadgeText({ text: "ON" });
+      chrome.action.setTitle({ title: "Recap - Connected" });
+      return recapPort;
+    }
+  } catch (_) {}
+
   recapPort = null;
   chrome.action.setBadgeBackgroundColor({ color: "#7a8493" });
   chrome.action.setBadgeText({ text: "" });
-  chrome.action.setTitle({ title: "Recap — Not connected" });
+  chrome.action.setTitle({ title: "Recap - Not connected" });
   return null;
 }
 
@@ -95,7 +92,7 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
   }
 });
 
-// Use chrome.alarms instead of setInterval — MV3 service workers get terminated
+// Use chrome.alarms instead of setInterval - MV3 service workers get terminated
 // after 30s of inactivity, so setInterval doesn't survive.
 chrome.alarms.create("recap-health-check", { periodInMinutes: 0.5 });
 chrome.alarms.onAlarm.addListener((alarm) => {

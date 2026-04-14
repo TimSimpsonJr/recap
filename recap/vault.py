@@ -8,6 +8,7 @@ from datetime import date
 
 import yaml
 
+from recap.artifacts import safe_note_title
 from recap.models import (
     AnalysisResult,
     MeetingMetadata,
@@ -184,9 +185,13 @@ def write_meeting_note(
     org: str | None = None,
     previous_meeting: str | None = None,
     user_name: str | None = None,
+    note_path: pathlib.Path | None = None,
 ) -> pathlib.Path | None:
-    filename = f"{metadata.date.isoformat()} - {metadata.title}.md"
-    note_path = meetings_dir / filename
+    if note_path is None:
+        filename = f"{metadata.date.isoformat()} - {safe_note_title(metadata.title)}.md"
+        note_path = meetings_dir / filename
+    else:
+        note_path.parent.mkdir(parents=True, exist_ok=True)
 
     if note_path.exists():
         content = note_path.read_text(encoding="utf-8")
@@ -284,7 +289,7 @@ def write_profile_stubs(
     created = []
 
     for person in analysis.people:
-        path = people_dir / f"{person.name}.md"
+        path = people_dir / f"{safe_note_title(person.name)}.md"
         if path.exists():
             logger.debug("Person profile exists, skipping: %s", person.name)
             continue
@@ -293,7 +298,7 @@ def write_profile_stubs(
         created.append(person.name)
 
     for company in analysis.companies:
-        path = companies_dir / f"{company.name}.md"
+        path = companies_dir / f"{safe_note_title(company.name)}.md"
         if path.exists():
             logger.debug("Company profile exists, skipping: %s", company.name)
             continue

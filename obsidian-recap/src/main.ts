@@ -30,7 +30,18 @@ export default class RecapPlugin extends Plugin {
 
         // Register views
         this.registerView(VIEW_MEETING_LIST, (leaf) => new MeetingListView(leaf));
-        this.registerView(VIEW_LIVE_TRANSCRIPT, (leaf) => new LiveTranscriptView(leaf));
+        this.registerView(
+            VIEW_LIVE_TRANSCRIPT,
+            (leaf) => new LiveTranscriptView(leaf, async () => {
+                if (!this.client) return null;
+                try {
+                    const status = await this.client.getStatus();
+                    return status.state;
+                } catch {
+                    return null;
+                }
+            }),
+        );
 
         // Read auth token from vault
         const token = await this.readAuthToken();
@@ -275,7 +286,10 @@ export default class RecapPlugin extends Plugin {
                 const status = await this.client!.getStatus();
                 this.lastKnownState = status.state;
                 this.statusBar?.updateState(status.state, status.recording?.org);
-            } catch { /* will retry on next reconnect */ }
+            } catch {
+                this.statusBar?.setOffline();
+                new Notice("Recap: Reconnected, but daemon status refresh failed");
+            }
         });
 
         // Bug 3: Wire state_change to notifications using actual daemon events
@@ -315,12 +329,16 @@ export default class RecapPlugin extends Plugin {
 
         // Wire error events
         this.client.on("error", (event) => {
-            this.notificationHistory.add("error", "Daemon Error", (event.message as string) || "Unknown error");
+            const message = (event.message as string) || "Unknown error";
+            this.notificationHistory.add("error", "Daemon Error", message);
+            new Notice(`Recap error: ${message}`, 8000);
         });
 
         // Wire silence_warning events
         this.client.on("silence_warning", (event) => {
-            this.notificationHistory.add("warning", "Silence Detected", (event.message as string) || "Extended silence during recording");
+            const message = (event.message as string) || "Extended silence during recording";
+            this.notificationHistory.add("warning", "Silence Detected", message);
+            new Notice(`Recap: ${message}`, 8000);
         });
 
         // Wire rename_queued events to trigger rename processing

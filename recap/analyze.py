@@ -14,6 +14,7 @@ logger = logging.getLogger(__name__)
 
 RETRY_DELAYS = [2, 8]
 MAX_RETRIES = 3
+ANALYSIS_TIMEOUT_SECONDS = 300
 
 
 def _build_prompt(
@@ -94,12 +95,18 @@ def analyze(
             "Running %s analysis (attempt %d/%d)", label, attempt + 1, MAX_RETRIES
         )
         cmd = _build_command(backend, claude_command, claude_model, ollama_model)
-        result = subprocess.run(
-            cmd,
-            input=prompt,
-            capture_output=True,
-            text=True,
-        )
+        try:
+            result = subprocess.run(
+                cmd,
+                input=prompt,
+                capture_output=True,
+                text=True,
+                timeout=ANALYSIS_TIMEOUT_SECONDS,
+            )
+        except subprocess.TimeoutExpired:
+            last_error = f"{label} timed out after {ANALYSIS_TIMEOUT_SECONDS}s"
+            logger.warning(last_error)
+            continue
 
         if result.returncode != 0:
             last_error = result.stderr[:200] if result.stderr else "unknown error"

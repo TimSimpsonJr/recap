@@ -8,11 +8,12 @@ import pathlib
 import signal
 import sys
 import threading
-from datetime import date
+from datetime import datetime
 from pathlib import Path
 
 from aiohttp import web
 
+from recap.artifacts import RecordingMetadata, load_recording_metadata
 from recap.daemon.auth import ensure_auth_token
 from recap.daemon.calendar.scheduler import CalendarSyncScheduler
 from recap.daemon.config import DaemonConfig, load_daemon_config
@@ -25,7 +26,7 @@ from recap.daemon.recorder.signal_popup import show_signal_popup
 from recap.daemon.server import broadcast, create_app
 from recap.daemon.startup import validate_startup
 from recap.daemon.tray import RecapTray
-from recap.models import MeetingMetadata
+from recap.models import MeetingMetadata, Participant
 from recap.pipeline import PipelineConfig as PipelineCfg, run_pipeline
 
 logger = logging.getLogger("recap.daemon")
@@ -49,7 +50,11 @@ def _build_pipeline_config(config: DaemonConfig, org_config) -> PipelineCfg:
     )
 
 
-def _make_process_recording(config: DaemonConfig, recorder: Recorder):
+def _make_process_recording(
+    config: DaemonConfig,
+    recorder: Recorder,
+    emit_event,
+):
     """Create the async process_recording coroutine bound to daemon state."""
 
     async def process_recording(
@@ -66,19 +71,25 @@ def _make_process_recording(config: DaemonConfig, recorder: Recorder):
             if org_config is None:
                 raise ValueError(f"No org config found for '{org}'")
 
-            metadata = MeetingMetadata(
-                title=flac_path.stem,
-                date=date.today(),
-                participants=[],
-                platform="unknown",
-            )
+            recording_metadata = load_recording_metadata(flac_path)
+            if recording_metadata is None:
+                recording_metadata = RecordingMetadata(
+                    org=org,
+                    note_path="",
+                    title=flac_path.stem,
+                    date=datetime.now().date().isoformat(),
+                    participants=[],
+                    platform="unknown",
+                )
+            metadata = recording_metadata.to_meeting_metadata()
             pipeline_config = _build_pipeline_config(config, org_config)
 
             # Pass the streaming transcript (if available) so the pipeline
             # can skip batch transcription + diarization when streaming succeeded.
             streaming_transcript = recorder.streaming_result
 
-            note_path = run_pipeline(
+            note_path = await asyncio.to_thread(
+                run_pipeline,
                 audio_path=flac_path,
                 metadata=metadata,
                 config=pipeline_config,
@@ -87,6 +98,7 @@ def _make_process_recording(config: DaemonConfig, recorder: Recorder):
                 user_name=config.user_name,
                 streaming_transcript=streaming_transcript,
                 from_stage=from_stage,
+                recording_metadata=recording_metadata,
             )
             recorder.state_machine.processing_complete()
             notify("Recap", f"Meeting processed: {note_path.stem}")
@@ -94,10 +106,21 @@ def _make_process_recording(config: DaemonConfig, recorder: Recorder):
             # Ensure state machine returns to idle even on failure
             try:
                 recorder.state_machine.processing_complete()
-            except Exception as e:
-                logger.error("Failed to reset state machine after pipeline failure: %s", e)
+            except Exception as reset_error:
+                logger.error(
+                    "Failed to reset state machine after pipeline failure: %s",
+                    reset_error,
+                )
             logger.error("Pipeline failed: %s", e)
             notify("Recap", f"Pipeline failed: {e}")
+            if emit_event is not None:
+                await emit_event({
+                    "event": "error",
+                    "scope": "pipeline",
+                    "message": str(e),
+                    "stage": from_stage or "full",
+                    "recording_path": str(flac_path),
+                })
 
     return process_recording
 
@@ -160,6 +183,12 @@ def main() -> None:
     # callbacks (tray, recorder).  We capture it after web.run_app starts,
     # but stash it in a mutable container so closures can reference it.
     _loop_holder: list[asyncio.AbstractEventLoop | None] = [None]
+    _app_holder: list[web.Application | None] = [None]
+
+    async def _emit_event(message: dict) -> None:
+        app_ = _app_holder[0]
+        if app_ is not None:
+            await broadcast(app_, message)
 
     # Create recorder
     recorder = Recorder(
@@ -169,7 +198,7 @@ def main() -> None:
     )
 
     # Build the pipeline trigger
-    process_recording = _make_process_recording(config, recorder)
+    process_recording = _make_process_recording(config, recorder, _emit_event)
 
     # Wire recording-stopped callback: spawn pipeline in the event loop
     def _on_recording_stopped(flac_path: Path, org: str) -> None:
@@ -187,15 +216,9 @@ def main() -> None:
     recorder.on_recording_stopped = _on_recording_stopped
 
     # Wire silence/duration callbacks to notifications
-    recorder.on_silence_detected = lambda: notify(
-        "Recap", "No audio for 5 minutes. Still in a meeting?",
-    )
-    recorder.on_max_duration_warning = lambda: notify(
-        "Recap", "Recording for 3+ hours. Still going?",
-    )
-    recorder.on_max_duration_reached = lambda: notify(
-        "Recap", "Max recording duration reached. Stopping.",
-    )
+    recorder.on_silence_detected = None
+    recorder.on_max_duration_warning = None
+    recorder.on_max_duration_reached = None
 
     # Signal popup callback — runs when the detector sees a Signal call
     def on_signal_detected(meeting_window, enriched_metadata):
@@ -214,8 +237,19 @@ def main() -> None:
             )
             loop = _loop_holder[0]
             if loop is not None and loop.is_running():
+                metadata = RecordingMetadata(
+                    org=result["org"],
+                    note_path="",
+                    title=enriched_metadata.get("title", meeting_window.title),
+                    date=datetime.now().date().isoformat(),
+                    participants=[
+                        Participant(name=name)
+                        for name in enriched_metadata.get("participants", [])
+                    ],
+                    platform=enriched_metadata.get("platform", meeting_window.platform),
+                )
                 asyncio.run_coroutine_threadsafe(
-                    recorder.start(result["org"]), loop,
+                    recorder.start(result["org"], metadata=metadata, detected=True), loop,
                 )
         else:
             logger.info("Signal recording declined")
@@ -232,6 +266,10 @@ def main() -> None:
         config=config,
         vault_path=config.vault_path,
         detector=detector,
+        on_rename_queued=lambda count: _emit_event({
+            "event": "rename_queued",
+            "count": count,
+        }),
     )
 
     # Create HTTP app (pass recorder, detector, scheduler so endpoints can use them)
@@ -243,6 +281,7 @@ def main() -> None:
         config=config,
         scheduler=calendar_scheduler,
     )
+    _app_holder[0] = app
 
     # Wire streaming segment callback: bridge from audio thread to async
     # event loop for WebSocket broadcast of live transcript segments.
@@ -269,6 +308,11 @@ def main() -> None:
         except Exception as e:
             logger.error("Async callback failed: %s", e)
             notify("Recap Error", str(e))
+            _run_async(_emit_event({
+                "event": "error",
+                "scope": "async_callback",
+                "message": str(e),
+            }))
 
     def _run_async(coro):
         """Schedule an async coroutine from any thread."""
@@ -276,6 +320,20 @@ def main() -> None:
         if loop is not None and loop.is_running():
             future = asyncio.run_coroutine_threadsafe(coro, loop)
             future.add_done_callback(_handle_async_error)
+
+    recorder.on_silence_detected = lambda: (
+        notify("Recap", "No audio for 5 minutes. Still in a meeting?"),
+        _run_async(_emit_event({
+            "event": "silence_warning",
+            "message": "No audio for 5 minutes. Still in a meeting?",
+        })),
+    )
+    recorder.on_max_duration_warning = lambda: notify(
+        "Recap", "Recording for 3+ hours. Still going?",
+    )
+    recorder.on_max_duration_reached = lambda: notify(
+        "Recap", "Max recording duration reached. Stopping.",
+    )
 
     # Wire state changes to tray updates + WebSocket broadcasts
     def on_state_change(old, new):
@@ -291,9 +349,7 @@ def main() -> None:
             })
         )
 
-    # Replace state machine with one that has our callback
-    from recap.daemon.recorder.state_machine import RecorderStateMachine
-    recorder.state_machine = RecorderStateMachine(on_state_change=on_state_change)
+    recorder.set_on_state_change(on_state_change)
 
     # Setup tray — wire menu items to recorder
     org_names = [org.name for org in config.orgs]

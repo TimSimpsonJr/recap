@@ -9,9 +9,18 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 
+from recap.artifacts import (
+    RecordingMetadata,
+    load_analysis,
+    load_transcript,
+    save_analysis,
+    save_transcript,
+    speakers_path,
+    transcript_path,
+    write_recording_metadata,
+)
 from recap.errors import map_error
 from recap.models import AnalysisResult, MeetingMetadata, TranscriptResult
-from recap.pipeline.diarize import assign_speakers
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +28,7 @@ PIPELINE_STAGES = ["transcribe", "diarize", "analyze", "export", "convert"]
 
 # __file__ is recap/pipeline/__init__.py -> .parent.parent = recap/ -> .parent = project root
 DEFAULT_PROMPT_TEMPLATE = pathlib.Path(__file__).parent.parent.parent / "prompts" / "meeting_analysis.md"
+_FFPROBE_TIMEOUT_SECONDS = 30
 
 
 @dataclass
@@ -138,10 +148,13 @@ def _get_audio_duration(path: pathlib.Path) -> float:
             ],
             capture_output=True,
             text=True,
+            timeout=_FFPROBE_TIMEOUT_SECONDS,
         )
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip() or "ffprobe failed")
         return float(result.stdout.strip())
-    except (ValueError, OSError):
-        logger.warning("Could not determine audio duration, defaulting to 0")
+    except (ValueError, OSError, RuntimeError, subprocess.TimeoutExpired):
+        logger.warning("Could not determine audio duration for %s, defaulting to 0", path)
         return 0.0
 
 
@@ -150,6 +163,25 @@ def _should_skip(stage: str, from_stage: str | None) -> bool:
     if from_stage is None:
         return False
     return PIPELINE_STAGES.index(stage) < PIPELINE_STAGES.index(from_stage)
+
+
+def validate_from_stage(audio_path: pathlib.Path, from_stage: str | None) -> str | None:
+    """Return an error message when the requested restart stage lacks prerequisites."""
+    if from_stage is None:
+        return None
+    if from_stage not in PIPELINE_STAGES:
+        return f"unknown from_stage: {from_stage}"
+    if from_stage in {"diarize", "analyze"} and load_transcript(audio_path) is None:
+        return (
+            f"Cannot reprocess {audio_path.name} from '{from_stage}': "
+            "missing transcript artifact."
+        )
+    if from_stage == "export" and load_analysis(audio_path) is None:
+        return (
+            f"Cannot reprocess {audio_path.name} from 'export': "
+            "missing analysis artifact."
+        )
+    return None
 
 
 def _has_real_speakers(transcript: TranscriptResult) -> bool:
@@ -177,6 +209,27 @@ def _apply_speaker_mapping(
         raw_text=transcript.raw_text,
         language=transcript.language,
     )
+
+
+def _resolve_note_path(
+    metadata: MeetingMetadata,
+    recording_metadata: RecordingMetadata | None,
+    meetings_dir: pathlib.Path,
+) -> pathlib.Path:
+    from recap.artifacts import safe_note_title
+
+    if recording_metadata is not None:
+        if recording_metadata.note_path:
+            return pathlib.Path(recording_metadata.note_path)
+        if recording_metadata.event_id:
+            from recap.daemon.calendar.sync import find_note_by_event_id
+
+            note = find_note_by_event_id(recording_metadata.event_id, meetings_dir)
+            if note is not None:
+                recording_metadata.note_path = str(note)
+                return note
+
+    return meetings_dir / f"{metadata.date.isoformat()} - {safe_note_title(metadata.title)}.md"
 
 
 def _run_with_retry(
@@ -236,6 +289,7 @@ def run_pipeline(
     user_name: str,
     streaming_transcript: TranscriptResult | None = None,
     from_stage: str | None = None,
+    recording_metadata: RecordingMetadata | None = None,
 ) -> pathlib.Path:
     """Run the full processing pipeline and return the path to the meeting note.
 
@@ -264,10 +318,22 @@ def run_pipeline(
     for d in (meetings_dir, people_dir, companies_dir):
         d.mkdir(parents=True, exist_ok=True)
 
-    note_filename = f"{metadata.date.isoformat()} - {metadata.title}.md"
-    note_path = meetings_dir / note_filename
+    prerequisite_error = validate_from_stage(audio_path, from_stage)
+    if prerequisite_error is not None:
+        raise FileNotFoundError(prerequisite_error)
+
+    note_path = _resolve_note_path(metadata, recording_metadata, meetings_dir)
+    note_filename = note_path.name
+    if recording_metadata is not None and str(note_path) != recording_metadata.note_path:
+        recording_metadata.note_path = str(note_path)
+        write_recording_metadata(audio_path, recording_metadata)
 
     transcript: TranscriptResult | None = None
+    recording_reference_path = (
+        audio_path.with_suffix(".m4a")
+        if config.archive_format == "aac"
+        else audio_path
+    )
 
     # ------------------------------------------------------------------
     # Decide whether to use streaming transcript
@@ -284,13 +350,14 @@ def run_pipeline(
             len(streaming_transcript.utterances),
         )
         transcript = streaming_transcript
+        save_transcript(audio_path, transcript)
     else:
         # ------------------------------------------------------------------
         # 1. Transcribe
         # ------------------------------------------------------------------
         if not _should_skip("transcribe", from_stage):
             _stage_started(config, recording_stem, "transcribe")
-            transcript_save = audio_path.with_suffix(".transcript.json")
+            transcript_save = transcript_path(audio_path)
 
             def do_transcribe():
                 return transcribe(
@@ -303,20 +370,11 @@ def run_pipeline(
             transcript = _run_with_retry(
                 do_transcribe, "transcribe", config, recording_stem, note_path,
             )
+            save_transcript(audio_path, transcript)
             _stage_completed(config, recording_stem, "transcribe")
         else:
             # Load from saved transcript if skipping
-            transcript_save = audio_path.with_suffix(".transcript.json")
-            if transcript_save.exists():
-                data = json.loads(transcript_save.read_text())
-                from recap.models import Utterance
-                transcript = TranscriptResult(
-                    utterances=[
-                        Utterance(**u) for u in data["utterances"]
-                    ],
-                    raw_text=data["raw_text"],
-                    language=data["language"],
-                )
+            transcript = load_transcript(audio_path)
 
         # ------------------------------------------------------------------
         # 2. Diarize
@@ -335,17 +393,19 @@ def run_pipeline(
             transcript = _run_with_retry(
                 do_diarize, "diarize", config, recording_stem, note_path,
             )
+            save_transcript(audio_path, transcript)
             _stage_completed(config, recording_stem, "diarize")
 
     # ------------------------------------------------------------------
     # Apply speaker corrections (if a .speakers.json exists)
     # ------------------------------------------------------------------
-    speakers_file = audio_path.with_suffix(".speakers.json")
+    speakers_file = speakers_path(audio_path)
     if transcript is not None and speakers_file.exists():
         try:
             speaker_mapping = json.loads(speakers_file.read_text(encoding="utf-8"))
             if isinstance(speaker_mapping, dict) and speaker_mapping:
                 transcript = _apply_speaker_mapping(transcript, speaker_mapping)
+                save_transcript(audio_path, transcript)
                 logger.info(
                     "Applied speaker mapping from %s (%d entries)",
                     speakers_file, len(speaker_mapping),
@@ -372,7 +432,10 @@ def run_pipeline(
         analysis = _run_with_retry(
             do_analyze, "analyze", config, recording_stem, note_path, is_claude=(config.llm_backend == "claude"),
         )
+        save_analysis(audio_path, analysis)
         _stage_completed(config, recording_stem, "analyze")
+    elif _should_skip("analyze", from_stage):
+        analysis = load_analysis(audio_path)
 
     # ------------------------------------------------------------------
     # 4. Export
@@ -390,11 +453,12 @@ def run_pipeline(
                 metadata=metadata,
                 analysis=analysis,
                 duration_seconds=duration,
-                recording_path=audio_path,
+                recording_path=recording_reference_path,
                 meetings_dir=meetings_dir,
                 org=org_subfolder,
                 previous_meeting=previous,
                 user_name=user_name,
+                note_path=note_path,
             )
             write_profile_stubs(
                 analysis=analysis,
@@ -408,6 +472,10 @@ def run_pipeline(
         )
         if result_note is not None:
             note_path = result_note
+            note_filename = note_path.name
+            if recording_metadata is not None and str(note_path) != recording_metadata.note_path:
+                recording_metadata.note_path = str(note_path)
+                write_recording_metadata(audio_path, recording_metadata)
         _stage_completed(config, recording_stem, "export")
 
     # ------------------------------------------------------------------

@@ -13,9 +13,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
+from recap.artifacts import RecordingMetadata, write_recording_metadata
 from recap.daemon.recorder.audio import AudioCapture
 from recap.daemon.recorder.silence import SilenceDetector
-from recap.daemon.recorder.state_machine import RecorderStateMachine
+from recap.daemon.recorder.state_machine import RecorderState, RecorderStateMachine
 from recap.daemon.streaming.diarizer import StreamingDiarizer
 from recap.daemon.streaming.transcriber import StreamingTranscriber
 from recap.models import TranscriptResult
@@ -53,6 +54,7 @@ class Recorder:
         self._audio_capture: AudioCapture | None = None
         self._silence_detector: SilenceDetector | None = None
         self._current_path: Path | None = None
+        self._current_metadata: RecordingMetadata | None = None
 
         # Async monitoring tasks
         self._silence_task: asyncio.Task | None = None
@@ -89,6 +91,21 @@ class Recorder:
         """Merged streaming transcript, or None if streaming failed or wasn't used."""
         return self._streaming_result
 
+    def set_on_state_change(self, callback: Callable | None) -> None:
+        """Update the recorder state callback without replacing the state machine."""
+        self.state_machine.set_on_state_change(callback)
+
+    def _default_recording_metadata(self, org: str, now: datetime) -> RecordingMetadata:
+        title = f"Meeting {now.strftime('%Y-%m-%d %H:%M')}"
+        return RecordingMetadata(
+            org=org,
+            note_path="",
+            title=title,
+            date=now.date().isoformat(),
+            participants=[],
+            platform="manual",
+        )
+
     def _generate_recording_path(self, org: str) -> Path:
         """Generate a unique recording filename.
 
@@ -118,7 +135,13 @@ class Recorder:
             logger.warning("Could not check disk space for %s", self._recordings_path)
             return False
 
-    async def start(self, org: str) -> Path:
+    async def start(
+        self,
+        org: str,
+        metadata: RecordingMetadata | None = None,
+        *,
+        detected: bool = False,
+    ) -> Path:
         """Start recording audio for the given org.
 
         Creates an AudioCapture instance, a SilenceDetector, transitions
@@ -133,8 +156,10 @@ class Recorder:
         if not self._check_disk_space():
             logger.warning("Low disk space — recording may fail")
 
+        now = datetime.now()
         path = self._generate_recording_path(org)
         self._current_path = path
+        self._current_metadata = metadata or self._default_recording_metadata(org, now)
 
         self._audio_capture = AudioCapture(
             output_path=path,
@@ -149,8 +174,21 @@ class Recorder:
         self._streaming_result = None
         self._start_streaming()
 
-        self.state_machine.start_recording(org)
-        self._audio_capture.start()
+        try:
+            if detected and self.state_machine.state in {
+                RecorderState.IDLE,
+                RecorderState.ARMED,
+            }:
+                self.state_machine.detected(org)
+            self.state_machine.start_recording(org)
+            write_recording_metadata(path, self._current_metadata)
+            self._audio_capture.start()
+        except Exception:
+            self._streaming_result = None
+            self._current_path = None
+            self._current_metadata = None
+            self.state_machine.reset()
+            raise
 
         # Start async monitoring tasks
         self._silence_task = asyncio.create_task(self._monitor_silence())
@@ -207,6 +245,8 @@ class Recorder:
         self.state_machine.stop_recording()
 
         logger.info("Recording stopped: %s", path)
+        self._current_path = None
+        self._current_metadata = None
 
         # Notify listener (e.g., pipeline trigger in __main__.py)
         if self.on_recording_stopped is not None and path is not None:

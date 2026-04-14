@@ -6,6 +6,7 @@ import logging
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
+from collections.abc import Awaitable, Callable
 
 from recap.daemon.calendar.sync import (
     CalendarEvent,
@@ -46,10 +47,12 @@ class CalendarSyncScheduler:
         config: DaemonConfig,
         vault_path: Path,
         detector: MeetingDetector | None = None,
+        on_rename_queued: Callable[[int], Awaitable[None] | None] | None = None,
     ) -> None:
         self._config = config
         self._vault_path = vault_path
         self._detector = detector
+        self._on_rename_queued = on_rename_queued
         self._task: asyncio.Task[None] | None = None
         self._last_sync: datetime | None = None
         self._failure_start: dict[str, datetime] = {}
@@ -95,6 +98,7 @@ class CalendarSyncScheduler:
 
         synced = 0
         armed = 0
+        queued_renames = 0
         rename_queue_path = self._vault_path / "_Recap" / ".recap" / "rename-queue.json"
 
         for event in all_events:
@@ -115,11 +119,12 @@ class CalendarSyncScheduler:
                     meetings_dir = self._vault_path / subfolder / "Meetings"
                     note = find_note_by_event_id(event.event_id, meetings_dir)
                     if note is not None:
-                        update_calendar_note(
+                        queued_renames += update_calendar_note(
                             note,
                             new_time=event.time,
                             new_participants=event.participants,
                             rename_queue_path=rename_queue_path,
+                            vault_path=self._vault_path,
                         )
                         synced += 1
             except Exception:
@@ -147,9 +152,16 @@ class CalendarSyncScheduler:
                     )
 
         self._last_sync = datetime.now()
+        if queued_renames > 0 and self._on_rename_queued is not None:
+            try:
+                maybe_awaitable = self._on_rename_queued(queued_renames)
+                if asyncio.iscoroutine(maybe_awaitable):
+                    await maybe_awaitable
+            except Exception:
+                logger.exception("Failed to publish rename queue notification")
         logger.info(
-            "Calendar sync complete: %d events synced, %d armed",
-            synced, armed,
+            "Calendar sync complete: %d events synced, %d armed, %d renames queued",
+            synced, armed, queued_renames,
         )
 
     async def _sync_provider(self, provider: str) -> list[CalendarEvent]:

@@ -216,6 +216,11 @@ async def _reprocess(request: web.Request) -> web.Response:
 
     from_stage = body.get("from_stage")
     org = body.get("org", "")
+    from recap.pipeline import validate_from_stage
+
+    validation_error = validate_from_stage(Path(recording_path), from_stage)
+    if validation_error is not None:
+        return web.json_response({"error": validation_error}, status=400)
 
     asyncio.create_task(trigger(Path(recording_path), org, from_stage))
     return web.json_response({"status": "processing"})
@@ -248,9 +253,16 @@ async def _speakers(request: web.Request) -> web.Response:
             {"error": "missing or invalid 'mapping' field"}, status=400
         )
 
+    from recap.artifacts import speakers_path
+    from recap.pipeline import validate_from_stage
+
     # Save speaker mapping alongside the recording
     rec_path = Path(recording_path)
-    speakers_file = rec_path.with_suffix(".speakers.json")
+    validation_error = validate_from_stage(rec_path, "analyze")
+    if validation_error is not None:
+        return web.json_response({"error": validation_error}, status=400)
+
+    speakers_file = speakers_path(rec_path)
     speakers_file.write_text(json.dumps(mapping, indent=2))
     logger.info("Speaker mapping saved: %s", speakers_file)
 
@@ -435,6 +447,61 @@ async def _websocket_handler(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
+async def _meeting_detected_live(request: web.Request) -> web.Response:
+    """Live browser-extension hook for auto-starting a recording."""
+    detector: MeetingDetector | None = request.app.get(_DETECTOR_KEY)
+    if detector is None:
+        return web.json_response({"error": "detector not available"}, status=503)
+
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return web.json_response({"error": "invalid JSON body"}, status=400)
+    except Exception as e:
+        logger.error("Unexpected error in _meeting_detected_live: %s", e, exc_info=True)
+        return web.json_response({"error": "internal server error"}, status=500)
+
+    platform = body.get("platform")
+    url = body.get("url")
+    if not platform or not url:
+        return web.json_response(
+            {"error": "missing required fields: platform, url"},
+            status=400,
+        )
+
+    started = await detector.handle_extension_meeting_detected(
+        platform=str(platform),
+        url=str(url),
+        title=str(body.get("title") or "Meeting"),
+        tab_id=body.get("tabId"),
+    )
+    return web.json_response({
+        "status": "recording_started" if started else "ignored",
+    })
+
+
+async def _meeting_ended_live(request: web.Request) -> web.Response:
+    """Live browser-extension hook for auto-stopping a recording."""
+    detector: MeetingDetector | None = request.app.get(_DETECTOR_KEY)
+    if detector is None:
+        return web.json_response({"error": "detector not available"}, status=503)
+
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return web.json_response({"error": "invalid JSON body"}, status=400)
+    except Exception as e:
+        logger.error("Unexpected error in _meeting_ended_live: %s", e, exc_info=True)
+        return web.json_response({"error": "internal server error"}, status=500)
+
+    stopped = await detector.handle_extension_meeting_ended(
+        tab_id=body.get("tabId"),
+    )
+    return web.json_response({
+        "status": "recording_stopped" if stopped else "ignored",
+    })
+
+
 def _auth_middleware(auth_token: str):
     """Return middleware that enforces Bearer token auth on /api/* routes.
 
@@ -483,8 +550,8 @@ def create_app(
         app[_SCHEDULER_KEY] = scheduler
 
     app.router.add_get("/health", _health)
-    app.router.add_post("/meeting-detected", _meeting_detected)
-    app.router.add_post("/meeting-ended", _meeting_ended)
+    app.router.add_post("/meeting-detected", _meeting_detected_live)
+    app.router.add_post("/meeting-ended", _meeting_ended_live)
     app.router.add_get("/api/status", _api_status)
     app.router.add_post("/api/record/start", _record_start)
     app.router.add_post("/api/record/stop", _record_stop)

@@ -51,6 +51,15 @@ def _parse_frontmatter(content: str) -> dict | None:
         return None
 
 
+def _to_vault_relative(path: Path, vault_path: Path | None) -> str:
+    if vault_path is None:
+        return str(path)
+    try:
+        return path.relative_to(vault_path).as_posix()
+    except ValueError:
+        return str(path)
+
+
 def write_calendar_note(event: CalendarEvent, vault_path: Path) -> Path:
     """Write a calendar event as a vault note. Returns the note path."""
     subfolder = org_subfolder(event.org)
@@ -147,7 +156,8 @@ def update_calendar_note(
     new_time: str | None = None,
     new_participants: list[str] | None = None,
     rename_queue_path: Path | None = None,
-) -> None:
+    vault_path: Path | None = None,
+) -> int:
     """Update time and/or participants in frontmatter only.
 
     If the date portion of time changed, updates the frontmatter date and
@@ -157,18 +167,19 @@ def update_calendar_note(
     normalized = content.replace("\r\n", "\n")
     parts = normalized.split("---\n", 2)
     if len(parts) < 3:
-        return
+        return 0
 
     try:
         fm = yaml.safe_load(parts[1])
     except yaml.YAMLError as e:
         logger.warning("Failed to parse frontmatter: %s", e)
-        return
+        return 0
 
     if fm is None:
-        return
+        return 0
 
     old_date = fm.get("date", "")
+    queued_renames = 0
 
     if new_time is not None:
         fm["time"] = new_time
@@ -195,16 +206,20 @@ def update_calendar_note(
                             logger.warning("Could not parse rename queue %s: %s", rename_queue_path, e)
                             queue = []
                     queue.append(
-                        {"old_path": str(note_path), "new_path": str(new_path)}
+                        {
+                            "old_path": _to_vault_relative(note_path, vault_path),
+                            "new_path": _to_vault_relative(new_path, vault_path),
+                        }
                     )
                     rename_queue_path.parent.mkdir(parents=True, exist_ok=True)
                     rename_queue_path.write_text(
                         json.dumps(queue, indent=2),
                         encoding="utf-8",
                     )
+                    queued_renames += 1
 
     if new_participants is not None:
-        fm["participants"] = new_participants
+        fm["participants"] = [f"[[{name}]]" for name in new_participants]
 
     # Reconstruct file: frontmatter + body below
     body = parts[2]
@@ -212,3 +227,4 @@ def update_calendar_note(
     new_content = f"---\n{new_fm}\n---\n{body}"
     note_path.write_text(new_content, encoding="utf-8")
     logger.info("Updated calendar note: %s", note_path)
+    return queued_renames

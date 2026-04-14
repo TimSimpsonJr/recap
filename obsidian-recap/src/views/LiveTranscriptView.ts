@@ -5,9 +5,11 @@ export const VIEW_LIVE_TRANSCRIPT = "recap-live-transcript";
 export class LiveTranscriptView extends ItemView {
     private transcriptEl: HTMLElement | null = null;
     private statusEl: HTMLElement | null = null;
+    private getStatus: (() => Promise<string | null>) | null;
 
-    constructor(leaf: WorkspaceLeaf) {
+    constructor(leaf: WorkspaceLeaf, getStatus?: () => Promise<string | null>) {
         super(leaf);
+        this.getStatus = getStatus ?? null;
     }
 
     getViewType(): string { return VIEW_LIVE_TRANSCRIPT; }
@@ -22,7 +24,12 @@ export class LiveTranscriptView extends ItemView {
         this.statusEl = container.createDiv({ cls: "recap-live-status" });
         this.transcriptEl = container.createDiv({ cls: "recap-live-transcript" });
 
-        this.updateStatus("idle");
+        if (this.getStatus) {
+            const currentState = await this.getStatus();
+            this.updateStatus(currentState ?? "idle");
+        } else {
+            this.updateStatus("idle");
+        }
     }
 
     updateStatus(state: string): void {
