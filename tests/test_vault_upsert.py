@@ -131,6 +131,77 @@ class TestUpsertCase3CalendarSeeded:
         assert "Great meeting." in rest[marker_idx:]
 
 
+class TestUpsertCase5MarkerWithoutFrontmatter:
+    def test_prepends_frontmatter_and_replaces_below_marker(self, tmp_path: pathlib.Path):
+        """Marker present, no frontmatter: prepend canonical FM, replace below marker."""
+        note_path = tmp_path / "marker-no-fm.md"
+        note_path.write_text(
+            "## Meeting Record\n\n## Summary\n\nStale.\n",
+            encoding="utf-8",
+        )
+
+        canonical = {
+            "date": "2026-04-14",
+            "title": "Legacy Meeting",
+            "org": "disbursecloud",
+            "org-subfolder": "Clients/Disbursecloud",
+            "platform": "manual",
+            "pipeline-status": "complete",
+        }
+        body = "## Summary\n\nFresh content.\n"
+
+        upsert_note(note_path, canonical, body)
+
+        content = note_path.read_text(encoding="utf-8")
+        assert content.startswith("---\n")
+        _, fm_block, rest = content.split("---\n", 2)
+        fm = yaml.safe_load(fm_block)
+
+        # Canonical frontmatter present
+        assert fm["title"] == "Legacy Meeting"
+        assert fm["org"] == "disbursecloud"
+        assert fm["pipeline-status"] == "complete"
+
+        # Marker + fresh body, stale content gone
+        assert MEETING_RECORD_MARKER in rest
+        assert "Fresh content." in rest
+        assert "Stale." not in rest
+
+    def test_preserves_content_above_marker(self, tmp_path: pathlib.Path):
+        """Marker present, no frontmatter, but content exists above marker — preserve above, replace below."""
+        note_path = tmp_path / "above-marker.md"
+        note_path.write_text(
+            "## Pre-marker notes\n\nKeep me.\n\n## Meeting Record\n\nStale below.\n",
+            encoding="utf-8",
+        )
+
+        canonical = {
+            "date": "2026-04-14",
+            "title": "Preserved",
+            "org": "disbursecloud",
+            "pipeline-status": "complete",
+        }
+        body = "## Summary\n\nFresh body.\n"
+
+        upsert_note(note_path, canonical, body)
+
+        content = note_path.read_text(encoding="utf-8")
+        assert content.startswith("---\n")
+        _, fm_block, rest = content.split("---\n", 2)
+        fm = yaml.safe_load(fm_block)
+
+        assert fm["title"] == "Preserved"
+
+        # Above-marker content preserved
+        marker_idx = rest.index(MEETING_RECORD_MARKER)
+        assert "## Pre-marker notes" in rest[:marker_idx]
+        assert "Keep me." in rest[:marker_idx]
+
+        # Fresh body below marker, stale content gone
+        assert "Fresh body." in rest[marker_idx:]
+        assert "Stale below." not in rest
+
+
 class TestUpsertCase4WithMarker:
     def test_merges_fm_and_replaces_below_marker(self, tmp_path: pathlib.Path):
         note_path = tmp_path / "with-marker.md"

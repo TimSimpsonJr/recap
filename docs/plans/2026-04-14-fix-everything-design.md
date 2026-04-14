@@ -78,7 +78,8 @@ Calendar-seeded notes may have an `## Agenda` section above the marker (written 
 | Note does not exist | Create with full frontmatter + marker + pipeline content |
 | Note exists, no marker, no frontmatter | Create marker, prepend frontmatter, append pipeline content |
 | Note exists with calendar frontmatter, no marker | Merge canonical frontmatter over existing, preserving calendar fields (event-id, time, calendar-source, meeting-link, agenda body); append marker + pipeline content |
-| Note exists with marker | Merge canonical frontmatter over existing (authoritative for pipeline-owned fields); replace everything below marker |
+| Note exists with frontmatter and marker | Merge canonical frontmatter over existing (authoritative for pipeline-owned fields); replace everything below marker |
+| Note exists with marker but no frontmatter | Prepend canonical frontmatter; preserve any content above the marker; replace content below marker |
 
 The merge is field-level, not file-level. Calendar fields win on calendar-owned keys (time, event-id, meeting-link, calendar-source, participants-pre-meeting). Pipeline fields win on pipeline-owned keys (duration, type, tags, companies, recording, pipeline-status). `date`, `title`, `org`, `org-subfolder`, `platform` are shared: last writer wins, but all writers must produce consistent values (the org index enforces this).
 

@@ -76,13 +76,16 @@ def upsert_note(
 ) -> None:
     """Upsert a meeting note with canonical frontmatter + body below the marker.
 
-    Four cases (design doc §0.1):
+    Five cases (design doc §0.1):
     1. Note does not exist — create with frontmatter + marker + body.
     2. Existing note, no frontmatter, no marker — add both.
     3. Existing note with calendar frontmatter, no marker — field-level merge
        of frontmatter (calendar keys preserved), append marker + body.
-    4. Existing note with marker — field-level merge of frontmatter (pipeline
-       authoritative for pipeline-owned keys), replace everything below marker.
+    4. Existing note with frontmatter and marker — field-level merge of
+       frontmatter (pipeline authoritative for pipeline-owned keys), replace
+       everything below marker.
+    5. Existing note with marker but no frontmatter — prepend canonical
+       frontmatter, preserve content above marker, replace content below.
 
     This function is the sole writer of canonical notes. All callers
     (calendar sync, pipeline export, manual tooling) route through here.
@@ -103,6 +106,10 @@ def upsert_note(
 
     if has_frontmatter and not has_marker:
         _merge_fm_and_append_body(note_path, existing, frontmatter, body)
+        return
+
+    if has_marker and not has_frontmatter:
+        _prepend_fm_and_replace_below_marker(note_path, existing, frontmatter, body)
         return
 
     _merge_fm_and_replace_below_marker(note_path, existing, frontmatter, body)
@@ -133,6 +140,30 @@ def _merge_fm_and_replace_below_marker(
         f"{MEETING_RECORD_MARKER}\n\n"
         f"{body.lstrip()}"
     )
+    note_path.write_text(new_content, encoding="utf-8")
+
+
+def _prepend_fm_and_replace_below_marker(
+    note_path: pathlib.Path, existing: str, frontmatter: dict, body: str,
+) -> None:
+    """Case 5: marker present but no frontmatter. Prepend FM, preserve above-marker content, replace below."""
+    marker_idx = existing.index(MEETING_RECORD_MARKER)
+    above = existing[:marker_idx].rstrip()
+    fm_block = yaml.dump(frontmatter, default_flow_style=False, sort_keys=False).strip()
+
+    if above:
+        new_content = (
+            f"---\n{fm_block}\n---\n\n"
+            f"{above}\n\n"
+            f"{MEETING_RECORD_MARKER}\n\n"
+            f"{body.lstrip()}"
+        )
+    else:
+        new_content = (
+            f"---\n{fm_block}\n---\n\n"
+            f"{MEETING_RECORD_MARKER}\n\n"
+            f"{body.lstrip()}"
+        )
     note_path.write_text(new_content, encoding="utf-8")
 
 
