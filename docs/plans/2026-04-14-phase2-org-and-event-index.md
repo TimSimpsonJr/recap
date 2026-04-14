@@ -889,7 +889,11 @@ def find_note_by_event_id(
             abs_path = vault_path / entry.path
             if abs_path.exists():
                 return abs_path
-            # Stale index entry — fall through to scan
+            # Stale index entry — log a warning and fall through to scan.
+            logger.warning(
+                "Stale EventIndex entry for %s: %s does not exist; falling back to scan",
+                event_id, abs_path,
+            )
     if not search_path.exists():
         return None
     for md_file in search_path.glob("*.md"):
@@ -898,6 +902,29 @@ def find_note_by_event_id(
         if fm and fm.get("event-id") == event_id:
             return md_file
     return None
+```
+
+Ensure `logger` is available in `sync.py` (add `logger = logging.getLogger(__name__)` if missing). Add a test that exercises the stale-entry path via `caplog`:
+
+```python
+def test_find_note_by_event_id_logs_warning_on_stale_entry(tmp_path, caplog):
+    import logging
+    from recap.daemon.calendar.index import EventIndex
+    from recap.daemon.calendar.sync import find_note_by_event_id
+
+    vault = tmp_path
+    meetings = vault / "Clients/D/Meetings"
+    meetings.mkdir(parents=True)
+    # Index points at a note that never existed
+    index = EventIndex(vault / "_Recap" / ".recap" / "event-index.json")
+    index.add("evt-1", pathlib.Path("Clients/D/Meetings/gone.md"), "d")
+
+    with caplog.at_level(logging.WARNING, logger="recap.daemon.calendar.sync"):
+        result = find_note_by_event_id(
+            "evt-1", meetings, vault_path=vault, event_index=index,
+        )
+    assert result is None
+    assert any("Stale EventIndex entry" in rec.message for rec in caplog.records)
 ```
 
 Update callers to pass `event_index` and `vault_path` when they have them:
@@ -1140,9 +1167,10 @@ from recap.daemon.calendar.index import EventIndex
 # Near the top of main(), after config is loaded:
 event_index_path = config.vault_path / "_Recap" / ".recap" / "event-index.json"
 event_index = EventIndex(event_index_path)
-if not event_index_path.exists():
-    logger.info("Event index missing; rebuilding from vault")
-    event_index.rebuild(config.vault_path)
+# Always rebuild on startup — cheap, heals drift from out-of-band renames
+# or corrupt persisted indexes. Decision locked per Codex review 2026-04-14.
+logger.info("Rebuilding EventIndex from vault (startup)")
+event_index.rebuild(config.vault_path)
 ```
 
 Pass `event_index` into:
@@ -1154,13 +1182,14 @@ Update `run_pipeline` signature to accept `event_index: EventIndex | None = None
 
 In `detector.py` and `scheduler.py`, use `self._event_index` (and pass `self._vault_path` / `self._config.vault_path`) to the `find_note_by_event_id` call sites.
 
-**Step 2: Add a scheduler-on-sync rebuild hook**
+**Step 2: No scheduler-tick rebuild — startup-only**
 
-At the top of each scheduler sync cycle (once per `interval_minutes`), call `self._event_index.rebuild(self._vault_path)` so external renames (user moves a note in Obsidian, plugin processes a rename queue, etc.) get reflected. This is a cheap hedge against drift.
+**Decision locked (Codex review 2026-04-14):**
+1. No scheduler-on-sync rebuild. Normal write paths (`upsert_note` + `write_calendar_note`) keep the index warm; a repeated whole-vault scan per sync tick is wasted work for a drift case Phase 4's rename endpoint will handle properly.
+2. Startup rebuild is unconditional (not conditional on the file existing). A stale or corrupt persisted index should not be able to survive a restart. The rebuild is cheap and gives us "heal drift on launch" for free.
+3. On a stale-lookup (index entry points at a file that no longer exists), Task 6's `find_note_by_event_id` already logs a warning and falls back to scan. Verify that warning fires via `caplog` in the Task 6 test.
 
-Alternatively: skip the rebuild, trust the `upsert_note` hook + rename-queue processing (Phase 4) to keep the index consistent. If you skip, add a TODO and a daemon-startup rebuild guarantee in Task 4's code (already there).
-
-Recommendation: do the startup rebuild only. Phase 4's rename endpoint will cover the rename case; for now, an Obsidian-side rename will cause a stale index entry until the next daemon restart. Log a warning when a stale lookup is detected and fall back to scan.
+Do NOT add a scheduler rebuild hook. Do NOT make the startup rebuild conditional. An Obsidian-side rename will cause a stale index entry until the next daemon restart; the warning log + fallback scan + Phase 4 rename endpoint make that acceptable.
 
 **Step 3: Run tests**
 
