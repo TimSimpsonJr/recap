@@ -15,6 +15,7 @@ from aiohttp import web
 
 from recap.artifacts import RecordingMetadata, load_recording_metadata
 from recap.daemon.auth import ensure_auth_token
+from recap.daemon.calendar.index import EventIndex
 from recap.daemon.calendar.scheduler import CalendarSyncScheduler
 from recap.daemon.config import DaemonConfig, load_daemon_config
 from recap.daemon.logging_setup import setup_logging
@@ -38,6 +39,7 @@ def _make_process_recording(
     config: DaemonConfig,
     recorder: Recorder,
     emit_event,
+    event_index: EventIndex | None = None,
 ):
     """Create the async process_recording coroutine bound to daemon state."""
 
@@ -84,6 +86,7 @@ def _make_process_recording(
                 streaming_transcript=streaming_transcript,
                 from_stage=from_stage,
                 recording_metadata=recording_metadata,
+                event_index=event_index,
             )
             recorder.state_machine.processing_complete()
             notify("Recap", f"Meeting processed: {note_path.stem}")
@@ -164,6 +167,15 @@ def main() -> None:
     auth_token = ensure_auth_token(auth_token_path)
     logger.info("Auth token ready")
 
+    # Event-id -> note index, singleton for this process.
+    # Always rebuild on startup: cheap, and heals drift from out-of-band
+    # renames or a corrupt persisted index. Decision locked per Codex
+    # review 2026-04-14 — do NOT gate on file existence.
+    event_index_path = recap_dir / "event-index.json"
+    event_index = EventIndex(event_index_path)
+    logger.info("Rebuilding EventIndex from vault (startup)")
+    event_index.rebuild(config.vault_path)
+
     # The event loop is needed to call async methods from synchronous
     # callbacks (tray, recorder).  We capture it after web.run_app starts,
     # but stash it in a mutable container so closures can reference it.
@@ -183,7 +195,9 @@ def main() -> None:
     )
 
     # Build the pipeline trigger
-    process_recording = _make_process_recording(config, recorder, _emit_event)
+    process_recording = _make_process_recording(
+        config, recorder, _emit_event, event_index=event_index,
+    )
 
     # Wire recording-stopped callback: spawn pipeline in the event loop
     def _on_recording_stopped(flac_path: Path, org: str) -> None:
@@ -234,6 +248,7 @@ def main() -> None:
         config=config,
         recorder=recorder,
         on_signal_detected=on_signal_detected,
+        event_index=event_index,
     )
 
     # Create calendar sync scheduler
@@ -245,6 +260,7 @@ def main() -> None:
             "event": "rename_queued",
             "count": count,
         }),
+        event_index=event_index,
     )
 
     # Create HTTP app (pass recorder, detector, scheduler so endpoints can use them)

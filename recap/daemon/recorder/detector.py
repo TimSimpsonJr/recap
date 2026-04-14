@@ -9,12 +9,15 @@ import asyncio
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 from recap.artifacts import RecordingMetadata, to_vault_relative
 from recap.daemon.recorder.detection import MeetingWindow, detect_meeting_windows
 from recap.daemon.recorder.enrichment import enrich_meeting_metadata
 from recap.models import Participant
+
+if TYPE_CHECKING:
+    from recap.daemon.calendar.index import EventIndex
 
 logger = logging.getLogger(__name__)
 
@@ -34,10 +37,12 @@ class MeetingDetector:
         config: object,
         recorder: object,
         on_signal_detected: Callable[..., object] | None = None,
+        event_index: "EventIndex | None" = None,
     ) -> None:
         self._config = config
         self._recorder = recorder
         self._on_signal_detected = on_signal_detected
+        self._event_index = event_index
         self._tracked_meetings: dict[int, MeetingWindow] = {}
         self._poll_task: asyncio.Task[None] | None = None
         self._armed_event: dict | None = None
@@ -93,7 +98,12 @@ class MeetingDetector:
                 / self._org_subfolder(org)
                 / "Meetings"
             )
-            note = find_note_by_event_id(event_id, meetings_dir)
+            note = find_note_by_event_id(
+                event_id,
+                meetings_dir,
+                vault_path=vault_path,
+                event_index=self._event_index,
+            )
             if note is None:
                 return ""
             return to_vault_relative(note, vault_path)

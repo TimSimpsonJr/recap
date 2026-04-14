@@ -22,6 +22,7 @@ from recap.daemon.credentials import (
 )
 
 if TYPE_CHECKING:
+    from recap.daemon.calendar.index import EventIndex
     from recap.daemon.config import DaemonConfig
     from recap.daemon.recorder.detector import MeetingDetector
 
@@ -47,11 +48,13 @@ class CalendarSyncScheduler:
         vault_path: Path,
         detector: MeetingDetector | None = None,
         on_rename_queued: Callable[[int], Awaitable[None] | None] | None = None,
+        event_index: "EventIndex | None" = None,
     ) -> None:
         self._config = config
         self._vault_path = vault_path
         self._detector = detector
         self._on_rename_queued = on_rename_queued
+        self._event_index = event_index
         self._task: asyncio.Task[None] | None = None
         self._last_sync: datetime | None = None
         self._failure_start: dict[str, datetime] = {}
@@ -120,11 +123,21 @@ class CalendarSyncScheduler:
                 )
 
                 if action == "create":
-                    write_calendar_note(event, self._vault_path, org_config)
+                    write_calendar_note(
+                        event,
+                        self._vault_path,
+                        org_config,
+                        event_index=self._event_index,
+                    )
                     synced += 1
                 elif action == "update":
                     meetings_dir = org_config.resolve_subfolder(self._vault_path) / "Meetings"
-                    note = find_note_by_event_id(event.event_id, meetings_dir)
+                    note = find_note_by_event_id(
+                        event.event_id,
+                        meetings_dir,
+                        vault_path=self._vault_path,
+                        event_index=self._event_index,
+                    )
                     if note is not None:
                         queued_renames += update_calendar_note(
                             note,

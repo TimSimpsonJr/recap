@@ -373,6 +373,9 @@ def write_meeting_note(
     user_name: str | None = None,
     note_path: pathlib.Path | None = None,
     recording_metadata: RecordingMetadata | None = None,
+    *,
+    event_index: "EventIndex | None" = None,
+    vault_path: pathlib.Path | None = None,
 ) -> pathlib.Path:
     """Upsert a canonical meeting note.
 
@@ -383,6 +386,10 @@ def write_meeting_note(
     (`calendar_source`, `event_id`, `meeting_link`) flow into the emitted
     frontmatter so brand-new notes (cases 1 and 5) carry the calendar
     provenance instead of silently dropping it.
+
+    When *event_index* and *vault_path* are both supplied, the event-id
+    index is updated with the note's vault-relative path so subsequent
+    lookups avoid scanning the filesystem.
     """
     if note_path is None:
         filename = f"{metadata.date.isoformat()} - {safe_note_title(metadata.title)}.md"
@@ -407,7 +414,7 @@ def write_meeting_note(
         user_name=user_name,
     )
 
-    upsert_note(note_path, frontmatter, body)
+    upsert_note(note_path, frontmatter, body, event_index=event_index, vault_path=vault_path)
     logger.info("Upserted meeting note: %s", note_path)
     return note_path
 

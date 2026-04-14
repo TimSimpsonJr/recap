@@ -8,6 +8,7 @@ import subprocess
 import time
 from dataclasses import dataclass
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from recap.artifacts import (
     RecordingMetadata,
@@ -23,6 +24,9 @@ from recap.artifacts import (
 )
 from recap.errors import map_error
 from recap.models import AnalysisResult, MeetingMetadata, TranscriptResult
+
+if TYPE_CHECKING:
+    from recap.daemon.calendar.index import EventIndex
 
 logger = logging.getLogger(__name__)
 
@@ -299,6 +303,7 @@ def run_pipeline(
     streaming_transcript: TranscriptResult | None = None,
     from_stage: str | None = None,
     recording_metadata: RecordingMetadata | None = None,
+    event_index: "EventIndex | None" = None,
 ) -> pathlib.Path:
     """Run the full processing pipeline and return the path to the meeting note.
 
@@ -333,6 +338,7 @@ def run_pipeline(
 
     note_path = _resolve_note_path(
         metadata, recording_metadata, meetings_dir, vault_path,
+        event_index=event_index,
     )
     note_filename = note_path.name
     if recording_metadata is not None:
@@ -474,6 +480,8 @@ def run_pipeline(
                 user_name=user_name,
                 note_path=note_path,
                 recording_metadata=recording_metadata,
+                event_index=event_index,
+                vault_path=vault_path,
             )
             write_profile_stubs(
                 analysis=analysis,
