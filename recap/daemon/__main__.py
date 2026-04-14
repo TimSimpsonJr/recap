@@ -23,31 +23,14 @@ from recap.daemon.recorder.detector import MeetingDetector
 from recap.daemon.recorder.recorder import Recorder
 from recap.daemon.recorder.recovery import find_orphaned_recordings
 from recap.daemon.recorder.signal_popup import show_signal_popup
+from recap.daemon.runtime_config import build_runtime_config as _build_runtime_config
 from recap.daemon.server import broadcast, create_app
 from recap.daemon.startup import validate_startup
 from recap.daemon.tray import RecapTray
 from recap.models import MeetingMetadata, Participant
-from recap.pipeline import PipelineRuntimeConfig, run_pipeline
+from recap.pipeline import run_pipeline
 
 logger = logging.getLogger("recap.daemon")
-
-
-def _build_runtime_config(config: DaemonConfig, org_config) -> PipelineRuntimeConfig:
-    """Build a PipelineRuntimeConfig from the daemon config and an org config."""
-    return PipelineRuntimeConfig(
-        transcription_model=config.pipeline.transcription_model,
-        diarization_model=config.pipeline.diarization_model,
-        device="cuda",
-        llm_backend=org_config.llm_backend,
-        ollama_model="",
-        archive_format=config.recording.archive_format,
-        archive_bitrate="64k",
-        delete_source_after_archive=config.recording.delete_source_after_archive,
-        auto_retry=config.pipeline.auto_retry,
-        max_retries=config.pipeline.max_retries,
-        prompt_template_path=None,
-        status_dir=config.vault_path / "_Recap" / ".recap" / "status",
-    )
 
 
 def _make_process_recording(
@@ -82,7 +65,7 @@ def _make_process_recording(
                     platform="unknown",
                 )
             metadata = recording_metadata.to_meeting_metadata()
-            pipeline_config = _build_runtime_config(config, org_config)
+            pipeline_config = _build_runtime_config(config, org_config, recording_metadata)
 
             # Pass the streaming transcript (if available) so the pipeline
             # can skip batch transcription + diarization when streaming succeeded.
