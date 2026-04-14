@@ -14,7 +14,7 @@ from recap.models import (
     TranscriptResult,
     Utterance,
 )
-from recap.pipeline import PipelineConfig, run_pipeline
+from recap.pipeline import PipelineRuntimeConfig, run_pipeline
 
 
 # ---------------------------------------------------------------------------
@@ -61,7 +61,7 @@ def mock_analysis():
 
 @pytest.fixture
 def pipeline_config(tmp_path):
-    return PipelineConfig(
+    return PipelineRuntimeConfig(
         transcription_model="nvidia/parakeet-tdt-0.6b-v2",
         diarization_model="nvidia/diar_streaming_sortformer_4spk-v2.1",
         device="cpu",

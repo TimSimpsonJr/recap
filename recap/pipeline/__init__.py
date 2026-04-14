@@ -32,7 +32,7 @@ _FFPROBE_TIMEOUT_SECONDS = 30
 
 
 @dataclass
-class PipelineConfig:
+class PipelineRuntimeConfig:
     """Configuration for a pipeline run."""
 
     transcription_model: str = "nvidia/parakeet-tdt-0.6b-v2"
@@ -53,20 +53,20 @@ class PipelineConfig:
 # Status helpers
 # ---------------------------------------------------------------------------
 
-def _status_path(config: PipelineConfig, recording_stem: str) -> pathlib.Path | None:
+def _status_path(config: PipelineRuntimeConfig, recording_stem: str) -> pathlib.Path | None:
     if config.status_dir is None:
         return None
     config.status_dir.mkdir(parents=True, exist_ok=True)
     return config.status_dir / f"{recording_stem}.json"
 
 
-def _write_status(config: PipelineConfig, recording_stem: str, data: dict) -> None:
+def _write_status(config: PipelineRuntimeConfig, recording_stem: str, data: dict) -> None:
     path = _status_path(config, recording_stem)
     if path is not None:
         path.write_text(json.dumps(data, indent=2))
 
 
-def _stage_started(config: PipelineConfig, recording_stem: str, stage: str) -> None:
+def _stage_started(config: PipelineRuntimeConfig, recording_stem: str, stage: str) -> None:
     _write_status(config, recording_stem, {
         "pipeline-status": _stage_label(stage),
         "stage": stage,
@@ -74,7 +74,7 @@ def _stage_started(config: PipelineConfig, recording_stem: str, stage: str) -> N
     })
 
 
-def _stage_completed(config: PipelineConfig, recording_stem: str, stage: str) -> None:
+def _stage_completed(config: PipelineRuntimeConfig, recording_stem: str, stage: str) -> None:
     _write_status(config, recording_stem, {
         "pipeline-status": _stage_label(stage),
         "stage": stage,
@@ -82,7 +82,7 @@ def _stage_completed(config: PipelineConfig, recording_stem: str, stage: str) ->
     })
 
 
-def _stage_failed(config: PipelineConfig, recording_stem: str, stage: str, error: str) -> None:
+def _stage_failed(config: PipelineRuntimeConfig, recording_stem: str, stage: str, error: str) -> None:
     _write_status(config, recording_stem, {
         "pipeline-status": f"failed:{stage}",
         "stage": stage,
@@ -235,7 +235,7 @@ def _resolve_note_path(
 def _run_with_retry(
     fn,
     stage: str,
-    config: PipelineConfig,
+    config: PipelineRuntimeConfig,
     recording_stem: str,
     note_path: pathlib.Path | None,
     *,
@@ -283,7 +283,7 @@ def _run_with_retry(
 def run_pipeline(
     audio_path: pathlib.Path,
     metadata: MeetingMetadata,
-    config: PipelineConfig,
+    config: PipelineRuntimeConfig,
     org_subfolder: str,
     vault_path: pathlib.Path,
     user_name: str,

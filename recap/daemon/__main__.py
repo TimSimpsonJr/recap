@@ -27,14 +27,14 @@ from recap.daemon.server import broadcast, create_app
 from recap.daemon.startup import validate_startup
 from recap.daemon.tray import RecapTray
 from recap.models import MeetingMetadata, Participant
-from recap.pipeline import PipelineConfig as PipelineCfg, run_pipeline
+from recap.pipeline import PipelineRuntimeConfig, run_pipeline
 
 logger = logging.getLogger("recap.daemon")
 
 
-def _build_pipeline_config(config: DaemonConfig, org_config) -> PipelineCfg:
-    """Build a PipelineConfig from the daemon config and an org config."""
-    return PipelineCfg(
+def _build_runtime_config(config: DaemonConfig, org_config) -> PipelineRuntimeConfig:
+    """Build a PipelineRuntimeConfig from the daemon config and an org config."""
+    return PipelineRuntimeConfig(
         transcription_model=config.pipeline.transcription_model,
         diarization_model=config.pipeline.diarization_model,
         device="cuda",
@@ -82,7 +82,7 @@ def _make_process_recording(
                     platform="unknown",
                 )
             metadata = recording_metadata.to_meeting_metadata()
-            pipeline_config = _build_pipeline_config(config, org_config)
+            pipeline_config = _build_runtime_config(config, org_config)
 
             # Pass the streaming transcript (if available) so the pipeline
             # can skip batch transcription + diarization when streaming succeeded.

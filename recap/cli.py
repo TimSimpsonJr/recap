@@ -8,7 +8,7 @@ import pathlib
 import sys
 
 from recap.models import MeetingMetadata
-from recap.pipeline import PipelineConfig, run_pipeline
+from recap.pipeline import PipelineRuntimeConfig, run_pipeline
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +80,7 @@ def main(argv: list[str] | None = None) -> None:
             json.loads(metadata_path.read_text(encoding="utf-8"))
         )
 
-        pipeline_config = PipelineConfig(
+        pipeline_config = PipelineRuntimeConfig(
             device=args.device,
             llm_backend=args.backend,
         )
