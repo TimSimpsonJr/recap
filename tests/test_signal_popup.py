@@ -15,27 +15,44 @@ from recap.daemon.recorder.signal_popup import show_signal_popup
 
 @pytest.mark.asyncio
 async def test_show_signal_popup_is_async_and_non_blocking(monkeypatch):
-    """Async popup yields to the event loop while the dialog is up."""
-    # Stub the tkinter dialog to return immediately with a known result.
-    def _fake_blocking(*args, **kwargs):
+    """Popup runs on executor thread; event loop keeps ticking during the block."""
+    import threading
+    import time
+
+    evt_started = threading.Event()
+    evt_done = threading.Event()
+
+    def _blocking(*args, **kwargs):
+        evt_started.set()
+        time.sleep(0.05)  # real thread sleep — blocks this worker thread
+        evt_done.set()
         return {"backend": "ollama", "org": "d"}
 
-    monkeypatch.setattr(popup_module, "_blocking_dialog", _fake_blocking)
+    monkeypatch.setattr(popup_module, "_blocking_dialog", _blocking)
 
     poll_hits = []
 
-    async def _other_coroutine():
-        # Simulate the detector poll loop running concurrently.
-        for _ in range(3):
+    async def _poll_while_popup_up():
+        # Wait until the executor thread has actually started the block.
+        while not evt_started.is_set():
+            await asyncio.sleep(0.001)
+        # Keep ticking while the block is pending.
+        while not evt_done.is_set():
             poll_hits.append(True)
-            await asyncio.sleep(0)
+            await asyncio.sleep(0.005)
 
     result, _ = await asyncio.gather(
         show_signal_popup(org_slug="d", available_backends=["claude", "ollama"]),
-        _other_coroutine(),
+        _poll_while_popup_up(),
     )
     assert result == {"backend": "ollama", "org": "d"}
-    assert len(poll_hits) == 3  # other coroutine ran during the await
+    # Event loop ticked multiple times while the dialog was blocking.
+    # A synchronous implementation would fail: evt_started and evt_done
+    # fire back-to-back within one thread before the coroutine can yield.
+    assert len(poll_hits) >= 2, (
+        f"Expected multiple poll ticks during the blocking dialog; "
+        f"got {len(poll_hits)}"
+    )
 
 
 @pytest.mark.asyncio

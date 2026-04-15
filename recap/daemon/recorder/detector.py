@@ -49,6 +49,12 @@ class MeetingDetector:
         self._armed_event: dict | None = None
         self._recording_hwnd: int | None = None
         self._extension_recording_tab_id: int | None = None
+        # In-flight signal-callback tasks (typically the Signal popup).
+        # Spawning via ``create_task`` lets the poll loop keep ticking
+        # while a callback is awaiting (e.g. the user is staring at the
+        # popup). We retain hard references here so the tasks aren't
+        # garbage-collected mid-flight.
+        self._pending_signal_tasks: set[asyncio.Task[None]] = set()
 
     # ------------------------------------------------------------------
     # Config helpers
@@ -81,19 +87,15 @@ class MeetingDetector:
     def _resolve_org_config(self, org: str) -> "OrgConfig | None":
         """Return the ``OrgConfig`` for *org*, falling back to default_org.
 
-        Uses ``DaemonConfig.org_by_slug`` when available, else linear scan
-        over ``config.orgs``. Returns ``None`` if neither the slug nor a
-        default is configured.
+        ``DaemonConfig`` always exposes ``org_by_slug``. The attribute check
+        keeps the type-checker happy and guards against unusual test doubles.
+        Returns ``None`` if neither the slug nor a default is configured.
         """
         by_slug = getattr(self._config, "org_by_slug", None)
         if callable(by_slug):
             matched = by_slug(org)
             if matched is not None:
                 return matched  # type: ignore[no-any-return]
-        else:
-            for org_config in getattr(self._config, "orgs", []):
-                if org_config.name == org:
-                    return org_config
         return getattr(self._config, "default_org", None)
 
     def _find_calendar_note(self, org: str, event_id: str | None) -> str:
@@ -318,7 +320,16 @@ class MeetingDetector:
                 await self._recorder.start(org, metadata=metadata, detected=True)
                 self._recording_hwnd = meeting.hwnd
             elif behavior == "prompt" and self._on_signal_detected is not None:
-                await self._on_signal_detected(meeting, enriched)
+                # Fire-and-track: run the callback as a concurrent task so
+                # the poll loop continues ticking while a slow awaitable
+                # (e.g. the Signal popup) is pending. See ``stop()`` for
+                # cancellation / draining.
+                task = asyncio.create_task(
+                    self._on_signal_detected(meeting, enriched),
+                    name="signal-callback",
+                )
+                self._pending_signal_tasks.add(task)
+                task.add_done_callback(self._on_signal_task_done)
 
         # Clean up meetings whose windows have closed.
         closed = set(self._tracked_meetings) - detected_hwnds
@@ -349,8 +360,38 @@ class MeetingDetector:
         loop = asyncio.get_event_loop()
         self._poll_task = loop.create_task(self._run())
 
-    def stop(self) -> None:
-        """Cancel the polling task."""
+    def _on_signal_task_done(self, task: asyncio.Task[None]) -> None:
+        """Reap a finished signal callback task.
+
+        Removes the task from the pending set so it can be GC'd, and logs
+        any uncaught exception. Without this hook a callback that raised
+        would just surface as a warning at event-loop close time.
+        """
+        self._pending_signal_tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.exception("Signal callback raised", exc_info=exc)
+
+    async def stop(self) -> None:
+        """Cancel the polling task and drain any pending signal callbacks.
+
+        Awaitable so the daemon's ``stop()`` can wait for in-flight
+        callbacks (e.g. a Signal popup still up when the user quits) to
+        cancel cleanly before we tear down the event loop.
+        """
         if self._poll_task is not None:
             self._poll_task.cancel()
             self._poll_task = None
+
+        # Cancel any in-flight signal callbacks and wait for them to
+        # settle. ``return_exceptions=True`` so a misbehaving callback
+        # can't block shutdown.
+        if self._pending_signal_tasks:
+            for task in list(self._pending_signal_tasks):
+                task.cancel()
+            await asyncio.gather(
+                *self._pending_signal_tasks, return_exceptions=True,
+            )
+            self._pending_signal_tasks.clear()

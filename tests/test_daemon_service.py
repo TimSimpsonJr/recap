@@ -165,7 +165,7 @@ class _StubScheduler:
 
 
 class _StubDetector:
-    """Stub MeetingDetector: sync start() / stop() like the real one."""
+    """Stub MeetingDetector: sync start() / async stop() like the real one."""
 
     def __init__(self) -> None:
         self.started = False
@@ -182,7 +182,7 @@ class _StubDetector:
         except asyncio.CancelledError:
             return
 
-    def stop(self) -> None:
+    async def stop(self) -> None:
         self.stopped = True
         if self._task is not None:
             self._task.cancel()

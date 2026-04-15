@@ -176,10 +176,10 @@ class Daemon:
             except Exception:
                 logger.exception("Error stopping calendar scheduler")
 
-        # Detector (cancels its task).
+        # Detector (cancels its task and drains pending signal callbacks).
         if self.detector is not None:
             try:
-                self.detector.stop()
+                await self.detector.stop()
                 logger.info("Meeting detection stopped")
             except Exception:
                 logger.exception("Error stopping meeting detector")

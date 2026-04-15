@@ -80,6 +80,13 @@ class TestMeetingDetector:
             with patch("recap.daemon.recorder.detector.enrich_meeting_metadata", return_value={"title": "Signal Call", "participants": [], "platform": "signal"}):
                 await detector._poll_once()
 
+        # The callback is scheduled as a background task so the poll loop
+        # stays non-blocking; drain it before asserting it was awaited.
+        if detector._pending_signal_tasks:
+            await asyncio.gather(
+                *detector._pending_signal_tasks, return_exceptions=True,
+            )
+
         on_signal.assert_awaited_once()
         mock_recorder.start.assert_not_called()
 
@@ -305,11 +312,119 @@ class TestAwaitableSignalCallback:
 
         await _poll_loop()
 
+        # Drain any pending callback tasks so the slow ones finish.
+        if detector._pending_signal_tasks:
+            await asyncio.gather(
+                *detector._pending_signal_tasks, return_exceptions=True,
+            )
+
         # Both callbacks ran to completion while the poll loop continued.
         assert len(callback_hits) == 2
         assert {hit[0].hwnd for hit in callback_hits} == {1, 2}
         assert poll_ticks == [0, 1, 2]
         mock_recorder.start.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_detector_polls_concurrently_with_pending_signal_callback(self):
+        """Poll loop progresses while a slow signal callback is still running.
+
+        Stronger variant: the callback holds open on an asyncio.Event so we
+        can *prove* the poll loop ticks while the callback is still pending
+        (not yet completed).
+        """
+        mock_recorder = _make_recorder_mock()
+        callback_started = asyncio.Event()
+        release_callback = asyncio.Event()
+
+        async def _slow_callback(meeting, enriched):
+            callback_started.set()
+            await release_callback.wait()  # hold the callback open
+
+        config = self._make_config()
+        detector = MeetingDetector(
+            config=config,
+            recorder=mock_recorder,
+            on_signal_detected=_slow_callback,
+        )
+
+        meeting_a = MeetingWindow(hwnd=1, title="Signal", platform="signal")
+
+        with patch(
+            "recap.daemon.recorder.detector.enrich_meeting_metadata",
+            return_value={"title": "Call", "participants": [], "platform": "signal"},
+        ):
+            with patch(
+                "recap.daemon.recorder.detector.detect_meeting_windows",
+                return_value=[meeting_a],
+            ):
+                # First poll spawns the callback task.
+                await detector._poll_once()
+                # Yield to let the task actually start.
+                await callback_started.wait()
+
+                # Now poll several more times. The callback is still
+                # pending (blocked on the release event), but the polls
+                # should complete promptly.
+                extra_polls = 0
+                for _ in range(3):
+                    await detector._poll_once()
+                    extra_polls += 1
+                    await asyncio.sleep(0)
+
+        # Callback is still pending — if _poll_once had awaited the
+        # callback directly we would have deadlocked before getting here.
+        assert extra_polls == 3
+        assert not release_callback.is_set()
+        assert len(detector._pending_signal_tasks) == 1
+
+        # Release and drain.
+        release_callback.set()
+        if detector._pending_signal_tasks:
+            await asyncio.gather(
+                *detector._pending_signal_tasks, return_exceptions=True,
+            )
+        assert len(detector._pending_signal_tasks) == 0
+
+    @pytest.mark.asyncio
+    async def test_stop_cancels_pending_signal_callbacks(self):
+        """``stop()`` should cancel and drain any in-flight callback tasks."""
+        mock_recorder = _make_recorder_mock()
+        started = asyncio.Event()
+        cancelled_flag = {"seen": False}
+
+        async def _never_returns(meeting, enriched):
+            started.set()
+            try:
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                cancelled_flag["seen"] = True
+                raise
+
+        config = self._make_config()
+        detector = MeetingDetector(
+            config=config,
+            recorder=mock_recorder,
+            on_signal_detected=_never_returns,
+        )
+
+        meeting = MeetingWindow(hwnd=1, title="Signal", platform="signal")
+        with patch(
+            "recap.daemon.recorder.detector.enrich_meeting_metadata",
+            return_value={"title": "Call", "participants": [], "platform": "signal"},
+        ):
+            with patch(
+                "recap.daemon.recorder.detector.detect_meeting_windows",
+                return_value=[meeting],
+            ):
+                await detector._poll_once()
+
+        await started.wait()
+        assert len(detector._pending_signal_tasks) == 1
+
+        await detector.stop()
+
+        assert cancelled_flag["seen"] is True
+        assert len(detector._pending_signal_tasks) == 0
 
     @pytest.mark.asyncio
     async def test_sync_callback_raises_type_error(self):
