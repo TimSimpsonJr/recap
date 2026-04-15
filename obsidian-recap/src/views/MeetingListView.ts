@@ -1,4 +1,5 @@
-import { ItemView, WorkspaceLeaf, TFile } from "obsidian";
+import { ItemView, Notice, WorkspaceLeaf, TFile } from "obsidian";
+import type { DaemonClient } from "../api";
 import { FilterBar, FilterState } from "../components/FilterBar";
 import { MeetingData, renderMeetingRow } from "../components/MeetingRow";
 
@@ -8,9 +9,14 @@ export class MeetingListView extends ItemView {
     private meetings: MeetingData[] = [];
     private filteredMeetings: MeetingData[] = [];
     private listContainer: HTMLElement | null = null;
+    private getClient: () => DaemonClient | null;
 
-    constructor(leaf: WorkspaceLeaf) {
+    constructor(
+        leaf: WorkspaceLeaf,
+        getClient: () => DaemonClient | null = () => null,
+    ) {
         super(leaf);
+        this.getClient = getClient;
     }
 
     getViewType(): string { return VIEW_MEETING_LIST; }
@@ -43,11 +49,40 @@ export class MeetingListView extends ItemView {
 
     private async loadMeetings(): Promise<void> {
         this.meetings = [];
-        const files = this.app.vault.getMarkdownFiles();
 
-        for (const file of files) {
-            // Only look in _Recap/*/Meetings/ folders
-            if (!file.path.startsWith("_Recap/") || !file.path.includes("/Meetings/")) continue;
+        // Ask the daemon which subfolders are actually configured for
+        // org meetings; without this we'd have to scan every markdown
+        // file in the vault. On failure, degrade to the whole-vault
+        // walk with a Notice so the user knows why it's slow.
+        let subfolders: string[] = [];
+        const client = this.getClient();
+        if (client) {
+            try {
+                const cfg = await client.getConfig();
+                subfolders = cfg.orgs
+                    .map(o => o.subfolder)
+                    .filter((s): s is string => !!s && s.length > 0);
+            } catch (e) {
+                const msg = e instanceof Error ? e.message : String(e);
+                new Notice(
+                    `Recap: could not load org config \u2014 scanning whole vault. ${msg}`,
+                );
+                console.error("Recap:", e);
+            }
+        }
+
+        const allFiles = this.app.vault.getMarkdownFiles();
+        const scopedFiles = subfolders.length === 0
+            ? allFiles
+            : allFiles.filter(f =>
+                subfolders.some(
+                    sub => f.path.startsWith(sub + "/") || f.path === sub,
+                ),
+            );
+
+        for (const file of scopedFiles) {
+            // Only look at Meetings/ notes inside the scoped folders.
+            if (!file.path.includes("/Meetings/")) continue;
 
             try {
                 const cache = this.app.metadataCache.getFileCache(file);
@@ -64,8 +99,11 @@ export class MeetingListView extends ItemView {
                     participants: this.parseParticipants(frontmatter.participants || []),
                     platform: frontmatter.platform || "",
                 });
-            } catch {
-                // Skip files we can't parse
+            } catch (e) {
+                console.error(
+                    "Recap: could not read meeting frontmatter for",
+                    file.path, ":", e,
+                );
             }
         }
 

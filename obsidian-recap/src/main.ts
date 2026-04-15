@@ -29,7 +29,10 @@ export default class RecapPlugin extends Plugin {
         await this.loadSettings();
 
         // Register views
-        this.registerView(VIEW_MEETING_LIST, (leaf) => new MeetingListView(leaf));
+        this.registerView(
+            VIEW_MEETING_LIST,
+            (leaf) => new MeetingListView(leaf, () => this.client),
+        );
         this.registerView(
             VIEW_LIVE_TRANSCRIPT,
             (leaf) => new LiveTranscriptView(leaf, async () => {
