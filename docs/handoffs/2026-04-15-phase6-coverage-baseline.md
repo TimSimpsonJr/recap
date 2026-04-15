@@ -74,3 +74,21 @@
 ## Assessment
 
 **70% gate: achievable, with low risk.** Baseline is already 71%, so the phase starts 1 pp above the floor. Tasks 2-5 should push numerator up; Tasks 6-7 could shave the denominator (or the numerator, if a deletion removes coverage of otherwise-covered code). The real risk is a Task 6-7 deletion that kills coverage of a 100%-covered module — worth a quick per-deletion check. Entry-point scripts (`__main__.py`, `cli.py`, `tray.py`) are the easy lever if Task 8 ends up short: excluding them from `--cov=recap` measurement via `.coveragerc` would add ~10 pp. But don't pull that lever yet; see if Tasks 2-5's real test coverage gets us to a comfortable cushion (~75%+) first.
+
+## Phase 6 close
+
+**Date:** 2026-04-15
+**Final commit:** 6bb59c9ad31919437c3936aefa7e8f8e53ce214b (pre-gate; gate-enabling commit follows)
+**Final coverage:** 71.39% (gate: 70%)
+**Suite:** 570 passed, 3 skipped in 37.2s
+**Tests added:**
+- Task 2: `tests/test_e2e_pipeline.py` (2 tests)
+- Task 3: `tests/test_signal_backend_routing.py` (2 tests)
+- Task 4: `TestEdgeCases` class appended to `tests/test_event_index.py` (5 tests)
+- Task 5: `tests/test_extension_auth.py` (9 tests)
+
+**Tests removed:** none. Tasks 6 and 7 audits both found existing tests already correctly behaving — no deletions, no commits.
+
+**Gate wiring:** `pyproject.toml` `[tool.pytest.ini_options]` now carries `addopts = "--cov=recap --cov-fail-under=70 --cov-report=term-missing"`. Sanity-checked by temporarily bumping the threshold to 99%, confirming pytest exits non-zero with "Required test coverage of 99% not reached", then reverting via `git checkout -- pyproject.toml` and re-applying the 70% line. Final run at 70% passes with 71.39% total.
+
+**Baseline vs close:** total coverage unchanged at 71% (baseline 71%, close 71.39%). Tasks 2-5 added 18 tests exercising real code paths but the net effect on total % is sub-percentage — the new tests exercise code already partially covered elsewhere, and the denominator (4247 statements) is unchanged. Suite grew from 552 to 570 passing tests (+18), consistent with the per-task counts above.
