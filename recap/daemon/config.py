@@ -91,11 +91,7 @@ class LoggingConfig:
 
 @dataclass
 class DaemonPortConfig:
-    # Deprecated compatibility fields. The extension now uses plugin_port directly.
-    extension_port_start: int = 17839
-    extension_port_end: int = 17845
     plugin_port: int = 9847
-    auto_start: bool = False
 
 
 @dataclass
@@ -258,10 +254,7 @@ def parse_daemon_config_dict(raw: dict[str, Any]) -> DaemonConfig:
     # Parse daemon ports
     daemon_raw = raw.get("daemon", {})
     daemon_ports = DaemonPortConfig(
-        extension_port_start=daemon_raw.get("extension-port-start", 17839),
-        extension_port_end=daemon_raw.get("extension-port-end", 17845),
         plugin_port=daemon_raw.get("plugin-port", 9847),
-        auto_start=daemon_raw.get("auto-start", False),
     )
 
     # Parse known contacts

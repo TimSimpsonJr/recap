@@ -151,10 +151,7 @@ class TestLoadDaemonConfig:
             "recordings-path": str(tmp_path),
         }))
         config = load_daemon_config(config_file)
-        assert config.daemon_ports.extension_port_start == 17839
-        assert config.daemon_ports.extension_port_end == 17845
         assert config.daemon_ports.plugin_port == 9847
-        assert config.daemon_ports.auto_start is False
 
     def test_calendar_sync_defaults(self, tmp_path):
         config_file = tmp_path / "config.yaml"
@@ -236,10 +233,7 @@ class TestLoadDaemonConfig:
                 "retention-days": 14,
             },
             "daemon": {
-                "extension-port-start": 18000,
-                "extension-port-end": 18010,
                 "plugin-port": 9999,
-                "auto-start": True,
             },
         }))
         config = load_daemon_config(config_file)
@@ -265,7 +259,6 @@ class TestLoadDaemonConfig:
         assert config.calendar_sync.interval_minutes == 30
         assert config.logging.retention_days == 14
         assert config.daemon_ports.plugin_port == 9999
-        assert config.daemon_ports.auto_start is True
 
         assert len(config.known_contacts) == 1
         assert config.known_contacts[0].name == "Jane Smith"

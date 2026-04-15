@@ -64,10 +64,7 @@ logging:
 
 # Daemon ports
 daemon:
-  extension-port-start: 17839
-  extension-port-end: 17845
   plugin-port: 9847
-  auto-start: false
 
 # Known contacts for display name matching
 known-contacts: []
