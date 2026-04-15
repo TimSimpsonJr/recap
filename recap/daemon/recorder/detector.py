@@ -18,7 +18,8 @@ from recap.models import Participant
 
 if TYPE_CHECKING:
     from recap.daemon.calendar.index import EventIndex
-    from recap.daemon.config import OrgConfig
+    from recap.daemon.config import DaemonConfig, OrgConfig
+    from recap.daemon.recorder.recorder import Recorder
 
 logger = logging.getLogger(__name__)
 
@@ -35,8 +36,8 @@ class MeetingDetector:
 
     def __init__(
         self,
-        config: object,
-        recorder: object,
+        config: "DaemonConfig",
+        recorder: "Recorder",
         on_signal_detected: Callable[..., Awaitable[None]] | None = None,
         event_index: "EventIndex | None" = None,
     ) -> None:
@@ -72,16 +73,16 @@ class MeetingDetector:
 
     def get_behavior(self, platform: str) -> str:
         """Return 'auto-record' or 'prompt' for *platform*."""
-        return getattr(self._config.detection, platform).behavior  # type: ignore[no-any-return]
+        return getattr(self._config.detection, platform).behavior
 
     def get_default_org(self, platform: str) -> str:
         """Return the configured default org for *platform*."""
         app_cfg = getattr(self._config.detection, platform, None)
         if app_cfg is not None and app_cfg.default_org:
-            return app_cfg.default_org  # type: ignore[no-any-return]
+            return app_cfg.default_org
         default_org = getattr(self._config, "default_org", None)
         if default_org is not None and getattr(default_org, "name", None):
-            return default_org.name  # type: ignore[no-any-return]
+            return default_org.name
         return "default"
 
     def _resolve_org_config(self, org: str) -> "OrgConfig | None":
@@ -95,7 +96,7 @@ class MeetingDetector:
         if callable(by_slug):
             matched = by_slug(org)
             if matched is not None:
-                return matched  # type: ignore[no-any-return]
+                return matched
         return getattr(self._config, "default_org", None)
 
     def _find_calendar_note(self, org: str, event_id: str | None) -> str:
