@@ -1,6 +1,7 @@
 /**
  * HTTP + WebSocket client for communicating with the recap daemon.
  */
+import { Notice } from "obsidian";
 
 export class DaemonError extends Error {
     constructor(public status: number, message: string) {
@@ -105,7 +106,9 @@ export class DaemonClient {
                 const wildcardHandlers = this.eventHandlers.get("*") || [];
                 wildcardHandlers.forEach(h => h(data));
             } catch (e) {
-                console.error("Failed to parse WebSocket message:", e);
+                const msg = e instanceof Error ? e.message : String(e);
+                new Notice(`Recap: malformed WebSocket message \u2014 ${msg}`);
+                console.error("Recap:", e);
             }
         };
 

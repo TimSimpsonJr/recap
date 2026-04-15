@@ -72,7 +72,11 @@ export class NotificationHistory {
 
     private notifyListeners(): void {
         for (const cb of this.listeners) {
-            try { cb(); } catch (e) { console.error("Recap:", e); }
+            try {
+                cb();
+            } catch (e) {
+                console.error("Recap: notification history listener threw:", e);
+            }
         }
     }
 }

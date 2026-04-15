@@ -37,7 +37,8 @@ export default class RecapPlugin extends Plugin {
                 try {
                     const status = await this.client.getStatus();
                     return status.state;
-                } catch {
+                } catch (e) {
+                    console.error("Recap: live transcript status poll failed:", e);
                     return null;
                 }
             }),
@@ -70,7 +71,10 @@ export default class RecapPlugin extends Plugin {
                 const status = await this.client.getStatus();
                 this.lastKnownState = status.state;
                 this.statusBar.updateState(status.state, status.recording?.org);
-            } catch {
+            } catch (e) {
+                const msg = e instanceof Error ? e.message : String(e);
+                new Notice(`Recap: initial daemon status fetch failed — ${msg}`);
+                console.error("Recap:", e);
                 this.statusBar.setOffline();
             }
         } else {
@@ -91,7 +95,10 @@ export default class RecapPlugin extends Plugin {
                 try {
                     const resp = await this.client!.get<{orgs: string[]}>("/api/config/orgs");
                     orgs = resp.orgs;
-                } catch {
+                } catch (e) {
+                    const msg = e instanceof Error ? e.message : String(e);
+                    new Notice(`Recap: org list fetch failed — using default. ${msg}`);
+                    console.error("Recap:", e);
                     orgs = ["default"];
                 }
                 new OrgPickerModal(this.app, orgs, async (org) => {
@@ -356,7 +363,10 @@ export default class RecapPlugin extends Plugin {
                 const status = await this.client.getStatus();
                 this.lastKnownState = status.state;
                 this.statusBar?.updateState(status.state, status.recording?.org);
-            } catch {
+            } catch (e) {
+                const msg = e instanceof Error ? e.message : String(e);
+                new Notice(`Recap: reconnection to daemon failed — ${msg}`);
+                console.error("Recap:", e);
                 this.statusBar?.setOffline();
             }
         } else {
@@ -367,9 +377,14 @@ export default class RecapPlugin extends Plugin {
 
     private async readAuthToken(): Promise<string> {
         const tokenPath = "_Recap/.recap/auth-token";
+        const exists = await this.app.vault.adapter.exists(tokenPath);
+        if (!exists) return "";
         try {
             return (await this.app.vault.adapter.read(tokenPath)).trim();
-        } catch {
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            new Notice(`Recap: could not read auth token — ${msg}`);
+            console.error("Recap:", e);
             return "";
         }
     }
@@ -396,7 +411,11 @@ export default class RecapPlugin extends Plugin {
                 try {
                     const status = await this.client.getStatus();
                     view.updateStatus(status.state);
-                } catch { /* daemon offline, view already shows idle */ }
+                } catch (e) {
+                    const msg = e instanceof Error ? e.message : String(e);
+                    new Notice(`Recap: could not sync live transcript view — ${msg}`);
+                    console.error("Recap:", e);
+                }
             }
         }
     }
