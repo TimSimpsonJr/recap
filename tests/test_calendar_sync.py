@@ -449,3 +449,39 @@ def test_find_note_by_event_id_removes_stale_entry_when_scan_misses(tmp_path):
     assert result is None
     # Stale entry should be evicted
     assert index.lookup("evt-1") is None
+
+
+def test_find_note_by_event_id_heals_cross_folder_move(tmp_path):
+    """Self-healing: note moved to a different Meetings/ folder is found via wider rglob scan."""
+    from recap.daemon.calendar.index import EventIndex
+    from recap.daemon.calendar.sync import find_note_by_event_id
+    import pathlib
+
+    vault = tmp_path
+    old_meetings = vault / "Clients/Old/Meetings"
+    new_meetings = vault / "Clients/New/Meetings"
+    old_meetings.mkdir(parents=True)
+    new_meetings.mkdir(parents=True)
+
+    # User moved the note from Old/ to New/
+    moved_note = new_meetings / "2026-04-14 - x.md"
+    moved_note.write_text(
+        "---\nevent-id: evt-1\n---\n\nbody\n", encoding="utf-8"
+    )
+
+    # Index still points at the old location
+    index = EventIndex(vault / "_Recap" / ".recap" / "event-index.json")
+    index.add("evt-1", pathlib.Path("Clients/Old/Meetings/2026-04-14 - x.md"), "old")
+
+    # Caller's search_path is the OLD org's Meetings dir (narrow scan misses)
+    result = find_note_by_event_id(
+        "evt-1", old_meetings, vault_path=vault, event_index=index,
+    )
+
+    # Wider scan finds the note at its new location
+    assert result == moved_note
+    # Index should now point to the new location, org preserved
+    entry = index.lookup("evt-1")
+    assert entry is not None
+    assert str(entry.path) == "Clients/New/Meetings/2026-04-14 - x.md"
+    assert entry.org == "old"  # rename() preserves org

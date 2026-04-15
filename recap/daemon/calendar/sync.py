@@ -150,6 +150,21 @@ def find_note_by_event_id(
                 found = md_file
                 break
 
+    # On stale-heal, if the narrow scan missed, widen to all Meetings/ dirs
+    # in the vault. This handles cross-folder moves (user reorganized their
+    # vault) without penalizing non-stale lookups, which stay O(1) via the
+    # index fast path.
+    if stale_entry_event_id is not None and found is None and vault_path is not None:
+        for md_file in vault_path.rglob("Meetings/*.md"):
+            try:
+                content = md_file.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            fm = _parse_frontmatter(content)
+            if fm and fm.get("event-id") == event_id:
+                found = md_file
+                break
+
     # Heal the stale entry: update if scan found, remove if not.
     if stale_entry_event_id is not None and event_index is not None and vault_path is not None:
         if found is not None:
