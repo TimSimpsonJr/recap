@@ -54,46 +54,6 @@ async def _health(_request: web.Request) -> web.Response:
     return web.json_response({"status": "ok", "version": "0.2.0"})
 
 
-async def _meeting_detected(request: web.Request) -> web.Response:
-    """POST /meeting-detected — browser extension signals a meeting URL was found."""
-    try:
-        body = await request.json()
-    except json.JSONDecodeError:
-        return web.json_response({"error": "invalid JSON body"}, status=400)
-    except Exception as e:
-        logger.error("Unexpected error in _meeting_detected: %s", e, exc_info=True)
-        return web.json_response({"error": "internal server error"}, status=500)
-
-    logger.info(
-        "Meeting detected: platform=%s url=%s title=%s tabId=%s",
-        body.get("platform"),
-        body.get("url"),
-        body.get("title"),
-        body.get("tabId"),
-    )
-    # TODO: Forward this signal to the detector/recorder so it can trigger
-    # automatic recording. Currently this endpoint only logs and acknowledges.
-    # Wire to: recorder.on_meeting_detected(platform, url, title, tab_id)
-    return web.json_response({"status": "acknowledged"})
-
-
-async def _meeting_ended(request: web.Request) -> web.Response:
-    """POST /meeting-ended — browser extension signals meeting page closed."""
-    try:
-        body = await request.json()
-    except json.JSONDecodeError:
-        return web.json_response({"error": "invalid JSON body"}, status=400)
-    except Exception as e:
-        logger.error("Unexpected error in _meeting_ended: %s", e, exc_info=True)
-        return web.json_response({"error": "internal server error"}, status=500)
-
-    logger.info("Meeting ended: tabId=%s", body.get("tabId"))
-    # TODO: Forward this signal to the detector/recorder so it can trigger
-    # automatic stop. Currently this endpoint only logs and acknowledges.
-    # Wire to: recorder.on_meeting_ended(tab_id)
-    return web.json_response({"status": "acknowledged"})
-
-
 async def _api_status(request: web.Request) -> web.Response:
     recorder: Recorder | None = request.app.get(_RECORDER_KEY)
     scheduler: CalendarSyncScheduler | None = request.app.get(_SCHEDULER_KEY)
@@ -352,16 +312,6 @@ async def _config_orgs(request: web.Request) -> web.Response:
     return web.json_response({"orgs": org_names})
 
 
-async def _autostart_status(_request: web.Request) -> web.Response:
-    """GET /api/autostart — check if auto-start is enabled."""
-    from recap.daemon.autostart import is_autostart_enabled
-
-    return web.json_response({
-        "enabled": is_autostart_enabled(),
-        "implemented": False,
-    })
-
-
 async def _oauth_status(request: web.Request) -> web.Response:
     """GET /api/oauth/:provider/status — check if a provider is connected."""
     from recap.daemon.credentials import has_credential
@@ -491,8 +441,13 @@ async def _websocket_handler(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
-async def _meeting_detected_live(request: web.Request) -> web.Response:
-    """Live browser-extension hook for auto-starting a recording."""
+async def _meeting_detected_api(request: web.Request) -> web.Response:
+    """Browser-extension hook for auto-starting a recording.
+
+    Shared by the Bearer-authed ``/api/meeting-detected`` and the
+    legacy unauthenticated ``/meeting-detected`` route; auth is
+    enforced at the middleware layer purely by path.
+    """
     detector: MeetingDetector | None = request.app.get(_DETECTOR_KEY)
     if detector is None:
         return web.json_response({"error": "detector not available"}, status=503)
@@ -502,7 +457,7 @@ async def _meeting_detected_live(request: web.Request) -> web.Response:
     except json.JSONDecodeError:
         return web.json_response({"error": "invalid JSON body"}, status=400)
     except Exception as e:
-        logger.error("Unexpected error in _meeting_detected_live: %s", e, exc_info=True)
+        logger.error("Unexpected error in _meeting_detected_api: %s", e, exc_info=True)
         return web.json_response({"error": "internal server error"}, status=500)
 
     platform = body.get("platform")
@@ -524,8 +479,12 @@ async def _meeting_detected_live(request: web.Request) -> web.Response:
     })
 
 
-async def _meeting_ended_live(request: web.Request) -> web.Response:
-    """Live browser-extension hook for auto-stopping a recording."""
+async def _meeting_ended_api(request: web.Request) -> web.Response:
+    """Browser-extension hook for auto-stopping a recording.
+
+    Shared by the Bearer-authed ``/api/meeting-ended`` and the legacy
+    unauthenticated ``/meeting-ended`` route.
+    """
     detector: MeetingDetector | None = request.app.get(_DETECTOR_KEY)
     if detector is None:
         return web.json_response({"error": "detector not available"}, status=503)
@@ -535,7 +494,7 @@ async def _meeting_ended_live(request: web.Request) -> web.Response:
     except json.JSONDecodeError:
         return web.json_response({"error": "invalid JSON body"}, status=400)
     except Exception as e:
-        logger.error("Unexpected error in _meeting_ended_live: %s", e, exc_info=True)
+        logger.error("Unexpected error in _meeting_ended_api: %s", e, exc_info=True)
         return web.json_response({"error": "internal server error"}, status=500)
 
     stopped = await detector.handle_extension_meeting_ended(
@@ -593,18 +552,30 @@ def create_app(
     if scheduler is not None:
         app[_SCHEDULER_KEY] = scheduler
 
+    # Public (no auth) routes.
     app.router.add_get("/health", _health)
-    app.router.add_post("/meeting-detected", _meeting_detected_live)
-    app.router.add_post("/meeting-ended", _meeting_ended_live)
+
+    # Transitional: remove in Phase 4.
+    # Legacy unauthenticated extension hooks — the browser extension
+    # still POSTs here without Bearer. Delegate to the same handlers
+    # that back the authenticated /api/* paths. Phase 4 wires the
+    # extension to the Bearer token and deletes these two lines.
+    app.router.add_post("/meeting-detected", _meeting_detected_api)
+    app.router.add_post("/meeting-ended", _meeting_ended_api)
+
+    # Authenticated API routes (Bearer enforced by _auth_middleware for
+    # every path starting with /api/, except /api/ws which gates via
+    # its own query-token check).
     app.router.add_get("/api/status", _api_status)
     app.router.add_post("/api/record/start", _record_start)
     app.router.add_post("/api/record/stop", _record_stop)
     app.router.add_post("/api/arm", _arm)
     app.router.add_post("/api/disarm", _disarm)
+    app.router.add_post("/api/meeting-detected", _meeting_detected_api)
+    app.router.add_post("/api/meeting-ended", _meeting_ended_api)
     app.router.add_post("/api/meetings/reprocess", _reprocess)
     app.router.add_post("/api/meetings/speakers", _speakers)
     app.router.add_get("/api/config/orgs", _config_orgs)
-    app.router.add_get("/api/autostart", _autostart_status)
     app.router.add_get("/api/oauth/{provider}/status", _oauth_status)
     app.router.add_post("/api/oauth/{provider}/start", _oauth_start)
     app.router.add_delete("/api/oauth/{provider}", _oauth_disconnect)

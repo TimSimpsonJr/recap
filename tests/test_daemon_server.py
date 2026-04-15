@@ -176,22 +176,148 @@ class TestDisarmEndpoint:
 
 
 @pytest.mark.asyncio
-class TestAutoStartEndpoint:
-    """GET /api/autostart — auto-start status (stub)."""
+class TestAutoStartRouteIsGone:
+    """GET /api/autostart — removed in Phase 3 Task 7 (autostart.py retiring)."""
 
-    async def test_returns_not_implemented(self, client):
+    async def test_api_autostart_returns_404(self, client):
         resp = await client.get(
             "/api/autostart",
             headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
         )
+        assert resp.status == 404
+
+    async def test_api_autostart_returns_404_without_auth(self, client):
+        # Even unauthenticated, the route simply doesn't exist. Middleware
+        # gates `/api/*` so this is 401 before it can 404, but either way
+        # the route is gone and should never return 200.
+        resp = await client.get("/api/autostart")
+        assert resp.status in (401, 404)
+
+
+@pytest.mark.asyncio
+class TestApiMeetingDetectedAuth:
+    """POST /api/meeting-detected — new Bearer-authed extension path."""
+
+    async def test_returns_401_without_auth(self, client_with_detector):
+        client, _ = client_with_detector
+        resp = await client.post(
+            "/api/meeting-detected",
+            json={"platform": "meet", "url": "https://meet.google.com/abc"},
+        )
+        assert resp.status == 401
+
+    async def test_returns_401_with_wrong_bearer(self, client_with_detector):
+        client, _ = client_with_detector
+        resp = await client.post(
+            "/api/meeting-detected",
+            json={"platform": "meet", "url": "https://meet.google.com/abc"},
+            headers={"Authorization": "Bearer wrong-token"},
+        )
+        assert resp.status == 401
+
+    async def test_returns_200_with_valid_bearer(self, client_with_detector):
+        client, mock_detector = client_with_detector
+        async def _started(**_kwargs):
+            return True
+        mock_detector.handle_extension_meeting_detected = _started
+
+        resp = await client.post(
+            "/api/meeting-detected",
+            json={
+                "platform": "meet",
+                "url": "https://meet.google.com/abc",
+                "title": "Standup",
+                "tabId": 42,
+            },
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
         assert resp.status == 200
         data = await resp.json()
-        assert data["enabled"] is False
-        assert data["implemented"] is False
+        assert data["status"] == "recording_started"
 
-    async def test_requires_auth(self, client):
-        resp = await client.get("/api/autostart")
+    async def test_missing_fields_returns_400(self, client_with_detector):
+        client, _ = client_with_detector
+        resp = await client.post(
+            "/api/meeting-detected",
+            json={"platform": "meet"},
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 400
+
+
+@pytest.mark.asyncio
+class TestApiMeetingEndedAuth:
+    """POST /api/meeting-ended — new Bearer-authed extension path."""
+
+    async def test_returns_401_without_auth(self, client_with_detector):
+        client, _ = client_with_detector
+        resp = await client.post(
+            "/api/meeting-ended",
+            json={"tabId": 42},
+        )
         assert resp.status == 401
+
+    async def test_returns_200_with_valid_bearer(self, client_with_detector):
+        client, mock_detector = client_with_detector
+        async def _stopped(**_kwargs):
+            return True
+        mock_detector.handle_extension_meeting_ended = _stopped
+
+        resp = await client.post(
+            "/api/meeting-ended",
+            json={"tabId": 42},
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["status"] == "recording_stopped"
+
+
+@pytest.mark.asyncio
+class TestLegacyMeetingRoutesStillWork:
+    """Transitional: legacy unauth /meeting-detected and /meeting-ended.
+
+    The browser extension still POSTs to these without auth. They stay
+    until Phase 4 wires the extension to Bearer. Delegates to the same
+    handler logic as the `/api/` routes.
+    """
+
+    async def test_legacy_meeting_detected_works_without_auth(
+        self, client_with_detector
+    ):
+        client, mock_detector = client_with_detector
+        async def _started(**_kwargs):
+            return True
+        mock_detector.handle_extension_meeting_detected = _started
+
+        resp = await client.post(
+            "/meeting-detected",
+            json={
+                "platform": "meet",
+                "url": "https://meet.google.com/abc",
+                "title": "Standup",
+                "tabId": 42,
+            },
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["status"] == "recording_started"
+
+    async def test_legacy_meeting_ended_works_without_auth(
+        self, client_with_detector
+    ):
+        client, mock_detector = client_with_detector
+        async def _stopped(**_kwargs):
+            return True
+        mock_detector.handle_extension_meeting_ended = _stopped
+
+        resp = await client.post(
+            "/meeting-ended",
+            json={"tabId": 42},
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["status"] == "recording_stopped"
 
 
 @pytest.mark.asyncio
