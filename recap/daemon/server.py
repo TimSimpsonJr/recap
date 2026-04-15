@@ -38,7 +38,10 @@ async def broadcast(app: web.Application, message: dict) -> None:
     dead: list[web.WebSocketResponse] = []
     payload = json.dumps(message)
 
-    for ws in clients:
+    # Iterate over a snapshot so concurrent connect/disconnect during
+    # an ``await send_str`` can't raise ``RuntimeError: Set changed
+    # size during iteration`` and drop the broadcast.
+    for ws in list(clients):
         if ws.closed:
             dead.append(ws)
             continue
@@ -127,6 +130,11 @@ async def _record_start(request: web.Request) -> web.Response:
             {"error": "internal server error"}, status=500
         )
 
+    if not isinstance(body, dict):
+        return web.json_response(
+            {"error": "request body must be a JSON object"}, status=400
+        )
+
     org = body.get("org")
     if not org:
         return web.json_response(
@@ -186,6 +194,11 @@ async def _reprocess(request: web.Request) -> web.Response:
         logger.error("Unexpected error in _reprocess: %s", e, exc_info=True)
         return web.json_response({"error": "internal server error"}, status=500)
 
+    if not isinstance(body, dict):
+        return web.json_response(
+            {"error": "request body must be a JSON object"}, status=400
+        )
+
     recording_path = body.get("recording_path")
     if not recording_path:
         return web.json_response(
@@ -219,6 +232,11 @@ async def _speakers(request: web.Request) -> web.Response:
     except Exception as e:
         logger.error("Unexpected error in _speakers: %s", e, exc_info=True)
         return web.json_response({"error": "internal server error"}, status=500)
+
+    if not isinstance(body, dict):
+        return web.json_response(
+            {"error": "request body must be a JSON object"}, status=400
+        )
 
     recording_path = body.get("recording_path")
     mapping = body.get("mapping")
@@ -267,6 +285,11 @@ async def _arm(request: web.Request) -> web.Response:
     except Exception as e:
         logger.error("Unexpected error in _arm: %s", e, exc_info=True)
         return web.json_response({"error": "internal server error"}, status=500)
+
+    if not isinstance(body, dict):
+        return web.json_response(
+            {"error": "request body must be a JSON object"}, status=400
+        )
 
     event_id = body.get("event_id")
     start_time_str = body.get("start_time")
@@ -413,6 +436,11 @@ async def _api_index_rename(request: web.Request) -> web.Response:
     except Exception as e:
         logger.error("Unexpected error in _api_index_rename: %s", e, exc_info=True)
         return web.json_response({"error": "internal server error"}, status=500)
+
+    if not isinstance(body, dict):
+        return web.json_response(
+            {"error": "request body must be a JSON object"}, status=400
+        )
 
     event_id = body.get("event_id")
     new_path = body.get("new_path")
@@ -588,6 +616,11 @@ async def _meeting_detected_api(request: web.Request) -> web.Response:
         logger.error("Unexpected error in _meeting_detected_api: %s", e, exc_info=True)
         return web.json_response({"error": "internal server error"}, status=500)
 
+    if not isinstance(body, dict):
+        return web.json_response(
+            {"error": "request body must be a JSON object"}, status=400
+        )
+
     platform = body.get("platform")
     url = body.get("url")
     if not platform or not url:
@@ -624,6 +657,11 @@ async def _meeting_ended_api(request: web.Request) -> web.Response:
     except Exception as e:
         logger.error("Unexpected error in _meeting_ended_api: %s", e, exc_info=True)
         return web.json_response({"error": "internal server error"}, status=500)
+
+    if not isinstance(body, dict):
+        return web.json_response(
+            {"error": "request body must be a JSON object"}, status=400
+        )
 
     stopped = await detector.handle_extension_meeting_ended(
         tab_id=body.get("tabId"),

@@ -9,7 +9,7 @@ import pytest
 import pytest_asyncio
 from unittest.mock import MagicMock
 
-from recap.daemon.server import create_app
+from recap.daemon.server import _WS_CLIENTS_KEY, broadcast, create_app
 from recap.daemon.service import Daemon
 from tests.conftest import (
     build_daemon_callbacks,
@@ -673,3 +673,73 @@ class TestApiIndexRename:
         entries = daemon.event_journal.tail(limit=50)
         rename_entries = [e for e in entries if e.get("event") == "index_rename"]
         assert rename_entries == []
+
+
+@pytest.mark.asyncio
+class TestBroadcastConcurrency:
+    """broadcast() must survive concurrent ws_clients mutation."""
+
+    async def test_broadcast_survives_concurrent_client_removal(self):
+        """ws_clients mutation during broadcast await must not raise.
+
+        Regression test for a bug where ``broadcast`` iterated the live
+        ``ws_clients`` set and awaited ``send_str`` inside the loop; a
+        client connect/disconnect mid-send would mutate the set and the
+        next iteration would raise ``RuntimeError: Set changed size
+        during iteration``, dropping the broadcast.
+        """
+        clients: set = set()
+        removed_other = [False]
+
+        class _FakeWS:
+            def __init__(self, name: str, is_remover: bool = False) -> None:
+                self.name = name
+                self.closed = False
+                self._is_remover = is_remover
+
+            async def send_str(self, msg: str) -> None:
+                if self._is_remover and not removed_other[0]:
+                    # Remove another client during our send, mutating
+                    # the set while ``broadcast`` iterates it.
+                    other = next(
+                        (c for c in clients if c is not self), None
+                    )
+                    if other is not None:
+                        clients.discard(other)
+                        removed_other[0] = True
+
+        ws_a = _FakeWS("a", is_remover=True)
+        ws_b = _FakeWS("b")
+        clients.add(ws_a)
+        clients.add(ws_b)
+
+        app = {_WS_CLIENTS_KEY: clients}
+        # Must not raise RuntimeError: Set changed size during iteration.
+        await broadcast(app, {"event": "test", "data": 1})
+        # Sanity check: the removal actually happened during the sweep.
+        assert removed_other[0]
+
+
+@pytest.mark.asyncio
+class TestApiNonDictBody:
+    """JSON API handlers must return 400 on non-dict bodies, not 500.
+
+    Representative test covering ``/api/index/rename`` — the fix
+    (``isinstance(body, dict)`` guard after ``await request.json()``)
+    is applied systematically to all seven JSON-body handlers.
+    """
+
+    async def test_api_index_rename_non_dict_body_returns_400(self, daemon_client):
+        """Non-dict JSON body (string, number, list) returns 400, not 500."""
+        client, _ = daemon_client
+        for bad_body in ["oops", 42, [1, 2, 3]]:
+            resp = await client.post(
+                "/api/index/rename",
+                json=bad_body,
+                headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+            )
+            assert resp.status == 400, (
+                f"Expected 400 for body={bad_body!r}, got {resp.status}"
+            )
+            data = await resp.json()
+            assert data["error"] == "request body must be a JSON object"
