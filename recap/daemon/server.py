@@ -8,6 +8,8 @@ import json
 import logging
 import os
 import pathlib
+import re
+import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Awaitable
@@ -15,6 +17,7 @@ from typing import TYPE_CHECKING, Any, Callable, Awaitable
 import aiohttp
 from aiohttp import web
 
+from recap.artifacts import transcript_path as artifact_transcript_path
 from recap.daemon.api_config import (
     api_config_to_json_dict,
     apply_api_patch_to_yaml_doc,
@@ -192,6 +195,135 @@ async def _api_config_get(request: web.Request) -> web.Response:
     except (OSError, ValueError) as e:
         return web.json_response({"error": str(e)}, status=500)
     return web.json_response(api_config_to_json_dict(api))
+
+
+_STEM_RE = re.compile(r"^[A-Za-z0-9._-]+$")
+_CLIP_MIN_DURATION = 1
+_CLIP_MAX_DURATION = 30
+_CLIP_DEFAULT_DURATION = 5
+
+
+def _run_ffmpeg_clip(cmd: list[str]) -> tuple[int, bytes]:
+    """Run ffmpeg with list args (no shell). Returns ``(returncode, stderr)``.
+
+    Split out as a module-level function so tests can mock
+    ``asyncio.to_thread`` without having to reach into a closure.
+    """
+    result = subprocess.run(cmd, capture_output=True, check=False)
+    return result.returncode, result.stderr
+
+
+async def _api_recording_clip(request: web.Request) -> web.Response:
+    """GET /api/recordings/<stem>/clip?speaker=SPEAKER_xx[&duration=N]
+
+    Returns an MP3 clip of the first utterance attributed to the given
+    speaker. Used by the plugin's speaker correction modal so users can
+    hear who they're about to rename.
+
+    Stem is regex-validated to block traversal. The clip is cached at
+    ``<recordings_path>/<stem>.clips/<speaker>_<duration>s.mp3`` so
+    repeat requests skip ffmpeg entirely. Any ffmpeg failure is
+    journaled as ``clip_extraction_failed`` and returns 500.
+    """
+    daemon: Daemon = request.app["daemon"]
+    stem = request.match_info["stem"]
+    if not _STEM_RE.fullmatch(stem):
+        return web.json_response({"error": "invalid stem"}, status=400)
+
+    speaker = request.query.get("speaker")
+    if not speaker:
+        return web.json_response({"error": "speaker required"}, status=400)
+
+    duration_str = request.query.get("duration", str(_CLIP_DEFAULT_DURATION))
+    try:
+        duration = int(duration_str)
+    except ValueError:
+        return web.json_response(
+            {"error": "duration must be an integer"}, status=400,
+        )
+    if duration < _CLIP_MIN_DURATION or duration > _CLIP_MAX_DURATION:
+        return web.json_response(
+            {
+                "error": f"duration must be in "
+                         f"[{_CLIP_MIN_DURATION}, {_CLIP_MAX_DURATION}]",
+            },
+            status=400,
+        )
+
+    audio_path = daemon.config.recordings_path / f"{stem}.flac"
+    if not audio_path.exists():
+        return web.json_response({"error": "recording not found"}, status=404)
+
+    transcript_file = artifact_transcript_path(audio_path)
+    if not transcript_file.exists():
+        return web.json_response(
+            {"error": "transcript not found"}, status=404,
+        )
+
+    try:
+        transcript_data = json.loads(
+            transcript_file.read_text(encoding="utf-8"),
+        )
+    except (OSError, json.JSONDecodeError) as e:
+        return web.json_response({"error": f"transcript read: {e}"}, status=500)
+
+    utterances = transcript_data.get("utterances") or []
+    match = next(
+        (u for u in utterances if u.get("speaker") == speaker), None,
+    )
+    if match is None:
+        return web.json_response(
+            {"error": "speaker not found in transcript"}, status=404,
+        )
+
+    start = float(match["start"])
+    end = float(match["end"])
+    # Use the requested duration but never exceed the utterance length;
+    # floor at 0.5s so very short first utterances still produce audio.
+    clip_duration = min(float(duration), max(0.5, end - start))
+
+    cache_dir = daemon.config.recordings_path / f"{stem}.clips"
+    cache_file = cache_dir / f"{speaker}_{duration}s.mp3"
+    if cache_file.exists():
+        return web.FileResponse(
+            cache_file, headers={"Content-Type": "audio/mpeg"},
+        )
+
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        "ffmpeg", "-y",
+        "-ss", f"{start:.3f}",
+        "-t", f"{clip_duration:.3f}",
+        "-i", str(audio_path),
+        "-acodec", "libmp3lame",
+        "-b:a", "96k",
+        "-ar", "22050",
+        str(cache_file),
+    ]
+    returncode, stderr = await asyncio.to_thread(_run_ffmpeg_clip, cmd)
+    if returncode != 0:
+        daemon.emit_event(
+            "error", "clip_extraction_failed",
+            f"ffmpeg exit {returncode}",
+            payload={
+                "stem": stem,
+                "speaker": speaker,
+                "returncode": returncode,
+                "stderr": stderr.decode("utf-8", errors="replace")[:500],
+            },
+        )
+        if cache_file.exists():
+            try:
+                cache_file.unlink()
+            except OSError:
+                pass
+        return web.json_response(
+            {"error": "clip extraction failed"}, status=500,
+        )
+
+    return web.FileResponse(
+        cache_file, headers={"Content-Type": "audio/mpeg"},
+    )
 
 
 async def _api_config_patch(request: web.Request) -> web.Response:
@@ -865,6 +997,9 @@ def create_app(
     app.router.add_get("/api/events", _api_events)
     app.router.add_get("/api/config", _api_config_get)
     app.router.add_patch("/api/config", _api_config_patch)
+    app.router.add_get(
+        "/api/recordings/{stem}/clip", _api_recording_clip,
+    )
     app.router.add_post("/api/record/start", _record_start)
     app.router.add_post("/api/record/stop", _record_stop)
     app.router.add_post("/api/arm", _arm)
