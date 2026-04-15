@@ -282,6 +282,35 @@ export class DaemonClient {
         return this.get<ApiConfigDto>("/api/config");
     }
 
+    /** URL for streaming. Not used for auth'd fetches (tokens must not
+     * land in query strings that could leak through referrers or logs);
+     * see ``fetchSpeakerClip`` for the Bearer-authed variant. */
+    getSpeakerClipUrl(
+        stem: string, speaker: string, duration = 5,
+    ): string {
+        const params = new URLSearchParams({
+            speaker, duration: String(duration),
+        });
+        return `${this.baseUrl}/api/recordings/${
+            encodeURIComponent(stem)
+        }/clip?${params.toString()}`;
+    }
+
+    async fetchSpeakerClip(
+        stem: string, speaker: string, duration = 5,
+    ): Promise<Blob> {
+        const resp = await fetch(
+            this.getSpeakerClipUrl(stem, speaker, duration),
+            {
+                headers: { "Authorization": `Bearer ${this.token}` },
+            },
+        );
+        if (!resp.ok) {
+            throw new DaemonError(resp.status, await resp.text());
+        }
+        return resp.blob();
+    }
+
     async patchConfig(
         patch: Partial<ApiConfigDto>,
     ): Promise<PatchConfigResponse> {
