@@ -302,6 +302,12 @@ class Recorder:
         """Stop streaming models and merge results if both succeeded."""
         from recap.pipeline.diarize import assign_speakers
 
+        # Detach the audio-capture callback first so any final drain chunks
+        # fired during ``AudioCapture.stop()`` don't invoke a half-torn-down
+        # streaming pipeline.
+        if self._audio_capture is not None:
+            self._audio_capture.on_chunk = None
+
         transcript_result: TranscriptResult | None = None
         diarizer_segments: list[dict] | None = None
 

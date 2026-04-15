@@ -123,14 +123,29 @@ def test_audio_capture_on_chunk_default_is_none(tmp_path):
     cap._test_feed_mock_frames(mic_frame=b"\x00" * 320, system_frame=b"\x01" * 320)
 
 
-def test_audio_capture_on_chunk_swallows_exceptions(tmp_path):
-    """A failing on_chunk callback must not crash the recording thread."""
+def test_audio_capture_on_chunk_swallows_exceptions(tmp_path, caplog):
+    """A failing on_chunk must not crash capture or poison subsequent invocations."""
     pytest.importorskip("numpy")
+
+    captured: list[tuple[bytes, int]] = []
+    call_count = [0]
+
+    def sometimes_boom(chunk: bytes, sample_rate: int) -> None:
+        call_count[0] += 1
+        if call_count[0] == 1:
+            raise RuntimeError("first call fails")
+        captured.append((chunk, sample_rate))
+
     cap = AudioCapture(output_path=tmp_path / "out.flac")
+    cap.on_chunk = sometimes_boom
+    with caplog.at_level("ERROR"):
+        cap._test_feed_mock_frames(mic_frame=b"\x00" * 320, system_frame=b"\x01" * 320)
+        cap._test_feed_mock_frames(mic_frame=b"\x02" * 320, system_frame=b"\x03" * 320)
 
-    def boom(chunk: bytes, sample_rate: int) -> None:
-        raise RuntimeError("callback exploded")
-
-    cap.on_chunk = boom
-    # If this raised, the recording thread would die. It must not.
-    cap._test_feed_mock_frames(mic_frame=b"\x00" * 320, system_frame=b"\x01" * 320)
+    # Callback fired on both chunks (exception didn't break the pipeline).
+    assert call_count[0] == 2
+    # Second call succeeded and delivered a (bytes, int) tuple.
+    assert len(captured) == 1
+    assert isinstance(captured[0][0], bytes) and isinstance(captured[0][1], int)
+    # The failure was logged.
+    assert "on_chunk callback raised" in caplog.text

@@ -44,3 +44,51 @@ class TestRecorder:
         with patch("shutil.disk_usage") as mock_usage:
             mock_usage.return_value = MagicMock(free=500_000_000)  # 500MB
             assert recorder._check_disk_space() is False
+
+
+def test_start_streaming_wires_on_chunk_to_feed_streaming_models(tmp_path):
+    """_start_streaming must route decoded chunks through _feed_streaming_models."""
+    recorder = Recorder(recordings_path=tmp_path)
+
+    # Provide a stand-in AudioCapture — only needs an on_chunk attribute that
+    # _start_streaming can assign to.
+    fake_capture = MagicMock()
+    fake_capture.on_chunk = None
+    recorder._audio_capture = fake_capture
+
+    # Patch the streaming model constructors so _start_streaming does not spin
+    # up real threads when it instantiates them.
+    with patch(
+        "recap.daemon.recorder.recorder.StreamingTranscriber",
+        return_value=MagicMock(),
+    ), patch(
+        "recap.daemon.recorder.recorder.StreamingDiarizer",
+        return_value=MagicMock(),
+    ):
+        recorder._start_streaming()
+
+    # The wiring invariant: _start_streaming must point on_chunk at
+    # _feed_streaming_models so decoded chunks reach both streaming models.
+    # Bound-method equality checks identity of (self, __func__), which is what
+    # we want — `is` fails because each attribute access creates a new bound
+    # method object.
+    assert recorder._audio_capture.on_chunk == recorder._feed_streaming_models
+    assert recorder._audio_capture.on_chunk.__func__ is Recorder._feed_streaming_models
+    assert recorder._audio_capture.on_chunk.__self__ is recorder
+
+
+def test_feed_streaming_models_forwards_to_transcriber_and_diarizer(tmp_path):
+    """_feed_streaming_models feeds both transcriber.feed_audio and diarizer.feed_audio."""
+    recorder = Recorder(recordings_path=tmp_path)
+
+    transcriber = MagicMock()
+    diarizer = MagicMock()
+    recorder._transcriber = transcriber
+    recorder._diarizer = diarizer
+
+    chunk = b"\x00" * 320
+    sample_rate = 16000
+    recorder._feed_streaming_models(chunk, sample_rate)
+
+    transcriber.feed_audio.assert_called_once_with(chunk, sample_rate)
+    diarizer.feed_audio.assert_called_once_with(chunk, sample_rate)
