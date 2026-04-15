@@ -34,6 +34,51 @@ export interface DaemonEvent {
     [key: string]: unknown;
 }
 
+export interface ApiOrg {
+    name: string;
+    subfolder: string;
+    default: boolean;
+}
+
+export interface ApiDetectionRule {
+    enabled: boolean;
+    behavior: "auto-record" | "prompt";
+    default_org: string | null;
+    default_backend: string | null;
+}
+
+export interface ApiCalendarProvider {
+    enabled: boolean;
+    calendar_id: string | null;
+    org: string | null;
+}
+
+export interface ApiKnownContact {
+    name: string;
+    aliases: string[];
+    email: string | null;
+}
+
+export interface ApiConfigDto {
+    vault_path: string;
+    recordings_path: string;
+    user_name: string | null;
+    plugin_port: number;
+    orgs: ApiOrg[];
+    default_org: string | null;
+    detection: Record<string, ApiDetectionRule>;
+    calendar: Record<string, ApiCalendarProvider>;
+    known_contacts: ApiKnownContact[];
+    recording_silence_timeout_minutes: number;
+    recording_max_duration_hours: number;
+    logging_retention_days: number;
+}
+
+export interface PatchConfigResponse {
+    status: string;
+    restart_required: boolean;
+}
+
 export class DaemonClient {
     private baseUrl: string;
     private token: string;
@@ -226,5 +271,26 @@ export class DaemonClient {
             if (entry) handler(entry);
         };
         return this.on("journal_entry", dispatch);
+    }
+
+    async getConfig(): Promise<ApiConfigDto> {
+        return this.get<ApiConfigDto>("/api/config");
+    }
+
+    async patchConfig(
+        patch: Partial<ApiConfigDto>,
+    ): Promise<PatchConfigResponse> {
+        const resp = await fetch(`${this.baseUrl}/api/config`, {
+            method: "PATCH",
+            headers: {
+                "Authorization": `Bearer ${this.token}`,
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify(patch),
+        });
+        if (!resp.ok) {
+            throw new DaemonError(resp.status, await resp.text());
+        }
+        return resp.json() as Promise<PatchConfigResponse>;
     }
 }
