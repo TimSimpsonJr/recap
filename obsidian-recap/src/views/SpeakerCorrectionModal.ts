@@ -7,8 +7,14 @@ export interface SpeakerInfo {
 }
 
 function stemFromRecordingPath(recordingPath: string): string {
+    // Note frontmatter may carry either the source ``.flac`` or the
+    // archived ``.m4a`` / ``.aac`` variant — depends on
+    // ``recording.archive-format`` (default ``aac``) and whether
+    // ``delete-source-after-archive`` is set. Normalise to the bare
+    // stem so the clip endpoint can resolve whichever format remains
+    // on disk.
     const basename = recordingPath.split(/[/\\]/).pop() || recordingPath;
-    return basename.replace(/\.flac$/i, "");
+    return basename.replace(/\.(flac|m4a|aac)$/i, "");
 }
 
 export class SpeakerCorrectionModal extends Modal {

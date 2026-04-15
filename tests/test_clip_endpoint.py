@@ -135,6 +135,72 @@ class TestClipValidation:
 
 
 @pytest.mark.asyncio
+class TestClipArchivedRecording:
+    """Regression for Task 13 review P1: the pipeline writes ``.m4a``
+    to note frontmatter when ``archive-format: aac`` (default) and can
+    delete the source ``.flac`` after conversion. The endpoint must
+    fall back to the archived file so playback survives that default.
+    """
+
+    async def test_m4a_only_recording_resolved(
+        self, daemon_client,
+    ) -> None:
+        client, daemon = daemon_client
+        stem = "archived-only"
+        m4a_path = daemon.config.recordings_path / f"{stem}.m4a"
+        m4a_path.write_bytes(b"\x00" * 1024)
+        _write_transcript(m4a_path)  # writes <stem>.transcript.json
+
+        cache_dir = daemon.config.recordings_path / f"{stem}.clips"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_file = cache_dir / "SPEAKER_00_5s.mp3"
+        cache_file.write_bytes(b"FAKEMP3")
+
+        resp = await client.get(
+            f"/api/recordings/{stem}/clip?speaker=SPEAKER_00",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 200
+        assert resp.headers["Content-Type"] == "audio/mpeg"
+        assert (await resp.read()) == b"FAKEMP3"
+
+    async def test_flac_preferred_when_both_exist(
+        self, daemon_client,
+    ) -> None:
+        client, daemon = daemon_client
+        stem = "both-formats"
+        flac_path = daemon.config.recordings_path / f"{stem}.flac"
+        m4a_path = daemon.config.recordings_path / f"{stem}.m4a"
+        flac_path.write_bytes(b"\x00" * 1024)
+        m4a_path.write_bytes(b"\x00" * 512)
+        _write_transcript(flac_path)  # <stem>.transcript.json beside FLAC
+
+        captured_cmd: list[list[str]] = []
+
+        async def fake_to_thread(fn, *args, **kwargs):
+            captured_cmd.append(list(args[0]))
+            cache_dir = daemon.config.recordings_path / f"{stem}.clips"
+            cache_dir.mkdir(parents=True, exist_ok=True)
+            (cache_dir / "SPEAKER_00_5s.mp3").write_bytes(b"OUT")
+            return (0, b"")
+
+        with patch(
+            "recap.daemon.server.asyncio.to_thread",
+            side_effect=fake_to_thread,
+        ):
+            resp = await client.get(
+                f"/api/recordings/{stem}/clip?speaker=SPEAKER_00",
+                headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+            )
+
+        assert resp.status == 200
+        # ffmpeg invoked with the FLAC path, not the M4A.
+        assert captured_cmd, "ffmpeg was not called"
+        assert str(flac_path) in captured_cmd[0]
+        assert str(m4a_path) not in captured_cmd[0]
+
+
+@pytest.mark.asyncio
 class TestClipCache:
     async def test_cache_hit_serves_without_ffmpeg(
         self, clip_fixture,

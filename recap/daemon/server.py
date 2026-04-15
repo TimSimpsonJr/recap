@@ -250,10 +250,22 @@ async def _api_recording_clip(request: web.Request) -> web.Response:
             status=400,
         )
 
-    audio_path = daemon.config.recordings_path / f"{stem}.flac"
-    if not audio_path.exists():
+    # Source recordings are FLAC, but the archive stage converts to
+    # ``.m4a`` and can delete the source (``delete-source-after-archive``).
+    # Prefer the FLAC if it's still on disk, else fall back to the
+    # archived MP4/AAC — ffmpeg reads both.
+    flac_path = daemon.config.recordings_path / f"{stem}.flac"
+    m4a_path = daemon.config.recordings_path / f"{stem}.m4a"
+    if flac_path.exists():
+        audio_path = flac_path
+    elif m4a_path.exists():
+        audio_path = m4a_path
+    else:
         return web.json_response({"error": "recording not found"}, status=404)
 
+    # Transcript path is derived from whichever audio file we resolved;
+    # ``with_suffix`` replaces the last extension so both FLAC and M4A
+    # map to the same ``<stem>.transcript.json`` next to the source.
     transcript_file = artifact_transcript_path(audio_path)
     if not transcript_file.exists():
         return web.json_response(
