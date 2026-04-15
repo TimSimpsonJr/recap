@@ -626,3 +626,50 @@ class TestApiIndexRename:
             "event_id": "evt-xyz",
             "new_path": "Clients/D/Meetings/renamed.md",
         }
+
+    async def test_api_index_rename_non_string_fields_returns_400(self, daemon_client):
+        """Truthy non-string values reach the isinstance guard, not PurePosixPath."""
+        client, _ = daemon_client
+
+        # new_path as int
+        resp = await client.post(
+            "/api/index/rename",
+            json={"event_id": "evt-abc", "new_path": 42},
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 400
+        data = await resp.json()
+        assert "must be strings" in data["error"]
+
+        # new_path as list
+        resp = await client.post(
+            "/api/index/rename",
+            json={"event_id": "evt-abc", "new_path": [1, 2]},
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 400
+
+        # event_id as dict
+        resp = await client.post(
+            "/api/index/rename",
+            json={"event_id": {"x": 1}, "new_path": "Clients/D/new.md"},
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 400
+
+    async def test_api_index_rename_unknown_event_id_is_noop(self, daemon_client):
+        """Unknown event_id returns 200 with no side effects (matches index semantics)."""
+        client, daemon = daemon_client
+        # Don't seed the index — 'nope' is unknown.
+        resp = await client.post(
+            "/api/index/rename",
+            json={"event_id": "nope", "new_path": "Clients/D/new.md"},
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 200
+        assert daemon.event_index.lookup("nope") is None
+
+        # No index_rename journal entry should be emitted for the no-op.
+        entries = daemon.event_journal.tail(limit=50)
+        rename_entries = [e for e in entries if e.get("event") == "index_rename"]
+        assert rename_entries == []

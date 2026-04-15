@@ -420,6 +420,11 @@ async def _api_index_rename(request: web.Request) -> web.Response:
         return web.json_response(
             {"error": "event_id and new_path required"}, status=400
         )
+    if not isinstance(event_id, str) or not isinstance(new_path, str):
+        return web.json_response(
+            {"error": "event_id and new_path must be strings"},
+            status=400,
+        )
 
     # Reject absolute paths in either POSIX form (``/foo/bar``) or
     # Windows form (``C:/foo`` / ``C:\foo``). EventIndex stores paths
@@ -433,13 +438,20 @@ async def _api_index_rename(request: web.Request) -> web.Response:
         )
 
     rel_path = pathlib.PurePosixPath(pathlib.Path(new_path).as_posix())
+    # Check existence before rename so the journal reflects actual state
+    # change: EventIndex.rename() silently no-ops on unknown event_id,
+    # and observability should show "what the daemon actually did," not
+    # "what the plugin claimed." The theoretical lookup/rename race is
+    # harmless under the index lock.
+    existed = daemon.event_index.lookup(event_id) is not None
     daemon.event_index.rename(event_id, rel_path)
-    daemon.emit_event(
-        "info",
-        "index_rename",
-        f"Renamed event-index entry {event_id} -> {rel_path}",
-        payload={"event_id": event_id, "new_path": str(rel_path)},
-    )
+    if existed:
+        daemon.emit_event(
+            "info",
+            "index_rename",
+            f"Renamed event-index entry {event_id} -> {rel_path}",
+            payload={"event_id": event_id, "new_path": str(rel_path)},
+        )
     return web.json_response({"status": "ok"})
 
 
