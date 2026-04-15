@@ -9,20 +9,16 @@ from typing import Any
 
 import pytest
 
-from recap.daemon.config import DaemonConfig, DaemonPortConfig, OrgConfig
 from recap.daemon.service import Daemon
+from tests.conftest import (
+    build_daemon_callbacks,
+    make_daemon_config,
+    minimal_daemon_args,
+)
 
 
-def _make_config(tmp_path: pathlib.Path) -> DaemonConfig:
-    cfg = DaemonConfig.__new__(DaemonConfig)
-    cfg.vault_path = tmp_path / "vault"
-    cfg.vault_path.mkdir()
-    cfg.recordings_path = tmp_path / "rec"
-    cfg.recordings_path.mkdir()
-    cfg._orgs = [OrgConfig(name="d", subfolder="Clients/D", default=True)]
-    # Lifecycle test needs daemon_ports for the HTTP runner.
-    cfg.daemon_ports = DaemonPortConfig(plugin_port=0)
-    return cfg
+def _make_config(tmp_path: pathlib.Path):
+    return make_daemon_config(tmp_path)
 
 
 class TestDaemonConstruction:
@@ -123,87 +119,17 @@ class TestDaemonLoopAccess:
 
 
 # ----------------------------------------------------------------------
-# Stub subservices for the lifecycle test (Phase 3 Task 3)
+# Stub subservices live in tests/conftest.py (Phase 3 Task 6 extraction).
+# Local aliases keep the diff in this file minimal.
 # ----------------------------------------------------------------------
 
 
-class _StubRecorder:
-    """Minimal recorder stub: only exposes the surface ``stop()`` touches."""
-
-    def __init__(self) -> None:
-        self.stopped = False
-
-    def stop(self) -> None:
-        self.stopped = True
-
-
-class _StubScheduler:
-    """Stub CalendarSyncScheduler with async start() + sync stop()."""
-
-    def __init__(self) -> None:
-        self.started = False
-        self.stopped = False
-        self._task: asyncio.Task | None = None
-
-    async def start(self) -> None:
-        self.started = True
-        # Spawn a benign task that just sleeps until cancelled, mirroring
-        # the real scheduler's polling-loop shape.
-        self._task = asyncio.get_running_loop().create_task(self._run())
-
-    async def _run(self) -> None:
-        try:
-            await asyncio.sleep(3600)
-        except asyncio.CancelledError:
-            return
-
-    def stop(self) -> None:
-        self.stopped = True
-        if self._task is not None:
-            self._task.cancel()
-            self._task = None
-
-
-class _StubDetector:
-    """Stub MeetingDetector: sync start() / async stop() like the real one."""
-
-    def __init__(self) -> None:
-        self.started = False
-        self.stopped = False
-        self._task: asyncio.Task | None = None
-
-    def start(self) -> None:
-        self.started = True
-        self._task = asyncio.get_event_loop().create_task(self._run())
-
-    async def _run(self) -> None:
-        try:
-            await asyncio.sleep(3600)
-        except asyncio.CancelledError:
-            return
-
-    async def stop(self) -> None:
-        self.stopped = True
-        if self._task is not None:
-            self._task.cancel()
-            self._task = None
-
-
 def _stub_callbacks(daemon: Daemon) -> dict[str, Any]:
-    async def _noop(*args, **kwargs):
-        return None
-
-    return {
-        "auth_token": "test-token",
-        "recorder": _StubRecorder(),
-        "detector": _StubDetector(),
-        "scheduler": _StubScheduler(),
-        "pipeline_trigger": _noop,
-    }
+    return build_daemon_callbacks(daemon)
 
 
 def _minimal_args() -> argparse.Namespace:
-    return argparse.Namespace(config=pathlib.Path("test-config.yaml"))
+    return minimal_daemon_args()
 
 
 class TestDaemonLifecycle:

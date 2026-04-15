@@ -7,6 +7,13 @@ Schema v1 line format (one per line):
 Rotation: when the active file exceeds ``max_bytes``, it is moved to
 ``<path>.1`` (one backup kept). Older backups (``.2``, ``.3``, ...) are
 not created; ``prune_old_backups`` deletes ``.1`` if older than N days.
+
+Subscribers: callers may register a callback via ``subscribe()`` to be
+invoked with each new entry. Callbacks fire on whatever thread invoked
+``append()``; subscribers that need to run on an asyncio loop are
+responsible for marshalling via ``asyncio.run_coroutine_threadsafe``.
+Subscriber exceptions are caught and logged so a misbehaving subscriber
+cannot block the journal.
 """
 from __future__ import annotations
 
@@ -16,7 +23,7 @@ import pathlib
 import threading
 import time
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +44,27 @@ class EventJournal:
         self._backup = pathlib.Path(str(path) + ".1")
         self._max_bytes = max_bytes
         self._lock = threading.Lock()
+        self._subscribers: list[Callable[[dict[str, Any]], None]] = []
+        self._subscriber_lock = threading.Lock()
+
+    def subscribe(
+        self, callback: Callable[[dict[str, Any]], None],
+    ) -> Callable[[], None]:
+        """Register ``callback`` to receive each appended entry.
+
+        Returns an unsubscribe function. The callback is invoked on
+        whatever thread called :meth:`append`; subscribers that need to
+        run on an asyncio loop must marshal via ``run_coroutine_threadsafe``.
+        """
+        with self._subscriber_lock:
+            self._subscribers.append(callback)
+
+        def _unsubscribe() -> None:
+            with self._subscriber_lock:
+                if callback in self._subscribers:
+                    self._subscribers.remove(callback)
+
+        return _unsubscribe
 
     def append(
         self,
@@ -62,6 +90,21 @@ class EventJournal:
             self._rotate_if_needed_locked(len(line.encode("utf-8")))
             with self._path.open("a", encoding="utf-8") as f:
                 f.write(line)
+
+        # Fan out to subscribers OUTSIDE the file-write lock so a slow
+        # subscriber can't block concurrent appends. A snapshot of the
+        # subscriber list is taken under the subscriber lock so an
+        # unsubscribe during fan-out doesn't mutate the list in flight.
+        with self._subscriber_lock:
+            subscribers = list(self._subscribers)
+        for cb in subscribers:
+            try:
+                cb(entry)
+            except Exception:
+                # A bad subscriber must not block the journal.
+                logger.exception(
+                    "Journal subscriber raised for event %r", event,
+                )
 
     def tail(self, *, level: Optional[str] = None, limit: int = 50) -> list[dict[str, Any]]:
         with self._lock:

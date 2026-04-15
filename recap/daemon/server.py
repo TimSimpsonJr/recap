@@ -6,8 +6,9 @@ import asyncio
 import hmac
 import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable, Awaitable
+from typing import TYPE_CHECKING, Any, Callable, Awaitable
 
 import aiohttp
 from aiohttp import web
@@ -17,6 +18,7 @@ if TYPE_CHECKING:
     from recap.daemon.config import DaemonConfig
     from recap.daemon.recorder.detector import MeetingDetector
     from recap.daemon.recorder.recorder import Recorder
+    from recap.daemon.service import Daemon
 
 logger = logging.getLogger("recap.daemon.server")
 
@@ -95,19 +97,32 @@ async def _meeting_ended(request: web.Request) -> web.Response:
 async def _api_status(request: web.Request) -> web.Response:
     recorder: Recorder | None = request.app.get(_RECORDER_KEY)
     scheduler: CalendarSyncScheduler | None = request.app.get(_SCHEDULER_KEY)
+    daemon: Daemon | None = request.app.get("daemon")
 
     last_sync = None
     if scheduler is not None and scheduler.last_sync is not None:
         last_sync = scheduler.last_sync.isoformat()
+
+    # Real uptime + recent errors, sourced from the Daemon if wired.
+    uptime: float = 0.0
+    recent_errors: list[dict[str, Any]] = []
+    if daemon is not None:
+        if daemon.started_at is not None:
+            now = datetime.now(timezone.utc).astimezone()
+            uptime = (now - daemon.started_at).total_seconds()
+        if daemon.event_journal is not None:
+            recent_errors = daemon.event_journal.tail(level="error", limit=10)
 
     if recorder is None:
         return web.json_response(
             {
                 "state": "idle",
                 "recording": None,
-                "daemon_uptime": 0,
+                "daemon_uptime": uptime,
+                "uptime_seconds": uptime,
                 "last_calendar_sync": last_sync,
-                "errors": [],
+                "errors": recent_errors,
+                "recent_errors": recent_errors,
             }
         )
 
@@ -123,9 +138,11 @@ async def _api_status(request: web.Request) -> web.Response:
         {
             "state": state,
             "recording": recording_info,
-            "daemon_uptime": 0,
+            "daemon_uptime": uptime,
+            "uptime_seconds": uptime,
             "last_calendar_sync": last_sync,
-            "errors": [],
+            "errors": recent_errors,
+            "recent_errors": recent_errors,
         }
     )
 
@@ -434,6 +451,28 @@ async def _websocket_handler(request: web.Request) -> web.WebSocketResponse:
     clients.add(ws)
     logger.debug("WebSocket client connected (%d total)", len(clients))
 
+    # Subscribe to the journal so this client receives a ``journal_entry``
+    # frame for every new entry. The subscriber fires on whatever thread
+    # called EventJournal.append(), so we marshal to the running loop via
+    # run_coroutine_threadsafe. run_coroutine_threadsafe failures (loop
+    # closed, etc.) are logged and swallowed.
+    daemon: Daemon | None = request.app.get("daemon")
+    loop = asyncio.get_running_loop()
+    unsubscribe: Callable[[], None] | None = None
+    if daemon is not None and daemon.event_journal is not None:
+        def _on_journal_entry(entry: dict[str, Any]) -> None:
+            try:
+                if ws.closed or loop.is_closed():
+                    return
+                asyncio.run_coroutine_threadsafe(
+                    ws.send_json({"event": "journal_entry", "entry": entry}),
+                    loop,
+                )
+            except Exception:
+                logger.exception("Failed to marshal journal entry to WebSocket")
+
+        unsubscribe = daemon.event_journal.subscribe(_on_journal_entry)
+
     try:
         async for msg in ws:
             if msg.type == aiohttp.WSMsgType.ERROR:
@@ -441,6 +480,11 @@ async def _websocket_handler(request: web.Request) -> web.WebSocketResponse:
                     "WebSocket error: %s", ws.exception()
                 )
     finally:
+        if unsubscribe is not None:
+            try:
+                unsubscribe()
+            except Exception:
+                logger.exception("Failed to unsubscribe journal listener")
         clients.discard(ws)
         logger.debug("WebSocket client disconnected (%d remaining)", len(clients))
 

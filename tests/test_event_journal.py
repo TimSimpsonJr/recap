@@ -111,3 +111,150 @@ class TestEventJournalRotation:
         os.utime(backup, (old, old))
         j.prune_old_backups(max_age_days=30)
         assert not backup.exists()
+
+
+class TestJournalSubscribers:
+    """Task 6: pub-sub shim so the HTTP layer can broadcast new entries."""
+
+    def test_subscribe_receives_appended_entries(self, tmp_path):
+        j = _make_journal(tmp_path)
+        received: list[dict] = []
+        unsubscribe = j.subscribe(received.append)
+
+        j.append("info", "e1", "m1")
+        j.append("info", "e2", "m2")
+
+        assert [e["event"] for e in received] == ["e1", "e2"]
+        assert [e["message"] for e in received] == ["m1", "m2"]
+
+        unsubscribe()
+        j.append("info", "e3", "m3")
+
+        # Unsubscribed callback sees no further entries.
+        assert [e["event"] for e in received] == ["e1", "e2"]
+
+    def test_subscribe_returns_unsubscribe_callable(self, tmp_path):
+        j = _make_journal(tmp_path)
+        unsub = j.subscribe(lambda _e: None)
+        assert callable(unsub)
+        # Double-unsubscribe is a no-op.
+        unsub()
+        unsub()
+
+    def test_multiple_subscribers_each_receive_entries(self, tmp_path):
+        j = _make_journal(tmp_path)
+        a: list[dict] = []
+        b: list[dict] = []
+        j.subscribe(a.append)
+        j.subscribe(b.append)
+
+        j.append("warning", "silence", "no audio")
+
+        assert len(a) == 1
+        assert len(b) == 1
+        assert a[0]["event"] == "silence"
+        assert b[0]["event"] == "silence"
+
+    def test_subscriber_receives_payload_when_present(self, tmp_path):
+        j = _make_journal(tmp_path)
+        received: list[dict] = []
+        j.subscribe(received.append)
+
+        j.append("error", "pipeline_failed", "boom", payload={"stage": "analyze"})
+
+        assert received[0]["payload"] == {"stage": "analyze"}
+        assert received[0]["level"] == "error"
+        assert "ts" in received[0]
+
+    def test_subscriber_exception_does_not_block_journal(self, tmp_path, caplog):
+        """A misbehaving subscriber must not prevent the append from persisting."""
+        j = _make_journal(tmp_path)
+
+        def _boom(_entry: dict) -> None:
+            raise RuntimeError("subscriber broken")
+
+        j.subscribe(_boom)
+        # Follow-on good subscriber must still fire.
+        good: list[dict] = []
+        j.subscribe(good.append)
+
+        with caplog.at_level("ERROR"):
+            j.append("info", "ok", "still writes")
+
+        # File was written.
+        lines = (tmp_path / "events.jsonl").read_text(encoding="utf-8").splitlines()
+        assert len(lines) == 1
+        # Good subscriber still ran after the bad one raised.
+        assert len(good) == 1
+        # Exception was logged, not propagated.
+        assert any(
+            "Journal subscriber raised" in r.getMessage()
+            for r in caplog.records
+        )
+
+    def test_subscriber_fires_from_append_thread(self, tmp_path):
+        """Subscribers run on whatever thread invoked append()."""
+        import threading as _t
+        j = _make_journal(tmp_path)
+        thread_ids: list[int] = []
+        j.subscribe(lambda _e: thread_ids.append(_t.get_ident()))
+
+        other_thread_ident: dict[str, int] = {}
+
+        def _writer() -> None:
+            other_thread_ident["id"] = _t.get_ident()
+            j.append("info", "from_thread", "hi")
+
+        t = _t.Thread(target=_writer)
+        t.start()
+        t.join()
+
+        assert thread_ids == [other_thread_ident["id"]]
+        assert thread_ids[0] != _t.get_ident()
+
+    def test_unsubscribe_during_iteration_is_safe(self, tmp_path):
+        """A subscriber that unsubscribes itself shouldn't corrupt fan-out."""
+        j = _make_journal(tmp_path)
+        seen_a: list[dict] = []
+        seen_b: list[dict] = []
+
+        # Register callback A, grab an unsubscribe handle.
+        def _a(entry: dict) -> None:
+            seen_a.append(entry)
+            unsub_a()  # self-unsubscribe mid-fan-out
+
+        unsub_a = j.subscribe(_a)
+        j.subscribe(seen_b.append)
+
+        j.append("info", "first", "m1")
+        j.append("info", "second", "m2")
+
+        # A fired once, then unsubscribed.
+        assert [e["event"] for e in seen_a] == ["first"]
+        # B keeps receiving.
+        assert [e["event"] for e in seen_b] == ["first", "second"]
+
+    def test_append_is_thread_safe_with_subscribers(self, tmp_path):
+        """Concurrent appends must deliver each entry to subscribers exactly once."""
+        j = _make_journal(tmp_path)
+        lock = threading.Lock()
+        received: list[dict] = []
+
+        def _cb(entry: dict) -> None:
+            with lock:
+                received.append(entry)
+
+        j.subscribe(_cb)
+
+        def _writer(n: int) -> None:
+            for i in range(25):
+                j.append("info", f"t{n}", f"w{n}-{i}")
+
+        threads = [threading.Thread(target=_writer, args=(n,)) for n in range(4)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        # Subscriber got called once per append across all writers.
+        assert len(received) == 100
