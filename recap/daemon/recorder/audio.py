@@ -6,9 +6,12 @@ for real-time FLAC encoding with continuous flush to disk.
 
 from __future__ import annotations
 
+import logging
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
+
+logger = logging.getLogger(__name__)
 
 try:
     import numpy as np
@@ -126,6 +129,8 @@ class AudioCapture:
     frames into a pyFLAC StreamEncoder that flushes continuously to disk.
     """
 
+    on_chunk: Callable[[bytes, int], None] | None = None
+
     def __init__(
         self,
         output_path: Path,
@@ -148,6 +153,11 @@ class AudioCapture:
         self._output_file: Any = None
         self._mic_buffer: bytes = b""
         self._loopback_buffer: bytes = b""
+
+        # Public callback invoked with (mono_chunk_bytes, sample_rate) after
+        # each interleave/encode cycle. Consumers (e.g. streaming ASR/diarization)
+        # can subscribe without reaching into private state.
+        self.on_chunk = None
 
     @property
     def output_path(self) -> Path:
@@ -184,11 +194,14 @@ class AudioCapture:
         # Normalize int16 range to 0.0-1.0
         return float(rms / 32768.0)
 
-    def _interleave_and_encode(self, chunk_frames: int) -> None:
-        """Take buffered mic and loopback data, interleave, and feed to encoder.
+    def _combine_frames(self, chunk_frames: int) -> tuple[Any, Any, bytes]:
+        """Drain both buffers and return mic/loopback samples plus a mono mix.
 
-        Channel layout: [mic_sample, loopback_sample] per frame.
-        Both sources are mono int16; output is stereo int16.
+        Returns:
+            (mic_samples, lb_samples, mono_chunk_bytes) where:
+            - mic_samples and lb_samples are numpy int16 arrays of length chunk_frames
+            - mono_chunk_bytes is the averaged (mic + loopback) mix as int16 bytes,
+              suitable for feeding to streaming ASR/diarization models.
         """
         numpy = _require_numpy()
         bytes_needed = chunk_frames * 2  # 2 bytes per int16 sample
@@ -205,13 +218,35 @@ class AudioCapture:
         if len(lb_data) < bytes_needed:
             lb_data += b"\x00" * (bytes_needed - len(lb_data))
 
-        mic_samples = numpy.frombuffer(mic_data, dtype=numpy.int16)
-        lb_samples = numpy.frombuffer(lb_data, dtype=numpy.int16)
+        mic_samples = numpy.frombuffer(mic_data, dtype=numpy.int16)[:chunk_frames]
+        lb_samples = numpy.frombuffer(lb_data, dtype=numpy.int16)[:chunk_frames]
+
+        # Build mono mix (mic + loopback averaged) for streaming consumers.
+        # Widen to int32 before averaging to avoid int16 overflow.
+        mono_combined = ((mic_samples.astype(numpy.int32) + lb_samples.astype(numpy.int32)) // 2).astype(numpy.int16)
+        mono_chunk_bytes = mono_combined.tobytes()
+
+        return mic_samples, lb_samples, mono_chunk_bytes
+
+    def _interleave_and_encode(self, chunk_frames: int) -> None:
+        """Take buffered mic and loopback data, interleave, and feed to encoder.
+
+        Channel layout: [mic_sample, loopback_sample] per frame.
+        Both sources are mono int16; output is stereo int16.
+
+        After encoding, invokes ``on_chunk(mono_chunk_bytes, sample_rate)`` if
+        a callback is registered. The callback runs in the recording thread;
+        exceptions are logged and swallowed so a misbehaving consumer cannot
+        crash capture.
+        """
+        numpy = _require_numpy()
+
+        mic_samples, lb_samples, mono_chunk_bytes = self._combine_frames(chunk_frames)
 
         # Interleave: [mic0, lb0, mic1, lb1, ...]
         interleaved = numpy.empty(chunk_frames * 2, dtype=numpy.int16)
-        interleaved[0::2] = mic_samples[:chunk_frames]
-        interleaved[1::2] = lb_samples[:chunk_frames]
+        interleaved[0::2] = mic_samples
+        interleaved[1::2] = lb_samples
 
         # Update RMS from the interleaved audio
         self._current_rms = self._compute_rms(interleaved)
@@ -220,6 +255,31 @@ class AudioCapture:
         frames = interleaved.reshape(-1, 2)
         if self._encoder is not None:
             self._encoder.process(frames)
+
+        if self.on_chunk is not None:
+            try:
+                self.on_chunk(mono_chunk_bytes, self._sample_rate)
+            except Exception:
+                logger.exception("on_chunk callback raised")
+
+    def _test_feed_mock_frames(
+        self, mic_frame: bytes, system_frame: bytes
+    ) -> None:  # pragma: no cover - test-only helper
+        """Test helper: push raw mic/system bytes into the buffers and drive the
+        interleave/encode cycle exactly as the drain loop would.
+
+        Designed to exercise the real `_interleave_and_encode` path (including
+        `on_chunk`) without requiring a live pyFLAC encoder or WASAPI streams.
+        The encoder is expected to be ``None`` in tests, in which case the
+        FLAC-encode step is skipped but the callback still fires.
+        """
+        if len(mic_frame) != len(system_frame):
+            raise ValueError("mic_frame and system_frame must have the same length")
+        chunk_frames = len(mic_frame) // 2  # int16 = 2 bytes per sample
+        with self._lock:
+            self._mic_buffer += mic_frame
+            self._loopback_buffer += system_frame
+        self._interleave_and_encode(chunk_frames)
 
     def _mic_callback(self, in_data: bytes, frame_count: int, time_info: dict, status: int) -> tuple[None, int]:
         """PyAudioWPatch callback for microphone stream."""

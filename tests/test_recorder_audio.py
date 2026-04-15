@@ -92,3 +92,45 @@ class TestAudioCaptureConfig:
     def test_current_rms_initially_zero(self, tmp_path):
         capture = AudioCapture(output_path=tmp_path / "test.flac")
         assert capture.current_rms == 0.0
+
+
+def test_audio_capture_invokes_on_chunk_after_interleave(tmp_path):
+    """Public on_chunk callback replaces the monkey-patch."""
+    pytest.importorskip("numpy")
+    captured: list[tuple[bytes, int]] = []
+
+    cap = AudioCapture(output_path=tmp_path / "out.flac")
+    cap.on_chunk = lambda chunk, sample_rate: captured.append((chunk, sample_rate))
+    # Feed two fake frames through the combine-and-encode path using the
+    # helper the class exposes for tests. The encoder stays None so no pyflac
+    # runtime is required.
+    cap._test_feed_mock_frames(mic_frame=b"\x00" * 320, system_frame=b"\x01" * 320)
+    cap._test_feed_mock_frames(mic_frame=b"\x02" * 320, system_frame=b"\x03" * 320)
+
+    assert len(captured) == 2
+    # Chunks are bytes and sample_rate is an int
+    assert all(isinstance(c[0], bytes) and isinstance(c[1], int) for c in captured)
+    # Sample rate reflects the AudioCapture configuration
+    assert all(c[1] == cap.sample_rate for c in captured)
+
+
+def test_audio_capture_on_chunk_default_is_none(tmp_path):
+    """on_chunk defaults to None and the capture still works without a callback."""
+    pytest.importorskip("numpy")
+    cap = AudioCapture(output_path=tmp_path / "out.flac")
+    assert cap.on_chunk is None
+    # Should not raise even with no callback wired up.
+    cap._test_feed_mock_frames(mic_frame=b"\x00" * 320, system_frame=b"\x01" * 320)
+
+
+def test_audio_capture_on_chunk_swallows_exceptions(tmp_path):
+    """A failing on_chunk callback must not crash the recording thread."""
+    pytest.importorskip("numpy")
+    cap = AudioCapture(output_path=tmp_path / "out.flac")
+
+    def boom(chunk: bytes, sample_rate: int) -> None:
+        raise RuntimeError("callback exploded")
+
+    cap.on_chunk = boom
+    # If this raised, the recording thread would die. It must not.
+    cap._test_feed_mock_frames(mic_frame=b"\x00" * 320, system_frame=b"\x01" * 320)

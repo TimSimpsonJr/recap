@@ -280,47 +280,23 @@ class Recorder:
         except Exception:
             logger.warning("Streaming diarizer failed to start", exc_info=True)
 
-        # Hook into the audio drain loop to feed streaming models.
-        # We wrap _interleave_and_encode to capture mic buffer data before
-        # it is drained, then feed it to the streaming models.
+        # Subscribe to the public on_chunk callback so the streaming models
+        # receive combined mono audio directly, without reaching into private
+        # audio-capture state.
         if self._audio_capture is not None:
-            original_interleave = self._audio_capture._interleave_and_encode
-            capture = self._audio_capture
-            transcriber = self._transcriber
-            diarizer = self._diarizer
-            sample_rate = self._sample_rate
+            self._audio_capture.on_chunk = self._feed_streaming_models
 
-            def _interleave_and_feed(chunk_frames: int) -> None:
-                # Snapshot both buffers before interleave drains them
-                bytes_needed = chunk_frames * 2  # int16 = 2 bytes per sample
-                with capture._lock:
-                    mic_snapshot = capture._mic_buffer[:bytes_needed]
-                    lb_snapshot = capture._loopback_buffer[:bytes_needed]
+    def _feed_streaming_models(self, chunk: bytes, sample_rate: int) -> None:
+        """Route a combined mono audio chunk to the streaming ASR + diarizer.
 
-                original_interleave(chunk_frames)
-
-                # Build combined mono audio (same mix the FLAC encoder gets)
-                # by averaging mic + loopback so streaming models hear both
-                # the local user and remote participants.
-                if mic_snapshot or lb_snapshot:
-                    import numpy as np
-
-                    if len(mic_snapshot) < bytes_needed:
-                        mic_snapshot += b"\x00" * (bytes_needed - len(mic_snapshot))
-                    if len(lb_snapshot) < bytes_needed:
-                        lb_snapshot += b"\x00" * (bytes_needed - len(lb_snapshot))
-
-                    mic_arr = np.frombuffer(mic_snapshot, dtype=np.int16).astype(np.int32)
-                    lb_arr = np.frombuffer(lb_snapshot, dtype=np.int16).astype(np.int32)
-                    combined = ((mic_arr + lb_arr) // 2).astype(np.int16)
-                    combined_bytes = combined.tobytes()
-
-                    if transcriber is not None:
-                        transcriber.feed_audio(combined_bytes, sample_rate)
-                    if diarizer is not None:
-                        diarizer.feed_audio(combined_bytes, sample_rate)
-
-            self._audio_capture._interleave_and_encode = _interleave_and_feed  # type: ignore[assignment]
+        Invoked by ``AudioCapture`` once per interleave cycle. Each model
+        already handles its own error state internally (see
+        ``StreamingTranscriber.feed_audio`` / ``StreamingDiarizer.feed_audio``).
+        """
+        if self._transcriber is not None:
+            self._transcriber.feed_audio(chunk, sample_rate)
+        if self._diarizer is not None:
+            self._diarizer.feed_audio(chunk, sample_rate)
 
     def _stop_streaming(self) -> None:
         """Stop streaming models and merge results if both succeeded."""
