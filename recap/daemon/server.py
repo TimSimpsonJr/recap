@@ -31,6 +31,9 @@ _CONFIG_KEY = web.AppKey("config", object)
 _SCHEDULER_KEY = web.AppKey("scheduler", object)
 _AUTH_TOKEN_KEY = web.AppKey("auth_token", str)
 
+_MAX_EVENTS_LIMIT = 500
+_DEFAULT_EVENTS_LIMIT = 100
+
 
 async def broadcast(app: web.Application, message: dict) -> None:
     """Send a JSON message to all connected WebSocket clients."""
@@ -109,6 +112,54 @@ async def _api_status(request: web.Request) -> web.Response:
             "recent_errors": recent_errors,
         }
     )
+
+
+async def _api_events(request: web.Request) -> web.Response:
+    """GET /api/events -- journal backfill for plugin notification history.
+
+    Supports ``limit`` (clamped to [1, ``_MAX_EVENTS_LIMIT``], default
+    ``_DEFAULT_EVENTS_LIMIT``) and ``since`` (RFC3339 timestamp; strict
+    greater-than filter). Returns entries ascending by timestamp.
+
+    Malformed query params return 400; out-of-range ``limit`` values are
+    clamped. Missing/invalid Bearer is rejected by ``_auth_middleware``
+    before reaching this handler.
+    """
+    daemon: Daemon = request.app["daemon"]
+
+    limit_str = request.query.get("limit", str(_DEFAULT_EVENTS_LIMIT))
+    try:
+        limit = int(limit_str)
+    except ValueError:
+        return web.json_response({"error": "limit must be an integer"}, status=400)
+    limit = max(1, min(_MAX_EVENTS_LIMIT, limit))
+
+    since_str = request.query.get("since")
+    since_dt = None
+    if since_str is not None:
+        try:
+            since_dt = datetime.fromisoformat(since_str)
+        except ValueError:
+            return web.json_response(
+                {"error": "since must be RFC3339 timestamp"}, status=400,
+            )
+
+    raw_entries = daemon.event_journal.tail(limit=_MAX_EVENTS_LIMIT)
+    filtered = []
+    for entry in raw_entries:
+        ts_str = entry.get("ts")
+        if not isinstance(ts_str, str):
+            continue
+        try:
+            entry_dt = datetime.fromisoformat(ts_str)
+        except ValueError:
+            continue
+        if since_dt is not None and entry_dt <= since_dt:
+            continue
+        filtered.append(entry)
+
+    result = filtered[-limit:] if len(filtered) > limit else filtered
+    return web.json_response({"entries": result})
 
 
 async def _record_start(request: web.Request) -> web.Response:
@@ -737,6 +788,7 @@ def create_app(
     # every path starting with /api/, except /api/ws which gates via
     # its own query-token check).
     app.router.add_get("/api/status", _api_status)
+    app.router.add_get("/api/events", _api_events)
     app.router.add_post("/api/record/start", _record_start)
     app.router.add_post("/api/record/stop", _record_stop)
     app.router.add_post("/api/arm", _arm)

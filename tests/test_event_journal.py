@@ -24,6 +24,7 @@ class TestEventJournalAppend:
         assert e0["event"] == "startup"
         assert e0["message"] == "Daemon started"
         assert "ts" in e0
+        assert "." in e0["ts"]
         assert "payload" not in e0  # omitted when None
 
     def test_append_includes_payload_when_provided(self, tmp_path):

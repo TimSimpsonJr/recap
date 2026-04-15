@@ -77,7 +77,7 @@ class EventJournal:
         if level not in _VALID_LEVELS:
             raise ValueError(f"invalid level {level!r}; expected one of {_VALID_LEVELS}")
         entry: dict[str, Any] = {
-            "ts": datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds"),
+            "ts": datetime.now(timezone.utc).astimezone().isoformat(),
             "level": level,
             "event": event,
             "message": message,
