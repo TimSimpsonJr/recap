@@ -38,6 +38,10 @@ class RecapTray:
         Called with the chosen org name when the user starts recording.
     on_stop_recording:
         Called when the user stops recording.
+    on_pair_extension:
+        Called when the user clicks "Pair browser extension...". Opens
+        the :class:`PairingWindow` so the extension can fetch
+        ``/bootstrap/token`` (design §0.5).
     on_quit:
         Called when the user clicks Quit.
     """
@@ -47,11 +51,13 @@ class RecapTray:
         orgs: list[str],
         on_start_recording: Callable[[str], None] | None = None,
         on_stop_recording: Callable[[], None] | None = None,
+        on_pair_extension: Callable[[], None] | None = None,
         on_quit: Callable[[], None] | None = None,
     ) -> None:
         self._orgs = orgs
         self._on_start_recording = on_start_recording
         self._on_stop_recording = on_stop_recording
+        self._on_pair_extension = on_pair_extension
         self._on_quit = on_quit
 
         self._state = "idle"
@@ -92,6 +98,11 @@ class RecapTray:
                 enabled=self._is_recording(),
             ),
             pystray.Menu.SEPARATOR,
+            pystray.MenuItem(
+                "Pair browser extension...",
+                self._handle_pair_extension,
+            ),
+            pystray.Menu.SEPARATOR,
             pystray.MenuItem("Quit", self._handle_quit),
         )
 
@@ -109,6 +120,13 @@ class RecapTray:
         logger.info("Stop recording requested")
         if self._on_stop_recording:
             self._on_stop_recording()
+
+    def _handle_pair_extension(
+        self, icon: pystray.Icon, item: pystray.MenuItem,
+    ) -> None:
+        logger.info("Pair browser extension requested from tray")
+        if self._on_pair_extension:
+            self._on_pair_extension()
 
     def _handle_quit(self, icon: pystray.Icon, item: pystray.MenuItem) -> None:
         logger.info("Quit requested from tray")

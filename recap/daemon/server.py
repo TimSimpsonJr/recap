@@ -441,6 +441,66 @@ async def _websocket_handler(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
+def _extract_peer_ip(request: web.Request) -> str:
+    """Return the peer IP aiohttp saw on this request, or ``""`` if unknown.
+
+    Isolated so tests can monkey-patch it to simulate non-loopback
+    callers. We intentionally trust only ``transport.get_extra_info``
+    (the kernel-level peer) and never ``X-Forwarded-For``, since the
+    daemon binds loopback-only and there is no legitimate proxy in
+    front of it.
+    """
+    transport = request.transport
+    if transport is None:
+        return ""
+    peername = transport.get_extra_info("peername")
+    if not peername:
+        return ""
+    # peername is typically (host, port) for IPv4 or (host, port, ...) for IPv6.
+    host = peername[0] if isinstance(peername, tuple) and peername else ""
+    return host or ""
+
+
+async def _bootstrap_token(request: web.Request) -> web.Response:
+    """GET /bootstrap/token -- one-shot loopback pairing endpoint (design §0.5).
+
+    Publicly routed (no Bearer required); the security gate is the
+    ``PairingWindow.is_open`` flag plus a loopback-only peer check.
+
+    - Window closed -> 404 (as if the route didn't exist).
+    - Loopback peer, window open -> 200 with ``{"token": "<auth_token>"}``
+      and the window closes for future requests.
+    - Non-loopback peer -> 403; window stays open for the legitimate
+      loopback caller.
+
+    The token handed out is the full daemon ``auth_token`` so the
+    extension can authenticate against the same Bearer middleware
+    used by the Obsidian plugin. The middleware does constant-time
+    compare against a single value, so scoped tokens would require
+    middleware changes; see Phase 4+ work.
+    """
+    daemon: Daemon | None = request.app.get("daemon")
+    if daemon is None or not daemon.pairing.is_open:
+        return web.json_response({"error": "not found"}, status=404)
+
+    peer_ip = _extract_peer_ip(request)
+    try:
+        # Return value (pairing_token) is discarded: we hand the
+        # extension the daemon auth_token instead. Calling consume()
+        # enforces the one-shot + loopback guarantees and journals
+        # the appropriate events.
+        daemon.pairing.consume(requester_ip=peer_ip)
+    except PermissionError:
+        return web.json_response({"error": "forbidden"}, status=403)
+    except RuntimeError:
+        # Lost race: another request consumed between is_open check
+        # and consume(). Treat as if the window were closed.
+        return web.json_response({"error": "not found"}, status=404)
+
+    auth_token = request.app.get(_AUTH_TOKEN_KEY, "")
+    return web.json_response({"token": auth_token})
+
+
 async def _meeting_detected_api(request: web.Request) -> web.Response:
     """Browser-extension hook for auto-starting a recording.
 
@@ -554,6 +614,10 @@ def create_app(
 
     # Public (no auth) routes.
     app.router.add_get("/health", _health)
+    # One-shot extension pairing endpoint (design §0.5). Security is
+    # gated at request time by ``daemon.pairing.is_open`` + loopback
+    # check; the route is always registered but 404s while closed.
+    app.router.add_get("/bootstrap/token", _bootstrap_token)
 
     # Transitional: remove in Phase 4.
     # Legacy unauthenticated extension hooks — the browser extension

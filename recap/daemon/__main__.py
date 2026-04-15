@@ -303,10 +303,21 @@ def _build_subservices(daemon: Daemon, auth_token: str) -> dict[str, Any]:
         logger.info("Quit requested from tray")
         os.kill(os.getpid(), signal.SIGINT)
 
+    def on_pair_extension() -> None:
+        """Open the pairing window on tray click.
+
+        ``PairingWindow.open()`` is lock-guarded and safe to call from
+        the tray thread. The loopback-only ``/bootstrap/token`` route
+        handles the actual token handoff when the extension hits it.
+        """
+        logger.info("Pair browser extension requested from tray")
+        daemon.pairing.open()
+
     tray = RecapTray(
         orgs=org_names,
         on_start_recording=on_start_recording,
         on_stop_recording=on_stop_recording,
+        on_pair_extension=on_pair_extension,
         on_quit=on_quit,
     )
 

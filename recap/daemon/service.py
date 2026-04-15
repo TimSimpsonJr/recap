@@ -17,7 +17,13 @@ from aiohttp import web
 
 from recap.daemon.calendar.index import EventIndex
 from recap.daemon.events import EventJournal
+from recap.daemon.pairing import PairingWindow
 from recap.daemon.server import create_app
+
+# How often the periodic timeout loop pokes ``pairing.check_timeout()``
+# (seconds). The window's own timeout is 60s, so 5s polling means a
+# dangling window closes within 5s of expiry.
+_PAIRING_TIMEOUT_POLL_SECONDS = 5.0
 
 if TYPE_CHECKING:
     from recap.daemon.config import DaemonConfig
@@ -45,6 +51,10 @@ class Daemon:
         self.event_index_path = recap_dir / "event-index.json"
         self.event_journal = EventJournal(self.event_journal_path)
         self.event_index = EventIndex(self.event_index_path)
+        # Extension-pairing one-shot window (§0.5). Tray item triggers
+        # ``pairing.open()``; the loopback-only ``/bootstrap/token``
+        # route calls ``pairing.consume()`` on the first hit.
+        self.pairing = PairingWindow(journal=self.event_journal)
 
         # Runtime state (populated by start()):
         self.started_at: Optional[datetime] = None
@@ -61,6 +71,7 @@ class Daemon:
         self._site: Optional[web.BaseSite] = None
         self._stop_event: Optional[asyncio.Event] = None
         self._stopped: bool = False
+        self._pairing_timeout_task: Optional[asyncio.Task[None]] = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -154,9 +165,33 @@ class Daemon:
         self.detector.start()
         logger.info("Meeting detection started")
 
+        # Periodic pairing-window timeout poller. Cheap and cancellable;
+        # keeps a dangling "Pair browser extension..." window from
+        # staying armed forever if the user never clicks through in the
+        # extension.
+        self._pairing_timeout_task = asyncio.create_task(
+            self._pairing_timeout_loop(),
+            name="recap-pairing-timeout",
+        )
+
         self.started_at = datetime.now(timezone.utc).astimezone()
         self._stopped = False
         self.emit_event("info", "daemon_started", "Daemon started")
+
+    async def _pairing_timeout_loop(self) -> None:
+        """Periodically poke :meth:`PairingWindow.check_timeout`.
+
+        Runs until cancelled by :meth:`stop`. Errors are swallowed and
+        logged so a bad subscriber or clock glitch cannot kill the loop.
+        """
+        while True:
+            try:
+                await asyncio.sleep(_PAIRING_TIMEOUT_POLL_SECONDS)
+                self.pairing.check_timeout()
+            except asyncio.CancelledError:
+                return
+            except Exception:
+                logger.exception("Pairing timeout loop error")
 
     async def stop(self) -> None:
         """Tear down the daemon. Idempotent.
@@ -167,6 +202,18 @@ class Daemon:
         if self._stopped:
             return
         self._stopped = True
+
+        # Cancel the pairing timeout loop first; it's cheap and cannot
+        # fail the shutdown sequence.
+        if self._pairing_timeout_task is not None:
+            self._pairing_timeout_task.cancel()
+            try:
+                await self._pairing_timeout_task
+            except (asyncio.CancelledError, Exception):
+                # CancelledError is the happy path; any other exception
+                # is logged by the loop itself, so just ignore here.
+                pass
+            self._pairing_timeout_task = None
 
         # Scheduler (cancels its task).
         if self.scheduler is not None:
