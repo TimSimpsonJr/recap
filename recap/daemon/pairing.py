@@ -83,30 +83,37 @@ class PairingWindow:
         the non-loopback case the window stays open so a legitimate
         loopback caller can still succeed.
         """
+        non_loopback = False
+        token: Optional[str] = None
         with self._lock:
             if not self._is_open:
                 raise RuntimeError("pairing window closed")
             if requester_ip not in _LOOPBACK_IPS:
                 # Do NOT close the window -- a legitimate loopback caller
-                # can still succeed.
-                self._journal.append(
-                    "warning",
-                    "pairing_failed_non_loopback",
-                    f"Non-loopback pairing attempt from {requester_ip}",
-                    payload={"requester_ip": requester_ip},
-                )
-                raise PermissionError(f"non-loopback requester {requester_ip}")
-            token = self._token
-            assert token is not None
-            self._is_open = False
-            self._token = None
-            self._opened_at = None
+                # can still succeed. Defer journaling + raising to outside
+                # the lock so we don't hold it across I/O.
+                non_loopback = True
+            else:
+                token = self._token
+                assert token is not None
+                self._is_open = False
+                self._token = None
+                self._opened_at = None
+        if non_loopback:
+            self._journal.append(
+                "warning",
+                "pairing_failed_non_loopback",
+                f"Non-loopback pairing attempt from {requester_ip}",
+                payload={"requester_ip": requester_ip},
+            )
+            raise PermissionError(f"non-loopback requester {requester_ip}")
         self._journal.append(
             "info",
             "pairing_token_issued",
             "Pairing token issued",
             payload={"requester_ip": requester_ip},
         )
+        assert token is not None
         return token
 
     def check_timeout(self) -> None:

@@ -64,7 +64,9 @@ class TestPairingWindowConsume:
         assert token is not None
         assert w.is_open is False  # one-shot
         assert w.current_token is None
-        assert any(e[1] == "pairing_token_issued" for e in j.entries)
+        issued = [e for e in j.entries if e[1] == "pairing_token_issued"]
+        assert len(issued) == 1
+        assert issued[0][3] == {"requester_ip": "127.0.0.1"}  # payload
         # Second consume fails with RuntimeError (window closed).
         with pytest.raises(RuntimeError):
             w.consume(requester_ip="127.0.0.1")
@@ -88,12 +90,53 @@ class TestPairingWindowConsume:
         w.open()
         with pytest.raises(PermissionError):
             w.consume(requester_ip="10.0.0.5")
-        assert any(e[1] == "pairing_failed_non_loopback" for e in j.entries)
+        failed = [e for e in j.entries if e[1] == "pairing_failed_non_loopback"]
+        assert len(failed) == 1
+        assert failed[0][3] == {"requester_ip": "10.0.0.5"}  # payload
         # Window stays open for the legitimate consumer.
         assert w.is_open
         # A subsequent loopback consume still succeeds.
         token = w.consume(requester_ip="127.0.0.1")
         assert token is not None
+
+    def test_concurrent_consume_has_exactly_one_winner(self):
+        """Only one of two simultaneous consume() calls succeeds."""
+        import threading
+        j = _StubJournal()
+        w = PairingWindow(journal=j)
+        w.open()
+
+        barrier = threading.Barrier(2)
+        results: list[tuple[str, str]] = []
+        results_lock = threading.Lock()
+
+        def attempt():
+            barrier.wait()  # synchronize both threads into the critical section
+            try:
+                tok = w.consume(requester_ip="127.0.0.1")
+                with results_lock:
+                    results.append(("ok", tok))
+            except RuntimeError as e:
+                with results_lock:
+                    results.append(("closed", str(e)))
+
+        t1 = threading.Thread(target=attempt)
+        t2 = threading.Thread(target=attempt)
+        t1.start()
+        t2.start()
+        t1.join(timeout=2.0)
+        t2.join(timeout=2.0)
+        assert not t1.is_alive() and not t2.is_alive()
+
+        oks = [r for r in results if r[0] == "ok"]
+        closeds = [r for r in results if r[0] == "closed"]
+        assert len(oks) == 1, f"Expected exactly one winner; got {oks}"
+        assert len(closeds) == 1, f"Expected exactly one loser; got {closeds}"
+        # Winner got a token, window is closed, journal has exactly one token-issued event.
+        assert oks[0][1]
+        assert w.is_open is False
+        issued = [e for e in j.entries if e[1] == "pairing_token_issued"]
+        assert len(issued) == 1
 
 
 class TestPairingWindowTimeout:
