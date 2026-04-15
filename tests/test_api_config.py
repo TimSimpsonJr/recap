@@ -419,6 +419,40 @@ class TestFindUnknownKeys:
     def test_allowed_top_level_key_not_flagged(self) -> None:
         assert find_unknown_keys({"vault_path": "/v"}) == []
 
+    def test_orgs_not_a_list_returns_error(self) -> None:
+        out = find_unknown_keys({"orgs": "oops"})
+        assert any("orgs" in e and "list" in e for e in out)
+
+    def test_detection_not_a_dict_returns_error(self) -> None:
+        out = find_unknown_keys({"detection": "oops"})
+        assert any("detection" in e and "object" in e for e in out)
+
+    def test_calendar_not_a_dict_returns_error(self) -> None:
+        out = find_unknown_keys({"calendar": "oops"})
+        assert any("calendar" in e and "object" in e for e in out)
+
+    def test_known_contacts_not_a_list_returns_error(self) -> None:
+        out = find_unknown_keys({"known_contacts": "oops"})
+        assert any("known_contacts" in e and "list" in e for e in out)
+
+    def test_orgs_entry_not_a_dict_returns_error(self) -> None:
+        out = find_unknown_keys({"orgs": ["oops", {"name": "x"}]})
+        assert any("orgs[0]" in e and "object" in e for e in out)
+
+    def test_detection_rule_not_a_dict_returns_error(self) -> None:
+        out = find_unknown_keys({"detection": {"teams": "oops"}})
+        assert any("detection.teams" in e and "object" in e for e in out)
+
+    def test_calendar_entry_not_a_dict_returns_error(self) -> None:
+        out = find_unknown_keys({"calendar": {"google": "oops"}})
+        assert any("calendar.google" in e and "object" in e for e in out)
+
+    def test_known_contacts_entry_not_a_dict_returns_error(self) -> None:
+        out = find_unknown_keys({"known_contacts": ["oops"]})
+        assert any(
+            "known_contacts[0]" in e and "object" in e for e in out
+        )
+
 
 @pytest.mark.asyncio
 class TestApiConfigPatch:
@@ -523,3 +557,45 @@ class TestApiConfigPatch:
             json={"user_name": "X"},
         )
         assert resp.status == 503
+
+    @pytest.mark.parametrize(
+        "malformed_body",
+        [
+            {"orgs": "oops"},
+            {"detection": "oops"},
+            {"calendar": "oops"},
+            {"known_contacts": "oops"},
+            {"orgs": ["not-an-object"]},
+            {"detection": {"teams": "oops"}},
+            {"calendar": {"google": "oops"}},
+            {"known_contacts": ["oops"]},
+        ],
+        ids=[
+            "orgs-scalar",
+            "detection-scalar",
+            "calendar-scalar",
+            "known_contacts-scalar",
+            "orgs-entry-scalar",
+            "detection-rule-scalar",
+            "calendar-entry-scalar",
+            "known_contacts-entry-scalar",
+        ],
+    )
+    async def test_patch_malformed_shape_returns_400_not_500(
+        self, daemon_client, malformed_body,
+    ) -> None:
+        """Regression for reviewer P1: malformed structured PATCH bodies
+        must 400 before reaching ``apply_api_patch_to_yaml_doc`` so the
+        doc on disk stays clean and the handler never 500s.
+        """
+        client, daemon = daemon_client
+        before = daemon.config_path.read_text(encoding="utf-8")
+        resp = await client.patch(
+            "/api/config",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+            json=malformed_body,
+        )
+        assert resp.status == 400
+        # File on disk must be unchanged after a rejected PATCH.
+        after = daemon.config_path.read_text(encoding="utf-8")
+        assert before == after

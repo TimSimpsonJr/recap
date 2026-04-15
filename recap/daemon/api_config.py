@@ -214,57 +214,110 @@ def _field_names(cls: Any) -> set[str]:
 
 
 def find_unknown_keys(body: dict[str, Any]) -> list[str]:
-    """Return dotted paths of keys not in the ApiConfig allowlist.
+    """Return dotted paths of keys/values that fail ApiConfig validation.
 
-    Walks one level into ``orgs``, ``detection``, ``calendar``, and
-    ``known_contacts`` so nested typos are caught with an actionable
-    path (e.g. ``detection.google_meet.bogus``).
+    Covers three failure modes the handler must reject with 400:
+
+    * **Unknown or read-only** top-level keys.
+    * **Container-type mismatches** on structured keys (``orgs`` /
+      ``known_contacts`` must be lists, ``detection`` / ``calendar``
+      must be objects). Without this, a body like ``{"orgs": "oops"}``
+      would fall through to an ``AttributeError`` inside the parser.
+    * **Entry-type mismatches** one level deeper (org entries must be
+      objects, detection rules must be objects, etc.) plus **unknown
+      nested keys** with a dotted path pointing at the offender.
     """
-    unknown: list[str] = []
+    errors: list[str] = []
     top_allowed = _field_names(ApiConfig)
 
     for key, value in body.items():
         if key in _READ_ONLY_KEYS:
-            unknown.append(f"{key} (read-only)")
+            errors.append(f"{key} (read-only)")
             continue
         if key not in top_allowed:
-            unknown.append(key)
+            errors.append(key)
             continue
 
-        if key == "orgs" and isinstance(value, list):
+        if key == "orgs":
+            if not isinstance(value, list):
+                errors.append(
+                    f"orgs: must be a list; got {type(value).__name__}",
+                )
+                continue
             allowed = _field_names(ApiOrgConfig)
-            for entry in value:
+            for i, entry in enumerate(value):
                 if not isinstance(entry, dict):
+                    errors.append(
+                        f"orgs[{i}]: must be an object; got "
+                        f"{type(entry).__name__}",
+                    )
                     continue
                 for k in entry:
                     if k not in allowed:
-                        unknown.append(f"orgs[].{k}")
-        elif key == "detection" and isinstance(value, dict):
+                        errors.append(f"orgs[].{k}")
+            continue
+
+        if key == "detection":
+            if not isinstance(value, dict):
+                errors.append(
+                    f"detection: must be an object; got "
+                    f"{type(value).__name__}",
+                )
+                continue
             allowed = _field_names(ApiDetectionRule)
             for platform, rule in value.items():
                 if not isinstance(rule, dict):
+                    errors.append(
+                        f"detection.{platform}: must be an object; got "
+                        f"{type(rule).__name__}",
+                    )
                     continue
                 for k in rule:
                     if k not in allowed:
-                        unknown.append(f"detection.{platform}.{k}")
-        elif key == "calendar" and isinstance(value, dict):
+                        errors.append(f"detection.{platform}.{k}")
+            continue
+
+        if key == "calendar":
+            if not isinstance(value, dict):
+                errors.append(
+                    f"calendar: must be an object; got "
+                    f"{type(value).__name__}",
+                )
+                continue
             allowed = _field_names(ApiCalendarProvider)
             for provider, cfg in value.items():
                 if not isinstance(cfg, dict):
+                    errors.append(
+                        f"calendar.{provider}: must be an object; got "
+                        f"{type(cfg).__name__}",
+                    )
                     continue
                 for k in cfg:
                     if k not in allowed:
-                        unknown.append(f"calendar.{provider}.{k}")
-        elif key == "known_contacts" and isinstance(value, list):
+                        errors.append(f"calendar.{provider}.{k}")
+            continue
+
+        if key == "known_contacts":
+            if not isinstance(value, list):
+                errors.append(
+                    f"known_contacts: must be a list; got "
+                    f"{type(value).__name__}",
+                )
+                continue
             allowed = _field_names(ApiKnownContact)
-            for entry in value:
+            for i, entry in enumerate(value):
                 if not isinstance(entry, dict):
+                    errors.append(
+                        f"known_contacts[{i}]: must be an object; got "
+                        f"{type(entry).__name__}",
+                    )
                     continue
                 for k in entry:
                     if k not in allowed:
-                        unknown.append(f"known_contacts[].{k}")
+                        errors.append(f"known_contacts[].{k}")
+            continue
 
-    return unknown
+    return errors
 
 
 def apply_api_patch_to_yaml_doc(
@@ -316,12 +369,21 @@ def apply_api_patch_to_yaml_doc(
 
         # orgs: DTO list → YAML dict-keyed-by-name. Preserve non-DTO
         # sibling fields (``llm-backend``) from matching existing orgs.
-        if key == "orgs" and isinstance(value, list):
+        if key == "orgs":
+            if not isinstance(value, list):
+                raise ValueError(
+                    f"orgs must be a list; got {type(value).__name__}",
+                )
             existing = doc.get("orgs", None)
             if not isinstance(existing, (CommentedMap, dict)):
                 existing = {}
             new_map = CommentedMap()
             for o in value:
+                if not isinstance(o, dict):
+                    raise ValueError(
+                        f"orgs entries must be objects; got "
+                        f"{type(o).__name__}",
+                    )
                 name = str(o.get("name", ""))
                 m = CommentedMap()
                 m["subfolder"] = o.get("subfolder", "")
@@ -337,9 +399,19 @@ def apply_api_patch_to_yaml_doc(
         # known_contacts: whole-list replacement; keep ``display-name``
         # populated (defaults to name) so the existing loader's
         # ``KnownContact`` projection doesn't lose information.
-        if key == "known_contacts" and isinstance(value, list):
+        if key == "known_contacts":
+            if not isinstance(value, list):
+                raise ValueError(
+                    f"known_contacts must be a list; got "
+                    f"{type(value).__name__}",
+                )
             new_list = CommentedSeq()
             for kc in value:
+                if not isinstance(kc, dict):
+                    raise ValueError(
+                        f"known_contacts entries must be objects; got "
+                        f"{type(kc).__name__}",
+                    )
                 m = CommentedMap()
                 name = kc.get("name", "")
                 m["name"] = name
@@ -353,9 +425,19 @@ def apply_api_patch_to_yaml_doc(
             continue
 
         # detection: per-platform merge; snake DTO fields → kebab YAML.
-        if key == "detection" and isinstance(value, dict):
+        if key == "detection":
+            if not isinstance(value, dict):
+                raise ValueError(
+                    f"detection must be an object; got "
+                    f"{type(value).__name__}",
+                )
             det = doc.setdefault("detection", CommentedMap())
             for platform, rule in value.items():
+                if not isinstance(rule, dict):
+                    raise ValueError(
+                        f"detection.{platform} must be an object; got "
+                        f"{type(rule).__name__}",
+                    )
                 target = det.setdefault(platform, CommentedMap())
                 if "enabled" in rule:
                     target["enabled"] = rule["enabled"]
@@ -368,9 +450,19 @@ def apply_api_patch_to_yaml_doc(
             continue
 
         # calendar (DTO) → calendars (YAML); per-provider merge.
-        if key == "calendar" and isinstance(value, dict):
+        if key == "calendar":
+            if not isinstance(value, dict):
+                raise ValueError(
+                    f"calendar must be an object; got "
+                    f"{type(value).__name__}",
+                )
             cal = doc.setdefault("calendars", CommentedMap())
             for provider, cfg in value.items():
+                if not isinstance(cfg, dict):
+                    raise ValueError(
+                        f"calendar.{provider} must be an object; got "
+                        f"{type(cfg).__name__}",
+                    )
                 target = cal.setdefault(provider, CommentedMap())
                 if "enabled" in cfg:
                     target["enabled"] = cfg["enabled"]
@@ -380,10 +472,11 @@ def apply_api_patch_to_yaml_doc(
                     target["org"] = cfg["org"]
             continue
 
-        # No translation known for this key — fall through. Unknown
-        # top-level keys are caught by ``find_unknown_keys`` before this
-        # function runs, so reaching here is a programming error.
-        doc[key] = value
+        # No translation known for this key. ``find_unknown_keys`` is a
+        # precondition at the handler; reaching here means an allowlisted
+        # key slipped past without a handler — fail loud rather than
+        # silently write raw snake_case into the doc.
+        raise ValueError(f"no patch translator for key: {key}")
 
 
 def _to_plain_dict(obj: Any) -> Any:
