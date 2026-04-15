@@ -270,6 +270,24 @@ class Daemon:
             raise RuntimeError("Daemon.start() must be called first")
         await self._stop_event.wait()
 
+    @property
+    def port(self) -> Optional[int]:
+        """The TCP port the aiohttp server is actually listening on, or ``None``.
+
+        Resolved from the running TCPSite's kernel-assigned socket. When
+        ``config.daemon_ports.plugin_port == 0`` the OS picks a free port
+        at ``site.start()`` time; tests (and any caller that needs the
+        real URL) use this property instead of the configured value.
+        Returns ``None`` before start() or after stop().
+        """
+        site = self._site
+        if site is None:
+            return None
+        server = getattr(site, "_server", None)
+        if server is None or not server.sockets:
+            return None
+        return server.sockets[0].getsockname()[1]
+
     def request_shutdown(self) -> None:
         """Signal the daemon to begin shutdown.
 
