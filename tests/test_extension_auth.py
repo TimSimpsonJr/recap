@@ -95,8 +95,11 @@ class TestBootstrapLoopbackOnly:
 
         client, daemon = daemon_client
         daemon.pairing.open()
+        # raising=True so a future rename of _extract_peer_ip turns this
+        # silent monkeypatch into an AttributeError instead of a no-op.
         monkeypatch.setattr(
-            server_mod, "_extract_peer_ip", lambda _request: "10.0.0.5",
+            server_mod, "_extract_peer_ip",
+            lambda _request: "10.0.0.5", raising=True,
         )
 
         resp = await client.get("/bootstrap/token")
@@ -113,9 +116,11 @@ class TestBootstrapLoopbackOnly:
         client, daemon = daemon_client
         daemon.pairing.open()
         # Force the peer to look like a loopback IP regardless of the
-        # transport ``aiohttp.test_utils`` reports.
+        # transport ``aiohttp.test_utils`` reports. raising=True catches
+        # silent drift if _extract_peer_ip is ever renamed.
         monkeypatch.setattr(
-            server_mod, "_extract_peer_ip", lambda _request: "127.0.0.1",
+            server_mod, "_extract_peer_ip",
+            lambda _request: "127.0.0.1", raising=True,
         )
 
         resp = await client.get("/bootstrap/token")
