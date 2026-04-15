@@ -157,3 +157,113 @@ class TestEventIndexLoadResilience:
             idx = EventIndex(idx_path)
         assert idx.all_entries() == []
         assert any("could not load" in rec.message.lower() for rec in caplog.records)
+
+
+class TestEdgeCases:
+    """Phase 6: corruption recovery and concurrent-modification safety."""
+
+    def test_corrupt_file_then_rebuild_recovers(self, tmp_path):
+        """A corrupt on-disk index can be rebuilt from the vault."""
+        index_path = tmp_path / "_Recap" / ".recap" / "event-index.json"
+        index_path.parent.mkdir(parents=True)
+        index_path.write_text("{this is not valid json", encoding="utf-8")
+
+        idx = EventIndex(index_path)
+        assert idx.all_entries() == []  # corrupt load -> empty start
+
+        # Seed a vault note with a known event_id frontmatter.
+        vault = tmp_path / "vault"
+        meetings = vault / "Clients" / "Alpha" / "Meetings"
+        meetings.mkdir(parents=True)
+        note = meetings / "2026-04-15-test.md"
+        note.write_text(
+            "---\n"
+            "event-id: evt-rebuild-1\n"
+            "org: alpha\n"
+            "title: Rebuild test\n"
+            "---\n",
+            encoding="utf-8",
+        )
+
+        idx.rebuild(vault)
+        entries = idx.all_entries()
+        assert len(entries) == 1
+        assert entries[0].event_id == "evt-rebuild-1"
+        # The rebuild must have refreshed the persisted file too.
+        from_disk = EventIndex(index_path)
+        assert len(from_disk.all_entries()) == 1
+        assert from_disk.lookup("evt-rebuild-1") is not None
+
+    def test_concurrent_add_and_remove_eventually_consistent(self, tmp_path):
+        """Two EventIndex instances mutating the same file end in a
+        consistent state after both call _persist_locked in sequence.
+
+        Not a true concurrency test (no threads); documents that a second
+        instance auto-loads the first's snapshot on construction, so its
+        subsequent write preserves the earlier entry (last-writer-wins
+        with full-state persistence).
+        """
+        index_path = tmp_path / "_Recap" / ".recap" / "event-index.json"
+
+        a = EventIndex(index_path)
+        a.add("evt-A", pathlib.Path("Clients/Alpha/Meetings/a.md"), "alpha")
+
+        # A second instance auto-loads on construction, so it observes
+        # evt-A before adding its own entry.
+        b = EventIndex(index_path)
+        b.add("evt-B", pathlib.Path("Clients/Alpha/Meetings/b.md"), "alpha")
+
+        # Reload from disk: b's persist wrote both entries because b
+        # read a's snapshot on construction.
+        c = EventIndex(index_path)
+        assert c.lookup("evt-B") is not None
+        assert c.lookup("evt-B").path == pathlib.PurePosixPath("Clients/Alpha/Meetings/b.md")
+        # Document actual behavior: full-state persistence preserves evt-A
+        # because instance b loaded it before its own add().
+        assert c.lookup("evt-A") is not None
+
+    def test_empty_file_loads_as_empty_index(self, tmp_path):
+        """An empty (zero-byte) index file is treated as a fresh start."""
+        index_path = tmp_path / "_Recap" / ".recap" / "event-index.json"
+        index_path.parent.mkdir(parents=True)
+        index_path.write_text("", encoding="utf-8")
+
+        idx = EventIndex(index_path)
+        assert idx.all_entries() == []
+
+    def test_partial_write_truncated_json_recovers(self, tmp_path):
+        """A truncated write (e.g. crash mid-_save) doesn't crash the loader."""
+        index_path = tmp_path / "_Recap" / ".recap" / "event-index.json"
+        # First write a valid index.
+        idx = EventIndex(index_path)
+        idx.add("evt-1", pathlib.Path("Clients/Alpha/Meetings/one.md"), "alpha")
+        idx.add("evt-2", pathlib.Path("Clients/Alpha/Meetings/two.md"), "alpha")
+
+        # Truncate to half its bytes to simulate a partial fsync.
+        contents = index_path.read_bytes()
+        index_path.write_bytes(contents[: len(contents) // 2])
+
+        # New instance loads: corrupt -> empty per existing
+        # warn-and-continue policy.
+        recovered = EventIndex(index_path)
+        assert recovered.all_entries() == []
+
+    def test_rebuild_is_idempotent(self, tmp_path):
+        """Calling rebuild twice in a row produces the same entries."""
+        vault = tmp_path / "vault"
+        meetings = vault / "Clients" / "Alpha" / "Meetings"
+        meetings.mkdir(parents=True)
+        (meetings / "n.md").write_text(
+            "---\nevent-id: evt-1\norg: alpha\n---\n", encoding="utf-8",
+        )
+
+        idx = EventIndex(tmp_path / "_Recap" / ".recap" / "event-index.json")
+        idx.rebuild(vault)
+        first = idx.all_entries()
+        idx.rebuild(vault)
+        second = idx.all_entries()
+        # Compare by (event_id, path, org) since mtime is a wall-clock
+        # string captured from the file's stat at scan time.
+        first_keys = {(e.event_id, str(e.path), e.org) for e in first}
+        second_keys = {(e.event_id, str(e.path), e.org) for e in second}
+        assert first_keys == second_keys
