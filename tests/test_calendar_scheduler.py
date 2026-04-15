@@ -110,6 +110,34 @@ class TestSchedulerSync:
         assert len(notes) == 1
 
     @pytest.mark.asyncio
+    async def test_sync_skips_disabled_provider(self, tmp_path):
+        """calendars.<provider>.enabled=false makes the scheduler skip
+        that provider entirely; other enabled providers still sync.
+        Regression guard for Task 11 review P2: the Settings toggle was
+        previously a silent no-op.
+        """
+        config = _make_config(
+            tmp_path,
+            calendars={
+                "google": CalendarProviderConfig(org="testorg", enabled=False),
+                "zoho": CalendarProviderConfig(org="testorg", enabled=True),
+            },
+        )
+        scheduler = CalendarSyncScheduler(config, tmp_path)
+        called_providers: list[str] = []
+
+        async def fake_sync(provider: str):
+            called_providers.append(provider)
+            return [_make_event(event_id=f"evt-{provider}")] if provider == "zoho" else []
+
+        with patch.object(
+            scheduler, "_sync_provider", new=fake_sync,
+        ):
+            await scheduler.sync()
+
+        assert called_providers == ["zoho"]
+
+    @pytest.mark.asyncio
     async def test_sync_handles_provider_failure(self, tmp_path):
         config = _make_config(tmp_path)
         scheduler = CalendarSyncScheduler(config, tmp_path)

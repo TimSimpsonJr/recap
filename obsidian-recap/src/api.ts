@@ -57,6 +57,11 @@ export interface ApiKnownContact {
     name: string;
     aliases: string[];
     email: string | null;
+    // ``display_name`` is what the speaker-matching pipeline keys off,
+    // so the UI must round-trip it to avoid destroying existing
+    // matching rules. Null = preserve on-disk value (new contacts
+    // default to ``name`` server-side).
+    display_name: string | null;
 }
 
 export interface ApiConfigDto {

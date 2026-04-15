@@ -27,6 +27,10 @@ class CalendarProviderConfig:
     org: Optional[str] = None
     default_org: Optional[str] = None
     calendar_id: Optional[str] = None
+    # Default True so existing configs (which predate this flag) keep
+    # syncing exactly as before. The Settings UI exposes this toggle so
+    # users can pause a provider without disconnecting OAuth.
+    enabled: bool = True
 
 
 @dataclass
@@ -203,6 +207,7 @@ def parse_daemon_config_dict(raw: dict[str, Any]) -> DaemonConfig:
             org=cal_data.get("org"),
             default_org=cal_data.get("default-org"),
             calendar_id=cal_data.get("calendar-id"),
+            enabled=cal_data.get("enabled", True),
         )
         for name, cal_data in calendars_raw.items()
     }

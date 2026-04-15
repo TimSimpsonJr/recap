@@ -85,10 +85,21 @@ class CalendarSyncScheduler:
             await self.sync()
 
     async def sync(self) -> None:
-        """Run a single calendar sync cycle across all configured providers."""
+        """Run a single calendar sync cycle across all configured providers.
+
+        Providers whose config block sets ``enabled: false`` are skipped
+        so users can pause sync from Settings without disconnecting
+        OAuth. Providers with no config block at all retain the legacy
+        behavior of being synced unconditionally.
+        """
         all_events: list[CalendarEvent] = []
 
         for provider in ("zoho", "google"):
+            provider_cfg = self._config.calendars.get(provider)
+            if provider_cfg is not None and not provider_cfg.enabled:
+                # Clear any stale failure tracking so a re-enable starts clean.
+                self._failure_start.pop(provider, None)
+                continue
             try:
                 events = await self._sync_provider(provider)
                 all_events.extend(events)

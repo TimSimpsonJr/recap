@@ -407,6 +407,14 @@ export class RecapSettingTab extends PluginSettingTab {
                 .onChange(value => { contact.name = value; })
             );
             row.addText(text => text
+                .setPlaceholder("display name (for speaker matching)")
+                .setValue(contact.display_name ?? "")
+                .onChange(value => {
+                    contact.display_name =
+                        value.trim() === "" ? null : value;
+                })
+            );
+            row.addText(text => text
                 .setPlaceholder("aliases (comma-separated)")
                 .setValue(contact.aliases.join(", "))
                 .onChange(value => {
@@ -441,6 +449,7 @@ export class RecapSettingTab extends PluginSettingTab {
                         name: "",
                         aliases: [],
                         email: null,
+                        display_name: null,
                     });
                     this.renderContactsSection(container);
                 })
@@ -464,6 +473,7 @@ export class RecapSettingTab extends PluginSettingTab {
                 name: c.name.trim(),
                 aliases: c.aliases,
                 email: c.email,
+                display_name: c.display_name,
             }))
             .filter(c => c.name.length > 0);
         try {

@@ -351,6 +351,152 @@ class TestRealLoaderRoundTrip:
         assert reloaded.orgs[0].default is True
 
 
+class TestKnownContactsRoundTrip:
+    """Regression guards for the known-contacts editor: the speaker
+    matching pipeline keys off ``display-name`` (see
+    ``recap/daemon/recorder/enrichment.py``), so round-tripping a
+    contact through the API must not silently destroy it.
+    """
+
+    def test_dto_exposes_existing_display_name(
+        self, tmp_path: pathlib.Path,
+    ) -> None:
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "config-version: 1\n"
+            "vault-path: /v\n"
+            "recordings-path: /r\n"
+            "known-contacts:\n"
+            "  - name: Jane Smith\n"
+            "    display-name: Jane S.\n",
+            encoding="utf-8",
+        )
+        api = yaml_doc_to_api_config(load_yaml_doc(config_path))
+        assert api.known_contacts[0].name == "Jane Smith"
+        assert api.known_contacts[0].display_name == "Jane S."
+
+    def test_patch_without_display_name_preserves_existing_value(
+        self, tmp_path: pathlib.Path,
+    ) -> None:
+        from recap.daemon.api_config import dump_yaml_doc
+        from recap.daemon.config import load_daemon_config
+
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "config-version: 1\n"
+            "vault-path: /v\n"
+            "recordings-path: /r\n"
+            "known-contacts:\n"
+            "  - name: Jane Smith\n"
+            "    display-name: Jane S.\n",
+            encoding="utf-8",
+        )
+        doc = load_yaml_doc(config_path)
+        # Simulate the UI round-trip: fetch DTO, omit display_name on save.
+        api = yaml_doc_to_api_config(doc)
+        echoed = [
+            {
+                "name": c.name,
+                "aliases": c.aliases,
+                "email": c.email,
+                # display_name intentionally omitted so the server preserves it.
+            }
+            for c in api.known_contacts
+        ]
+        apply_api_patch_to_yaml_doc(doc, {"known_contacts": echoed})
+
+        out_path = tmp_path / "out.yaml"
+        with out_path.open("w", encoding="utf-8") as f:
+            dump_yaml_doc(doc, f)
+        cfg = load_daemon_config(out_path)
+        assert cfg.known_contacts[0].name == "Jane Smith"
+        assert cfg.known_contacts[0].display_name == "Jane S."
+
+    def test_patch_with_explicit_display_name_overrides(
+        self, tmp_path: pathlib.Path,
+    ) -> None:
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "config-version: 1\n"
+            "vault-path: /v\n"
+            "recordings-path: /r\n"
+            "known-contacts:\n"
+            "  - name: Jane Smith\n"
+            "    display-name: Jane S.\n",
+            encoding="utf-8",
+        )
+        doc = load_yaml_doc(config_path)
+        apply_api_patch_to_yaml_doc(
+            doc,
+            {
+                "known_contacts": [
+                    {"name": "Jane Smith", "display_name": "J.S."},
+                ],
+            },
+        )
+        assert doc["known-contacts"][0]["display-name"] == "J.S."
+
+    def test_new_contact_defaults_display_name_to_name(
+        self, tmp_path: pathlib.Path,
+    ) -> None:
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "config-version: 1\n"
+            "vault-path: /v\n"
+            "recordings-path: /r\n",
+            encoding="utf-8",
+        )
+        doc = load_yaml_doc(config_path)
+        apply_api_patch_to_yaml_doc(
+            doc, {"known_contacts": [{"name": "Alex"}]},
+        )
+        assert doc["known-contacts"][0]["display-name"] == "Alex"
+
+
+class TestCalendarEnabledRoundTrip:
+    """Regression guard for the calendar ``enabled`` toggle — the
+    reviewer flagged it as a silent no-op. Loader must preserve it
+    through a load-save-reload cycle; scheduler must respect it.
+    """
+
+    def test_enabled_false_survives_loader(
+        self, tmp_path: pathlib.Path,
+    ) -> None:
+        from recap.daemon.config import load_daemon_config
+
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "config-version: 1\n"
+            "vault-path: /v\n"
+            "recordings-path: /r\n"
+            "calendars:\n"
+            "  google:\n"
+            "    enabled: false\n"
+            "    calendar-id: primary\n",
+            encoding="utf-8",
+        )
+        cfg = load_daemon_config(config_path)
+        assert cfg.calendars["google"].enabled is False
+
+    def test_default_enabled_true_for_back_compat(
+        self, tmp_path: pathlib.Path,
+    ) -> None:
+        from recap.daemon.config import load_daemon_config
+
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "config-version: 1\n"
+            "vault-path: /v\n"
+            "recordings-path: /r\n"
+            "calendars:\n"
+            "  google:\n"
+            "    calendar-id: primary\n",
+            encoding="utf-8",
+        )
+        cfg = load_daemon_config(config_path)
+        assert cfg.calendars["google"].enabled is True
+
+
 class TestValidateYamlDoc:
     def test_accepts_fixture_shape(self, tmp_path: pathlib.Path) -> None:
         from recap.daemon.api_config import validate_yaml_doc

@@ -42,6 +42,12 @@ class ApiKnownContact:
     name: str
     aliases: list[str] = field(default_factory=list)
     email: Optional[str] = None
+    # ``display-name`` on disk is how the speaker-matching pipeline maps
+    # diarized speaker labels back to canonical contact names (see
+    # ``recap/daemon/recorder/enrichment.py``). Expose it as an editable
+    # DTO field so users can round-trip it through Settings without
+    # silently destroying the existing value.
+    display_name: Optional[str] = None
 
 
 @dataclass
@@ -154,9 +160,9 @@ def yaml_doc_to_api_config(doc: CommentedMap) -> ApiConfig:
         )
 
     # known_contacts (DTO) sources from ``known-contacts`` (YAML).
-    # ``display-name`` on disk is not surfaced; the DTO exposes
-    # ``aliases`` + ``email`` as forward-compatible fields the loader
-    # tolerates as unused extras.
+    # ``display-name`` on disk drives speaker matching in enrichment.py,
+    # so it's exposed as an editable DTO field; ``aliases`` + ``email``
+    # are forward-compatible fields the loader tolerates as extras.
     contacts: list[ApiKnownContact] = []
     for item in _get(doc, "known-contacts", []) or []:
         if not isinstance(item, (CommentedMap, dict)):
@@ -168,6 +174,7 @@ def yaml_doc_to_api_config(doc: CommentedMap) -> ApiConfig:
                 ),
                 aliases=list(_get(item, "aliases", []) or []),
                 email=_get(item, "email"),
+                display_name=_get(item, "display-name"),
             ),
         )
 
@@ -396,15 +403,30 @@ def apply_api_patch_to_yaml_doc(
             doc["orgs"] = new_map
             continue
 
-        # known_contacts: whole-list replacement; keep ``display-name``
-        # populated (defaults to name) so the existing loader's
-        # ``KnownContact`` projection doesn't lose information.
+        # known_contacts: whole-list replacement, but ``display-name``
+        # for each entry follows a precedence chain so speaker-matching
+        # rules in enrichment.py survive round-trips:
+        #
+        #   1. If the PATCH body supplied ``display_name``, use it.
+        #   2. Else preserve the existing YAML ``display-name`` for a
+        #      contact with the same ``name``.
+        #   3. Else fall back to ``name`` (consistent with the loader's
+        #      empty-string default, and avoids breaking matching for
+        #      freshly added contacts).
         if key == "known_contacts":
             if not isinstance(value, list):
                 raise ValueError(
                     f"known_contacts must be a list; got "
                     f"{type(value).__name__}",
                 )
+            prior_by_name: dict[str, Any] = {}
+            existing_list = doc.get("known-contacts", None)
+            if isinstance(existing_list, (CommentedSeq, list)):
+                for prev in existing_list:
+                    if isinstance(prev, (CommentedMap, dict)):
+                        prior_name = prev.get("name")
+                        if isinstance(prior_name, str):
+                            prior_by_name[prior_name] = prev
             new_list = CommentedSeq()
             for kc in value:
                 if not isinstance(kc, dict):
@@ -415,7 +437,17 @@ def apply_api_patch_to_yaml_doc(
                 m = CommentedMap()
                 name = kc.get("name", "")
                 m["name"] = name
-                m["display-name"] = name
+                if "display_name" in kc and kc["display_name"] is not None:
+                    m["display-name"] = kc["display_name"]
+                else:
+                    prev = prior_by_name.get(name)
+                    if (
+                        isinstance(prev, (CommentedMap, dict))
+                        and "display-name" in prev
+                    ):
+                        m["display-name"] = prev["display-name"]
+                    else:
+                        m["display-name"] = name
                 if "aliases" in kc:
                     m["aliases"] = list(kc["aliases"] or [])
                 if "email" in kc:
