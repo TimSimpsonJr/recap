@@ -9,7 +9,7 @@ import asyncio
 import logging
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Awaitable, Callable
 
 from recap.artifacts import RecordingMetadata, to_vault_relative
 from recap.daemon.recorder.detection import MeetingWindow, detect_meeting_windows
@@ -18,6 +18,7 @@ from recap.models import Participant
 
 if TYPE_CHECKING:
     from recap.daemon.calendar.index import EventIndex
+    from recap.daemon.config import OrgConfig
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +37,7 @@ class MeetingDetector:
         self,
         config: object,
         recorder: object,
-        on_signal_detected: Callable[..., object] | None = None,
+        on_signal_detected: Callable[..., Awaitable[None]] | None = None,
         event_index: "EventIndex | None" = None,
     ) -> None:
         self._config = config
@@ -77,14 +78,23 @@ class MeetingDetector:
             return default_org.name  # type: ignore[no-any-return]
         return "default"
 
-    def _org_subfolder(self, org: str) -> str:
-        for org_config in getattr(self._config, "orgs", []):
-            if org_config.name == org:
-                return org_config.subfolder
-        default_org = getattr(self._config, "default_org", None)
-        if default_org is not None and getattr(default_org, "subfolder", None):
-            return default_org.subfolder
-        return org
+    def _resolve_org_config(self, org: str) -> "OrgConfig | None":
+        """Return the ``OrgConfig`` for *org*, falling back to default_org.
+
+        Uses ``DaemonConfig.org_by_slug`` when available, else linear scan
+        over ``config.orgs``. Returns ``None`` if neither the slug nor a
+        default is configured.
+        """
+        by_slug = getattr(self._config, "org_by_slug", None)
+        if callable(by_slug):
+            matched = by_slug(org)
+            if matched is not None:
+                return matched  # type: ignore[no-any-return]
+        else:
+            for org_config in getattr(self._config, "orgs", []):
+                if org_config.name == org:
+                    return org_config
+        return getattr(self._config, "default_org", None)
 
     def _find_calendar_note(self, org: str, event_id: str | None) -> str:
         if not event_id:
@@ -93,11 +103,10 @@ class MeetingDetector:
             from recap.daemon.calendar.sync import find_note_by_event_id
 
             vault_path = Path(self._config.vault_path)
-            meetings_dir = (
-                vault_path
-                / self._org_subfolder(org)
-                / "Meetings"
-            )
+            org_config = self._resolve_org_config(org)
+            if org_config is None:
+                return ""
+            meetings_dir = org_config.resolve_subfolder(vault_path) / "Meetings"
             note = find_note_by_event_id(
                 event_id,
                 meetings_dir,
@@ -309,7 +318,7 @@ class MeetingDetector:
                 await self._recorder.start(org, metadata=metadata, detected=True)
                 self._recording_hwnd = meeting.hwnd
             elif behavior == "prompt" and self._on_signal_detected is not None:
-                self._on_signal_detected(meeting, enriched)
+                await self._on_signal_detected(meeting, enriched)
 
         # Clean up meetings whose windows have closed.
         closed = set(self._tracked_meetings) - detected_hwnds

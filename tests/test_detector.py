@@ -1,4 +1,5 @@
 """Tests for detection polling loop."""
+import asyncio
 import pytest
 from datetime import datetime, timedelta
 from unittest.mock import MagicMock, patch, AsyncMock
@@ -71,7 +72,7 @@ class TestMeetingDetector:
     @pytest.mark.asyncio
     async def test_prompt_behavior_calls_callback(self, mock_config):
         mock_recorder = _make_recorder_mock()
-        on_signal = MagicMock()
+        on_signal = AsyncMock()
         detector = MeetingDetector(config=mock_config, recorder=mock_recorder, on_signal_detected=on_signal)
 
         meeting = MeetingWindow(hwnd=1, title="Signal", platform="signal")
@@ -79,7 +80,7 @@ class TestMeetingDetector:
             with patch("recap.daemon.recorder.detector.enrich_meeting_metadata", return_value={"title": "Signal Call", "participants": [], "platform": "signal"}):
                 await detector._poll_once()
 
-        on_signal.assert_called_once()
+        on_signal.assert_awaited_once()
         mock_recorder.start.assert_not_called()
 
     @pytest.mark.asyncio
@@ -238,3 +239,165 @@ class TestWindowMonitoring:
                 await detector._poll_once()
 
         mock_recorder.stop.assert_not_called()
+
+
+class TestAwaitableSignalCallback:
+    """Detector ``on_signal_detected`` must be awaitable so the poll loop
+    can yield while the Signal popup is up and still tick on schedule.
+    """
+
+    def _make_config(self):
+        config = MagicMock()
+        config.detection.teams.enabled = False
+        config.detection.zoom.enabled = False
+        config.detection.signal.enabled = True
+        config.detection.signal.behavior = "prompt"
+        config.detection.signal.default_org = "personal"
+        config.known_contacts = []
+        return config
+
+    @pytest.mark.asyncio
+    async def test_detector_awaits_signal_callback_without_blocking_poll(self):
+        """The detector keeps ticking while the signal callback is awaited.
+
+        We simulate a callback that awaits for a short period and fire a
+        concurrent polling task. Both callback invocations must complete
+        and the poll loop must continue ticking during the await window.
+        """
+        mock_recorder = _make_recorder_mock()
+        callback_hits: list[tuple[MeetingWindow, dict]] = []
+
+        async def _slow_callback(meeting, enriched):
+            await asyncio.sleep(0.02)
+            callback_hits.append((meeting, enriched))
+
+        config = self._make_config()
+        detector = MeetingDetector(
+            config=config,
+            recorder=mock_recorder,
+            on_signal_detected=_slow_callback,
+        )
+
+        # Two distinct meeting windows (different hwnds) seen on consecutive
+        # polls. Each should trigger the callback exactly once.
+        meeting_a = MeetingWindow(hwnd=1, title="Signal", platform="signal")
+        meeting_b = MeetingWindow(hwnd=2, title="Signal", platform="signal")
+
+        poll_ticks: list[int] = []
+
+        async def _poll_loop():
+            with patch(
+                "recap.daemon.recorder.detector.enrich_meeting_metadata",
+                return_value={"title": "Call", "participants": [], "platform": "signal"},
+            ):
+                with patch(
+                    "recap.daemon.recorder.detector.detect_meeting_windows",
+                    side_effect=[
+                        [meeting_a],       # first tick: new window A
+                        [meeting_a, meeting_b],  # second tick: new window B
+                        [meeting_a, meeting_b],  # third tick: nothing new
+                    ],
+                ):
+                    for i in range(3):
+                        await detector._poll_once()
+                        poll_ticks.append(i)
+                        await asyncio.sleep(0)
+
+        await _poll_loop()
+
+        # Both callbacks ran to completion while the poll loop continued.
+        assert len(callback_hits) == 2
+        assert {hit[0].hwnd for hit in callback_hits} == {1, 2}
+        assert poll_ticks == [0, 1, 2]
+        mock_recorder.start.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_sync_callback_raises_type_error(self):
+        """A non-awaitable callback should blow up clearly (mypy/runtime)."""
+        mock_recorder = _make_recorder_mock()
+
+        def _sync_cb(meeting, enriched):
+            return None
+
+        config = self._make_config()
+        detector = MeetingDetector(
+            config=config, recorder=mock_recorder, on_signal_detected=_sync_cb,
+        )
+
+        meeting = MeetingWindow(hwnd=1, title="Signal", platform="signal")
+        with patch("recap.daemon.recorder.detector.detect_meeting_windows", return_value=[meeting]):
+            with patch(
+                "recap.daemon.recorder.detector.enrich_meeting_metadata",
+                return_value={"title": "Call", "participants": [], "platform": "signal"},
+            ):
+                with pytest.raises(TypeError):
+                    await detector._poll_once()
+
+
+class TestOrgSubfolderResolution:
+    """``_find_calendar_note`` should resolve the org subfolder via
+    ``OrgConfig.resolve_subfolder`` instead of the deleted
+    ``_org_subfolder`` hand-join helper (Phase 2 carryover).
+    """
+
+    @pytest.mark.asyncio
+    async def test_find_calendar_note_uses_org_by_slug(self, tmp_path):
+        """Detector should look up the org via ``org_by_slug`` + resolve_subfolder."""
+        from recap.daemon.config import DaemonConfig, OrgConfig
+
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        # Simulate an org with a non-trivial subfolder path; the detector
+        # must look at org.subfolder, not hand-join the slug.
+        org = OrgConfig(name="acme", subfolder="Work/Acme", default=True)
+        config = DaemonConfig(
+            vault_path=vault,
+            recordings_path=tmp_path / "recordings",
+            _orgs=[org],
+        )
+        mock_recorder = _make_recorder_mock()
+        detector = MeetingDetector(config=config, recorder=mock_recorder)
+
+        # find_note_by_event_id will be called with the resolved meetings dir.
+        captured = {}
+
+        def _fake_find_note(event_id, meetings_dir, *, vault_path, event_index):
+            captured["meetings_dir"] = meetings_dir
+            captured["vault_path"] = vault_path
+            return None  # don't care about return here
+
+        import recap.daemon.calendar.sync as sync_module
+        with patch.object(sync_module, "find_note_by_event_id", _fake_find_note):
+            result = detector._find_calendar_note("acme", "evt-1")
+
+        assert result == ""  # no note found
+        assert captured["meetings_dir"] == vault / "Work" / "Acme" / "Meetings"
+        assert captured["vault_path"] == vault
+
+    @pytest.mark.asyncio
+    async def test_find_calendar_note_falls_back_to_default_org(self, tmp_path):
+        """Unknown slug should fall back to the default org's subfolder."""
+        from recap.daemon.config import DaemonConfig, OrgConfig
+
+        vault = tmp_path / "vault"
+        vault.mkdir()
+        default_org = OrgConfig(name="personal", subfolder="Personal", default=True)
+        config = DaemonConfig(
+            vault_path=vault,
+            recordings_path=tmp_path / "recordings",
+            _orgs=[default_org],
+        )
+        mock_recorder = _make_recorder_mock()
+        detector = MeetingDetector(config=config, recorder=mock_recorder)
+
+        captured = {}
+
+        def _fake_find_note(event_id, meetings_dir, *, vault_path, event_index):
+            captured["meetings_dir"] = meetings_dir
+            return None
+
+        import recap.daemon.calendar.sync as sync_module
+        with patch.object(sync_module, "find_note_by_event_id", _fake_find_note):
+            detector._find_calendar_note("unknown-slug", "evt-1")
+
+        assert captured["meetings_dir"] == vault / "Personal" / "Meetings"

@@ -230,26 +230,36 @@ def _build_subservices(daemon: Daemon, auth_token: str) -> dict[str, Any]:
     )
 
     # Signal popup callback -- runs when the detector sees a Signal call.
-    def on_signal_detected(meeting_window, enriched_metadata):
-        org_names = [org.name for org in config.orgs]
+    # Async so the detector's poll loop can continue ticking while the
+    # tkinter dialog is up (popup offloads the blocking mainloop via
+    # loop.run_in_executor).
+    async def on_signal_detected(meeting_window, enriched_metadata):
         signal_config = config.detection.signal
-        defaults = {
-            "org": signal_config.default_org,
-            "backend": getattr(signal_config, "default_backend", "ollama"),
-        }
-        result = show_signal_popup(orgs=org_names, defaults=defaults)
+        # Pick an org upstream: detection config's default_org, falling
+        # back to the daemon-level default org slug. The popup itself no
+        # longer offers an org picker (the caller decides).
+        default_org_slug = (
+            signal_config.default_org
+            or (config.default_org.name if config.default_org is not None else "")
+        )
+        # Backend ordering: the user's configured default first, then the
+        # remaining supported backends.
+        default_backend = getattr(signal_config, "default_backend", None) or "claude"
+        available_backends = [default_backend] + [
+            b for b in ("claude", "ollama") if b != default_backend
+        ]
+        result = await show_signal_popup(
+            org_slug=default_org_slug,
+            available_backends=available_backends,
+        )
         if result:
             logger.info(
                 "Signal recording started: org=%s, backend=%s",
                 result["org"], result["backend"],
             )
-            if daemon.loop is None or not daemon.loop.is_running():
-                logger.warning("Event loop not available -- cannot start Signal recording")
-                return
             metadata = build_signal_metadata(result, meeting_window, enriched_metadata)
-            asyncio.run_coroutine_threadsafe(
-                recorder.start(result["org"], metadata=metadata, detected=True),
-                daemon.loop,
+            await recorder.start(
+                result["org"], metadata=metadata, detected=True,
             )
         else:
             logger.info("Signal recording declined")
