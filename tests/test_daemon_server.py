@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import pathlib
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -492,3 +493,136 @@ class TestWebSocketJournalBroadcast:
         # Give the server a tick to run the finally: unsubscribe().
         await asyncio.sleep(0.05)
         assert len(daemon.event_journal._subscribers) == initial
+
+
+@pytest.mark.asyncio
+class TestApiIndexRename:
+    """POST /api/index/rename — update EventIndex path for Phase 4 plugin."""
+
+    async def test_api_index_rename_updates_index(self, daemon_client):
+        """Success path: POST updates path, preserves org."""
+        client, daemon = daemon_client
+        daemon.event_index.add(
+            "evt-abc",
+            pathlib.Path("Clients/D/Meetings/2026-04-14 - old.md"),
+            "disbursecloud",
+        )
+
+        resp = await client.post(
+            "/api/index/rename",
+            json={
+                "event_id": "evt-abc",
+                "old_path": "Clients/D/Meetings/2026-04-14 - old.md",
+                "new_path": "Clients/D/Meetings/2026-04-14 - new.md",
+            },
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["status"] == "ok"
+
+        entry = daemon.event_index.lookup("evt-abc")
+        assert entry is not None
+        assert str(entry.path) == "Clients/D/Meetings/2026-04-14 - new.md"
+        # org is preserved by EventIndex.rename.
+        assert entry.org == "disbursecloud"
+
+    async def test_api_index_rename_requires_bearer(self, daemon_client):
+        """Missing Authorization header returns 401."""
+        client, _ = daemon_client
+        resp = await client.post(
+            "/api/index/rename",
+            json={
+                "event_id": "evt-abc",
+                "new_path": "Clients/D/Meetings/new.md",
+            },
+        )
+        assert resp.status == 401
+
+    async def test_api_index_rename_missing_fields_returns_400(self, daemon_client):
+        """Empty body or missing event_id / new_path returns 400."""
+        client, _ = daemon_client
+
+        # Empty body
+        resp = await client.post(
+            "/api/index/rename",
+            json={},
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 400
+
+        # Missing new_path
+        resp = await client.post(
+            "/api/index/rename",
+            json={"event_id": "evt-abc"},
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 400
+
+        # Missing event_id
+        resp = await client.post(
+            "/api/index/rename",
+            json={"new_path": "Clients/D/Meetings/new.md"},
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 400
+
+    async def test_api_index_rename_absolute_path_returns_400(self, daemon_client):
+        """POSIX-absolute and Windows-drive paths are rejected with 400."""
+        client, _ = daemon_client
+
+        # POSIX absolute
+        resp = await client.post(
+            "/api/index/rename",
+            json={
+                "event_id": "evt-abc",
+                "new_path": "/Clients/D/Meetings/new.md",
+            },
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 400
+        data = await resp.json()
+        assert "vault-relative" in data["error"]
+
+        # Windows drive letter
+        resp = await client.post(
+            "/api/index/rename",
+            json={
+                "event_id": "evt-abc",
+                "new_path": "C:/Users/tim/vault/Clients/D/Meetings/new.md",
+            },
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 400
+        data = await resp.json()
+        assert "vault-relative" in data["error"]
+
+    async def test_api_index_rename_journals_event(self, daemon_client):
+        """Successful rename emits an ``index_rename`` journal entry."""
+        client, daemon = daemon_client
+        daemon.event_index.add(
+            "evt-xyz",
+            pathlib.Path("Clients/D/Meetings/old.md"),
+            "disbursecloud",
+        )
+
+        resp = await client.post(
+            "/api/index/rename",
+            json={
+                "event_id": "evt-xyz",
+                "new_path": "Clients/D/Meetings/renamed.md",
+            },
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 200
+
+        entries = daemon.event_journal.tail(limit=50)
+        rename_entries = [e for e in entries if e.get("event") == "index_rename"]
+        assert len(rename_entries) == 1
+        entry = rename_entries[0]
+        assert entry["level"] == "info"
+        assert entry["payload"] == {
+            "event_id": "evt-xyz",
+            "new_path": "Clients/D/Meetings/renamed.md",
+        }

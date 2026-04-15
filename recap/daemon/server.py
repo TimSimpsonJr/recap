@@ -6,6 +6,7 @@ import asyncio
 import hmac
 import json
 import logging
+import pathlib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Awaitable
@@ -387,6 +388,61 @@ async def _oauth_disconnect(request: web.Request) -> web.Response:
     return web.json_response({"status": "disconnected", "provider": provider})
 
 
+async def _api_index_rename(request: web.Request) -> web.Response:
+    """POST /api/index/rename — update EventIndex path for an event.
+
+    Called by the Obsidian plugin's rename processor (Phase 4) when a
+    calendar-seeded note is moved or renamed in the vault. The handler
+    updates the vault-relative path in the EventIndex; ``org`` is
+    preserved by :meth:`EventIndex.rename`. Missing entries are a no-op
+    (matches index semantics) so a rename event for an unknown id just
+    returns 200 with no side effects.
+
+    Body: ``{"event_id": str, "new_path": str, "old_path"?: str}``. The
+    ``old_path`` field is accepted for future debugging/telemetry but
+    is not consulted by the handler.
+    """
+    daemon: Daemon | None = request.app.get("daemon")
+    if daemon is None:
+        return web.json_response({"error": "daemon not available"}, status=503)
+
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return web.json_response({"error": "invalid JSON body"}, status=400)
+    except Exception as e:
+        logger.error("Unexpected error in _api_index_rename: %s", e, exc_info=True)
+        return web.json_response({"error": "internal server error"}, status=500)
+
+    event_id = body.get("event_id")
+    new_path = body.get("new_path")
+    if not event_id or not new_path:
+        return web.json_response(
+            {"error": "event_id and new_path required"}, status=400
+        )
+
+    # Reject absolute paths in either POSIX form (``/foo/bar``) or
+    # Windows form (``C:/foo`` / ``C:\foo``). EventIndex stores paths
+    # as ``PurePosixPath``; the plugin should always send vault-relative.
+    if (
+        pathlib.PurePosixPath(new_path).is_absolute()
+        or pathlib.PureWindowsPath(new_path).is_absolute()
+    ):
+        return web.json_response(
+            {"error": "new_path must be vault-relative"}, status=400
+        )
+
+    rel_path = pathlib.PurePosixPath(pathlib.Path(new_path).as_posix())
+    daemon.event_index.rename(event_id, rel_path)
+    daemon.emit_event(
+        "info",
+        "index_rename",
+        f"Renamed event-index entry {event_id} -> {rel_path}",
+        payload={"event_id": event_id, "new_path": str(rel_path)},
+    )
+    return web.json_response({"status": "ok"})
+
+
 async def _websocket_handler(request: web.Request) -> web.WebSocketResponse:
     # Validate token from query parameter
     token = request.query.get("token", "")
@@ -639,6 +695,7 @@ def create_app(
     app.router.add_post("/api/meeting-ended", _meeting_ended_api)
     app.router.add_post("/api/meetings/reprocess", _reprocess)
     app.router.add_post("/api/meetings/speakers", _speakers)
+    app.router.add_post("/api/index/rename", _api_index_rename)
     app.router.add_get("/api/config/orgs", _config_orgs)
     app.router.add_get("/api/oauth/{provider}/status", _oauth_status)
     app.router.add_post("/api/oauth/{provider}/start", _oauth_start)
