@@ -143,6 +143,11 @@ async def _api_events(request: web.Request) -> web.Response:
             return web.json_response(
                 {"error": "since must be RFC3339 timestamp"}, status=400,
             )
+        if since_dt.tzinfo is None:
+            return web.json_response(
+                {"error": "since must include a timezone offset"},
+                status=400,
+            )
 
     raw_entries = daemon.event_journal.tail(limit=_MAX_EVENTS_LIMIT)
     filtered = []
@@ -154,12 +159,13 @@ async def _api_events(request: web.Request) -> web.Response:
             entry_dt = datetime.fromisoformat(ts_str)
         except ValueError:
             continue
+        if entry_dt.tzinfo is None:
+            continue  # defensive: skip legacy/manually-edited entries
         if since_dt is not None and entry_dt <= since_dt:
             continue
         filtered.append(entry)
 
-    result = filtered[-limit:] if len(filtered) > limit else filtered
-    return web.json_response({"entries": result})
+    return web.json_response({"entries": filtered[-limit:]})
 
 
 async def _record_start(request: web.Request) -> web.Response:

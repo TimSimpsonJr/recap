@@ -119,22 +119,50 @@ class TestApiEvents:
         assert resp.status == 400
 
     async def test_limit_out_of_range_is_clamped(self, daemon_client):
+        """Out-of-range limit clamps silently to [1, 500]."""
         client, daemon = daemon_client
-        daemon.event_journal.append("info", "e", "m")
+        # Populate > MAX_LIMIT to verify upper bound clamp
+        for i in range(600):
+            daemon.event_journal.append("info", "e", f"m{i}")
 
-        # Above max — clamp to _MAX_EVENTS_LIMIT.
+        # Upper bound: 9999 clamps to 500
         resp = await client.get(
             "/api/events?limit=9999",
             headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
         )
         assert resp.status == 200
+        body = await resp.json()
+        assert len(body["entries"]) == 500
 
-        # Below min (0) — clamp to 1.
+        # Lower bound: 0 clamps to 1
         resp = await client.get(
             "/api/events?limit=0",
             headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
         )
         assert resp.status == 200
+        body = await resp.json()
+        assert len(body["entries"]) == 1
+
+    async def test_naive_since_returns_400(self, daemon_client):
+        """since without timezone offset must be rejected, not crash."""
+        client, daemon = daemon_client
+        daemon.event_journal.append("info", "e1", "m1")
+        resp = await client.get(
+            "/api/events?since=2026-04-14T10:00:00",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 400
+        body = await resp.json()
+        assert "timezone" in body["error"].lower()
+
+    async def test_empty_since_returns_400(self, daemon_client):
+        """Empty since value is malformed; should be 400."""
+        client, daemon = daemon_client
+        resp = await client.get(
+            "/api/events?since=",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 400
 
     async def test_requires_bearer(self, daemon_client):
         client, _ = daemon_client
