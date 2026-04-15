@@ -158,9 +158,11 @@ async function saveBaseUrl() {
   baseUrlInput.value = normalized;
 
   const existing = (await chrome.storage.local.get("recapAuth")).recapAuth || {};
-  if (existing.baseUrl !== normalized) {
-    await chrome.storage.local.set({ recapAuth: { baseUrl: normalized } });
+  if (existing.baseUrl === normalized) {
+    renderAuthState(existing);
+    return;
   }
+  await chrome.storage.local.set({ recapAuth: { baseUrl: normalized } });
   renderAuthState({ baseUrl: normalized });
 }
 

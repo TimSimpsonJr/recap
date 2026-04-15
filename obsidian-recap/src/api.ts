@@ -17,7 +17,7 @@ export interface DaemonStatus {
     recording: { path: string; org: string } | null;
     daemon_uptime: number;
     last_calendar_sync: string | null;
-    errors: string[];
+    errors: DaemonEvent[];
 }
 
 export interface JournalEntry {
