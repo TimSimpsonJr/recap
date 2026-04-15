@@ -189,10 +189,14 @@ class TestEdgeCases:
         entries = idx.all_entries()
         assert len(entries) == 1
         assert entries[0].event_id == "evt-rebuild-1"
-        # The rebuild must have refreshed the persisted file too.
+        # The rebuild must have refreshed the persisted file too,
+        # with the correct path and org from the note frontmatter.
         from_disk = EventIndex(index_path)
         assert len(from_disk.all_entries()) == 1
-        assert from_disk.lookup("evt-rebuild-1") is not None
+        reloaded = from_disk.lookup("evt-rebuild-1")
+        assert reloaded is not None
+        assert str(reloaded.path) == "Clients/Alpha/Meetings/2026-04-15-test.md"
+        assert reloaded.org == "alpha"
 
     def test_concurrent_add_and_remove_eventually_consistent(self, tmp_path):
         """Two EventIndex instances mutating the same file end in a
