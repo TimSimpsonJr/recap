@@ -38,12 +38,15 @@ export class NotificationHistory {
     }
 
     async load(): Promise<void> {
-        if (!this.client) return;
+        const client = this.client;
+        if (!client) return;
         try {
-            const entries = await this.client.tailEvents(undefined, this.maxSize);
+            const entries = await client.tailEvents(undefined, this.maxSize);
+            if (this.client !== client) return; // torn down or swapped; abort
             this.cache = entries.map(entryToNotification);
             this.notifyListeners();
         } catch (e) {
+            if (this.client !== client) return; // don't surface errors from stale loads
             const msg = e instanceof Error ? e.message : String(e);
             new Notice(`Recap: notification history backfill failed — ${msg}`);
             console.error("Recap:", e);
