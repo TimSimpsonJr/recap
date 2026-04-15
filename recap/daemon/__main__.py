@@ -178,9 +178,9 @@ def _build_subservices(daemon: Daemon, auth_token: str) -> dict[str, Any]:
         silence_timeout_minutes=config.recording.silence_timeout_minutes,
         max_duration_hours=config.recording.max_duration_hours,
     )
-    daemon.recorder = recorder  # so the closures below can reach it via daemon
 
-    # Pipeline trigger -- depends on daemon.recorder.
+    # Pipeline trigger -- reads daemon.recorder lazily at invocation, by
+    # which time Daemon.start() has populated it from callbacks["recorder"].
     process_recording = _make_process_recording(daemon)
 
     # Recording-stopped callback: spawn the pipeline on the event loop.
@@ -389,7 +389,7 @@ async def _run_daemon(daemon: Daemon, args: argparse.Namespace, auth_token: str)
     """Drive the daemon: build subservices, start, wait for shutdown, stop."""
     callbacks = _build_subservices(daemon, auth_token)
 
-    # Install SIGINT handler that signals shutdown via the Daemon's stop_event.
+    # SIGINT handler that signals shutdown via the Daemon's stop_event.
     # On Windows asyncio doesn't support add_signal_handler for SIGINT, so
     # we use signal.signal + call_soon_threadsafe (Daemon.request_shutdown
     # handles the threadsafe hop internally).
@@ -397,13 +397,20 @@ async def _run_daemon(daemon: Daemon, args: argparse.Namespace, auth_token: str)
         logger.info("SIGINT received -- shutting down")
         daemon.request_shutdown()
 
-    previous_handler = signal.signal(signal.SIGINT, _on_sigint)
-
+    previous_handler = None
     try:
         await daemon.start(args=args, callbacks=callbacks)
+        # Install SIGINT handler only AFTER start() completes. If we installed
+        # it earlier, a signal arriving during start() would hit
+        # request_shutdown() before _stop_event/loop are populated and the
+        # user's Ctrl-C would be silently dropped. Python's default SIGINT
+        # handler raises KeyboardInterrupt during start(), which asyncio.run
+        # propagates cleanly.
+        previous_handler = signal.signal(signal.SIGINT, _on_sigint)
         await daemon.wait_for_shutdown()
     finally:
-        signal.signal(signal.SIGINT, previous_handler)
+        if previous_handler is not None:
+            signal.signal(signal.SIGINT, previous_handler)
         await daemon.stop()
 
 

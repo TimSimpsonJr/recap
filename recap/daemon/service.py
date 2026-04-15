@@ -188,10 +188,18 @@ class Daemon:
         if self.recorder is not None:
             stop_method = getattr(self.recorder, "stop", None)
             if stop_method is not None:
+                # Local import to avoid any circular-import risk at module load.
+                from recap.daemon.recorder.state_machine import InvalidTransition
+
                 try:
                     result = stop_method()
                     if asyncio.iscoroutine(result):
                         await result
+                except InvalidTransition:
+                    # Recorder wasn't recording -- normal for shutdown at idle.
+                    logger.debug(
+                        "Recorder not recording at shutdown; nothing to stop"
+                    )
                 except Exception:
                     logger.exception("Error stopping recorder")
 

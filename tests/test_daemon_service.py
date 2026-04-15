@@ -265,3 +265,40 @@ class TestDaemonLifecycle:
             if e["event"] == "daemon_stopped"
         ]
         assert len(stops) == 1, f"expected exactly one daemon_stopped, got {len(stops)}"
+
+    @pytest.mark.asyncio
+    async def test_stop_quiet_when_recorder_not_recording(self, tmp_path, caplog):
+        """Daemon.stop() must NOT log a traceback when recorder is idle.
+
+        The real Recorder.stop() calls state_machine.stop_recording() which
+        raises InvalidTransition from idle. That's the common Ctrl-C case
+        (no active meeting) and must not produce an ERROR-level stack trace.
+        """
+        from recap.daemon.recorder.state_machine import InvalidTransition
+
+        cfg = _make_config(tmp_path)
+        d = Daemon(cfg)
+        callbacks = _stub_callbacks(d)
+
+        # Swap the stub recorder's stop() to mimic the real one's behavior
+        # when the state machine is idle.
+        def _raising_stop():
+            raise InvalidTransition("Cannot stop_recording from idle")
+
+        callbacks["recorder"].stop = _raising_stop
+
+        await d.start(args=_minimal_args(), callbacks=callbacks)
+        caplog.clear()
+        with caplog.at_level("DEBUG"):
+            await d.stop()
+
+        # No ERROR/WARNING records mentioning the recorder should be emitted.
+        bad = [
+            r for r in caplog.records
+            if r.levelname in ("ERROR", "WARNING")
+            and "recorder" in r.getMessage().lower()
+        ]
+        assert bad == [], (
+            f"Unexpected errors/warnings: "
+            f"{[(r.levelname, r.getMessage()) for r in bad]}"
+        )
