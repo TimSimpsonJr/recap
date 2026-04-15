@@ -16,6 +16,7 @@ calendar-seeded upsert path.
 """
 from __future__ import annotations
 
+import json
 import pathlib
 import shutil
 import subprocess
@@ -256,7 +257,6 @@ def test_run_pipeline_writes_full_meeting_note(
     # ---- Status file updated to "complete" ----
     status_file = runtime_config.status_dir / f"{audio_path.stem}.json"
     assert status_file.exists()
-    import json
     status = json.loads(status_file.read_text(encoding="utf-8"))
     assert status["pipeline-status"] == "complete"
 
