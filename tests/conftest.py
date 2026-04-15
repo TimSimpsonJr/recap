@@ -16,35 +16,44 @@ import pytest_asyncio
 # read it via the ``daemon_client`` fixture tuple.
 AUTH_TOKEN = "test-secret-token-abc123"
 
-# Minimal snake_case config body used by ``daemon_client``. Written to
-# ``tmp_path/config.yaml`` so ``/api/config`` has a real file to round-trip.
-# A leading comment is included so comment-preservation tests have
-# something to assert against.
+# Minimal kebab-case config body used by ``daemon_client``. Matches
+# the on-disk schema ``load_daemon_config`` consumes (see
+# ``config.example.yaml``) so PATCH round-trips and real-loader
+# validation both exercise the same shape. A top-of-file comment is
+# included so comment-preservation tests have something to assert against.
 MINIMAL_API_CONFIG_YAML = """\
 # Top-of-file marker comment (do not remove)
-vault_path: "{vault}"
-recordings_path: "{rec}"
-user_name: "TestUser"
+config-version: 1
+vault-path: "{vault}"
+recordings-path: "{rec}"
+user-name: "TestUser"
 orgs:
-  - name: alpha
+  alpha:
     subfolder: Clients/Alpha
+    llm-backend: claude
     default: true
-  - name: beta
+  beta:
     subfolder: Clients/Beta
-    default: false
+    llm-backend: claude
 detection:
-  google_meet:
+  teams:
+    enabled: true
+    behavior: auto-record
+  zoom:
+    enabled: true
+    behavior: auto-record
+  signal:
     enabled: true
     behavior: prompt
-calendar: {{}}
-known_contacts: []
+calendars: {{}}
+known-contacts: []
 recording:
-  silence_timeout_minutes: 5
-  max_duration_hours: 3
+  silence-timeout-minutes: 5
+  max-duration-hours: 3
 logging:
-  retention_days: 7
-daemon_ports:
-  plugin_port: 9847
+  retention-days: 7
+daemon:
+  plugin-port: 9847
 """
 
 

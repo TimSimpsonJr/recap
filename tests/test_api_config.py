@@ -62,36 +62,37 @@ class TestYamlDocToApiConfig:
         config_path = tmp_path / "config.yaml"
         config_path.write_text(
             "auth_token: secret-must-not-leak\n"
-            "vault_path: /v\n"
-            "recordings_path: /r\n"
-            "user_name: Tim\n"
+            "config-version: 1\n"
+            "vault-path: /v\n"
+            "recordings-path: /r\n"
+            "user-name: Tim\n"
             "orgs:\n"
-            "  - name: alpha\n"
+            "  alpha:\n"
             "    subfolder: Clients/Alpha\n"
+            "    llm-backend: claude\n"
             "    default: true\n"
-            "  - name: beta\n"
+            "  beta:\n"
             "    subfolder: Clients/Beta\n"
-            "    default: false\n"
+            "    llm-backend: claude\n"
             "detection:\n"
-            "  google_meet:\n"
+            "  teams:\n"
             "    enabled: true\n"
             "    behavior: prompt\n"
-            "calendar:\n"
+            "    default-org: alpha\n"
+            "calendars:\n"
             "  google:\n"
-            "    enabled: true\n"
-            "    calendar_id: primary\n"
+            "    calendar-id: primary\n"
             "    org: alpha\n"
-            "known_contacts:\n"
+            "known-contacts:\n"
             "  - name: Jane\n"
-            "    aliases: [J]\n"
-            "    email: j@example.com\n"
+            "    display-name: Jane S.\n"
             "recording:\n"
-            "  silence_timeout_minutes: 4\n"
-            "  max_duration_hours: 2\n"
+            "  silence-timeout-minutes: 4\n"
+            "  max-duration-hours: 2\n"
             "logging:\n"
-            "  retention_days: 14\n"
-            "daemon_ports:\n"
-            "  plugin_port: 9900\n",
+            "  retention-days: 14\n"
+            "daemon:\n"
+            "  plugin-port: 9900\n",
             encoding="utf-8",
         )
         api = yaml_doc_to_api_config(load_yaml_doc(config_path))
@@ -101,13 +102,16 @@ class TestYamlDocToApiConfig:
         assert api.user_name == "Tim"
         assert api.plugin_port == 9900
         assert len(api.orgs) == 2
-        assert api.orgs[0].name == "alpha"
+        names = [o.name for o in api.orgs]
+        assert names == ["alpha", "beta"]
         assert api.orgs[0].default is True
-        assert api.orgs[1].name == "beta"
+        assert api.orgs[1].default is False
         assert api.default_org == "alpha"
-        assert "google_meet" in api.detection
-        assert api.detection["google_meet"].behavior == "prompt"
+        assert "teams" in api.detection
+        assert api.detection["teams"].behavior == "prompt"
+        assert api.detection["teams"].default_org == "alpha"
         assert api.calendar["google"].calendar_id == "primary"
+        assert api.calendar["google"].org == "alpha"
         assert api.known_contacts[0].name == "Jane"
         assert api.recording_silence_timeout_minutes == 4
         assert api.recording_max_duration_hours == 2.0
@@ -123,17 +127,37 @@ class TestYamlDocToApiConfig:
     ) -> None:
         config_path = tmp_path / "config.yaml"
         config_path.write_text(
-            "vault_path: /v\n"
-            "recordings_path: /r\n"
+            "config-version: 1\n"
+            "vault-path: /v\n"
+            "recordings-path: /r\n"
             "orgs:\n"
-            "  - name: alpha\n"
+            "  alpha:\n"
             "    subfolder: A\n"
-            "  - name: beta\n"
+            "  beta:\n"
             "    subfolder: B\n",
             encoding="utf-8",
         )
         api = yaml_doc_to_api_config(load_yaml_doc(config_path))
         assert api.default_org is None
+
+    def test_dto_reads_real_config_example(self) -> None:
+        """Regression guard for the kebab/snake + dict/list translation.
+
+        Ensures ``yaml_doc_to_api_config`` projects populated fields
+        against the repo's real ``config.example.yaml`` shape (the
+        template new users copy), not just the synthetic test fixture.
+        """
+        repo_root = pathlib.Path(__file__).resolve().parent.parent
+        example = repo_root / "config.example.yaml"
+        api = yaml_doc_to_api_config(load_yaml_doc(example))
+
+        assert api.vault_path != ""
+        assert api.recordings_path != ""
+        assert api.user_name is not None
+        assert api.plugin_port == 9847
+        assert len(api.orgs) >= 1
+        assert any(o.default for o in api.orgs)
+        assert api.default_org is not None
 
 
 # ---------------------------------------------------------------------------
@@ -207,41 +231,150 @@ class TestApplyPatchToYamlDoc:
         config_path = tmp_path / "config.yaml"
         config_path.write_text(
             "# Important comment\n"
-            "vault_path: /old\n"
+            "vault-path: /old\n"
             "# Another comment\n"
-            "recordings_path: /r\n",
+            "recordings-path: /r\n",
             encoding="utf-8",
         )
         doc = load_yaml_doc(config_path)
         apply_api_patch_to_yaml_doc(doc, {"vault_path": "/new"})
         dumped = _dump_to_string(doc)
         assert "/new" in dumped
+        assert "vault-path" in dumped
         assert "# Important comment" in dumped
         assert "# Another comment" in dumped
 
-    def test_list_patch_is_whole_replacement(
+    def test_orgs_patch_translates_list_to_dict_and_preserves_llm_backend(
         self, tmp_path: pathlib.Path,
     ) -> None:
+        """Whole-list replacement, translated to dict-keyed-by-name, and
+        ``llm-backend`` preserved on orgs that match by name.
+        """
         config_path = tmp_path / "config.yaml"
         config_path.write_text(
-            "vault_path: /v\n"
-            "recordings_path: /r\n"
+            "config-version: 1\n"
+            "vault-path: /v\n"
+            "recordings-path: /r\n"
             "orgs:\n"
-            "  - name: alpha\n"
+            "  alpha:\n"
             "    subfolder: A\n"
+            "    llm-backend: custom-backend\n"
             "    default: true\n"
-            "  - name: beta\n"
+            "  beta:\n"
             "    subfolder: B\n"
-            "    default: false\n",
+            "    llm-backend: claude\n",
             encoding="utf-8",
         )
         doc = load_yaml_doc(config_path)
         apply_api_patch_to_yaml_doc(
             doc,
-            {"orgs": [{"name": "gamma", "subfolder": "G", "default": True}]},
+            {
+                "orgs": [
+                    {
+                        "name": "alpha", "subfolder": "A-new",
+                        "default": True,
+                    },
+                    {
+                        "name": "gamma", "subfolder": "G",
+                        "default": False,
+                    },
+                ],
+            },
         )
-        assert len(doc["orgs"]) == 1
-        assert doc["orgs"][0]["name"] == "gamma"
+        # Whole-list replacement: beta is gone.
+        assert "beta" not in doc["orgs"]
+        # alpha kept its custom llm-backend.
+        assert doc["orgs"]["alpha"]["subfolder"] == "A-new"
+        assert doc["orgs"]["alpha"]["llm-backend"] == "custom-backend"
+        assert doc["orgs"]["alpha"]["default"] is True
+        # gamma is new; no llm-backend key written (loader defaults).
+        assert doc["orgs"]["gamma"]["subfolder"] == "G"
+        assert "llm-backend" not in doc["orgs"]["gamma"]
+
+
+class TestRealLoaderRoundTrip:
+    """Every successful PATCH must leave a doc the real daemon loader
+    can still read. Phase 4 review caught this as a P1 gap.
+    """
+
+    def test_plugin_port_patch_survives_real_loader(
+        self, tmp_path: pathlib.Path,
+    ) -> None:
+        import io
+
+        from recap.daemon.api_config import dump_yaml_doc
+        from recap.daemon.config import load_daemon_config
+
+        repo_root = pathlib.Path(__file__).resolve().parent.parent
+        example = repo_root / "config.example.yaml"
+        doc = load_yaml_doc(example)
+        apply_api_patch_to_yaml_doc(doc, {"plugin_port": 9999})
+
+        out_path = tmp_path / "config.yaml"
+        with out_path.open("w", encoding="utf-8") as f:
+            dump_yaml_doc(doc, f)
+
+        reloaded = load_daemon_config(out_path)
+        assert reloaded.daemon_ports.plugin_port == 9999
+
+    def test_orgs_patch_survives_real_loader(
+        self, tmp_path: pathlib.Path,
+    ) -> None:
+        import io
+
+        from recap.daemon.api_config import dump_yaml_doc
+        from recap.daemon.config import load_daemon_config
+
+        repo_root = pathlib.Path(__file__).resolve().parent.parent
+        example = repo_root / "config.example.yaml"
+        doc = load_yaml_doc(example)
+        apply_api_patch_to_yaml_doc(
+            doc,
+            {
+                "orgs": [
+                    {
+                        "name": "new-org", "subfolder": "_Recap/New",
+                        "default": True,
+                    },
+                ],
+            },
+        )
+
+        out_path = tmp_path / "config.yaml"
+        with out_path.open("w", encoding="utf-8") as f:
+            dump_yaml_doc(doc, f)
+
+        reloaded = load_daemon_config(out_path)
+        assert len(reloaded.orgs) == 1
+        assert reloaded.orgs[0].name == "new-org"
+        assert reloaded.orgs[0].subfolder == "_Recap/New"
+        assert reloaded.orgs[0].default is True
+
+
+class TestValidateYamlDoc:
+    def test_accepts_fixture_shape(self, tmp_path: pathlib.Path) -> None:
+        from recap.daemon.api_config import validate_yaml_doc
+
+        repo_root = pathlib.Path(__file__).resolve().parent.parent
+        example = repo_root / "config.example.yaml"
+        doc = load_yaml_doc(example)
+        # Real config loads through the canonical parser without raising.
+        validate_yaml_doc(doc)
+
+    def test_rejects_config_with_missing_vault_path(
+        self, tmp_path: pathlib.Path,
+    ) -> None:
+        from recap.daemon.api_config import validate_yaml_doc
+
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "config-version: 1\n"
+            "recordings-path: /r\n",
+            encoding="utf-8",
+        )
+        doc = load_yaml_doc(config_path)
+        with pytest.raises(ValueError, match="vault-path"):
+            validate_yaml_doc(doc)
 
 
 class TestFindUnknownKeys:

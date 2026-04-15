@@ -98,23 +98,34 @@ def _get(d: Any, key: str, default: Any = None) -> Any:
 
 
 def yaml_doc_to_api_config(doc: CommentedMap) -> ApiConfig:
-    """Extract the allowlisted API fields from a ruamel doc.
+    """Project a kebab-case, dict-orgs on-disk doc into the snake_case,
+    list-orgs API DTO.
 
-    Reads snake_case keys from the doc; any non-allowlisted keys (e.g.
+    Translation boundary: the loader in :mod:`recap.daemon.config` is the
+    single source of truth for what the daemon reads; this DTO adapts
+    that shape for the plugin. Any non-allowlisted keys (e.g.
     ``auth_token``) are ignored so they never leak through the API.
     """
+    # orgs: dict-keyed-by-name on disk → list-of-entries in DTO.
     orgs: list[ApiOrgConfig] = []
-    for item in _get(doc, "orgs", []) or []:
-        orgs.append(
-            ApiOrgConfig(
-                name=_to_str(_get(item, "name", ""), "orgs[].name"),
-                subfolder=_to_str(
-                    _get(item, "subfolder", ""), "orgs[].subfolder",
+    raw_orgs = _get(doc, "orgs", {}) or {}
+    if isinstance(raw_orgs, (CommentedMap, dict)):
+        for name, data in raw_orgs.items():
+            if data is None:
+                data = {}
+            orgs.append(
+                ApiOrgConfig(
+                    name=str(name),
+                    subfolder=_to_str(
+                        _get(data, "subfolder", ""),
+                        f"orgs.{name}.subfolder",
+                    ),
+                    default=bool(_get(data, "default", False)),
                 ),
-                default=bool(_get(item, "default", False)),
-            ),
-        )
+            )
 
+    # detection: same shape on disk and DTO; translate kebab defaults
+    # back to snake DTO fields.
     detection: dict[str, ApiDetectionRule] = {}
     for platform, cfg in (_get(doc, "detection", {}) or {}).items():
         if cfg is None:
@@ -125,22 +136,31 @@ def yaml_doc_to_api_config(doc: CommentedMap) -> ApiConfig:
                 _get(cfg, "behavior", "prompt"),
                 f"detection.{platform}.behavior",
             ),
-            default_org=_get(cfg, "default_org"),
-            default_backend=_get(cfg, "default_backend"),
+            default_org=_get(cfg, "default-org"),
+            default_backend=_get(cfg, "default-backend"),
         )
 
+    # calendar (DTO) sources from ``calendars`` (YAML); per-provider
+    # fields translate calendar-id → calendar_id. ``enabled`` is a DTO
+    # affordance that defaults True when a provider block is present.
     calendar: dict[str, ApiCalendarProvider] = {}
-    for provider, cfg in (_get(doc, "calendar", {}) or {}).items():
+    for provider, cfg in (_get(doc, "calendars", {}) or {}).items():
         if cfg is None:
             continue
         calendar[provider] = ApiCalendarProvider(
-            enabled=bool(_get(cfg, "enabled", False)),
-            calendar_id=_get(cfg, "calendar_id"),
+            enabled=bool(_get(cfg, "enabled", True)),
+            calendar_id=_get(cfg, "calendar-id"),
             org=_get(cfg, "org"),
         )
 
+    # known_contacts (DTO) sources from ``known-contacts`` (YAML).
+    # ``display-name`` on disk is not surfaced; the DTO exposes
+    # ``aliases`` + ``email`` as forward-compatible fields the loader
+    # tolerates as unused extras.
     contacts: list[ApiKnownContact] = []
-    for item in _get(doc, "known_contacts", []) or []:
+    for item in _get(doc, "known-contacts", []) or []:
+        if not isinstance(item, (CommentedMap, dict)):
+            continue
         contacts.append(
             ApiKnownContact(
                 name=_to_str(
@@ -153,27 +173,27 @@ def yaml_doc_to_api_config(doc: CommentedMap) -> ApiConfig:
 
     recording = _get(doc, "recording", {}) or {}
     logging_cfg = _get(doc, "logging", {}) or {}
-    daemon_ports = _get(doc, "daemon_ports", {}) or {}
+    daemon_raw = _get(doc, "daemon", {}) or {}
     derived_default_org = next((o.name for o in orgs if o.default), None)
 
     return ApiConfig(
-        vault_path=_to_str(_get(doc, "vault_path", ""), "vault_path"),
+        vault_path=_to_str(_get(doc, "vault-path", ""), "vault_path"),
         recordings_path=_to_str(
-            _get(doc, "recordings_path", ""), "recordings_path",
+            _get(doc, "recordings-path", ""), "recordings_path",
         ),
-        plugin_port=int(_get(daemon_ports, "plugin_port", 9847)),
+        plugin_port=int(_get(daemon_raw, "plugin-port", 9847)),
         orgs=orgs,
         detection=detection,
         calendar=calendar,
         known_contacts=contacts,
         recording_silence_timeout_minutes=int(
-            _get(recording, "silence_timeout_minutes", 5),
+            _get(recording, "silence-timeout-minutes", 5),
         ),
         recording_max_duration_hours=float(
-            _get(recording, "max_duration_hours", 3),
+            _get(recording, "max-duration-hours", 3),
         ),
-        logging_retention_days=int(_get(logging_cfg, "retention_days", 7)),
-        user_name=_get(doc, "user_name"),
+        logging_retention_days=int(_get(logging_cfg, "retention-days", 7)),
+        user_name=_get(doc, "user-name"),
         default_org=derived_default_org,
     )
 
@@ -250,89 +270,142 @@ def find_unknown_keys(body: dict[str, Any]) -> list[str]:
 def apply_api_patch_to_yaml_doc(
     doc: CommentedMap, patch: dict[str, Any],
 ) -> None:
-    """Apply a validated PATCH body to a ruamel doc, in place.
+    """Apply a validated snake_case PATCH body to a kebab-case ruamel doc.
 
-    Scalars map 1:1 onto top-level keys. ``orgs`` and ``known_contacts``
-    are whole-list replacements. ``detection`` and ``calendar`` are
-    per-platform/provider merges so sibling keys and comments survive.
-
-    Flat keys backed by nested YAML (``recording_*``, ``logging_*``,
-    ``plugin_port``) are routed to their respective sub-mapping.
+    The daemon loader (:func:`recap.daemon.config.load_daemon_config`)
+    is the source of truth for on-disk shape, so this function writes
+    kebab-case keys, routes flat API fields (``recording_*``,
+    ``logging_*``, ``plugin_port``, ``vault_path``, ...) to their nested
+    YAML parents, and translates the DTO's list-orgs back to
+    dict-keyed-by-name. Whole-list replacement preserves non-DTO
+    sibling fields (e.g. ``llm-backend``) on orgs that match an existing
+    entry by name.
     """
     for key, value in patch.items():
         if key in _READ_ONLY_KEYS:
             continue
 
+        # Flat API fields routed to nested YAML sections.
         if key == "recording_silence_timeout_minutes":
             rec = doc.setdefault("recording", CommentedMap())
-            rec["silence_timeout_minutes"] = value
+            rec["silence-timeout-minutes"] = value
             continue
         if key == "recording_max_duration_hours":
             rec = doc.setdefault("recording", CommentedMap())
-            rec["max_duration_hours"] = value
+            rec["max-duration-hours"] = value
             continue
         if key == "logging_retention_days":
             log = doc.setdefault("logging", CommentedMap())
-            log["retention_days"] = value
+            log["retention-days"] = value
             continue
         if key == "plugin_port":
-            ports = doc.setdefault("daemon_ports", CommentedMap())
-            ports["plugin_port"] = value
+            daemon_raw = doc.setdefault("daemon", CommentedMap())
+            daemon_raw["plugin-port"] = value
             continue
 
+        # Snake DTO top-level fields → kebab YAML top-level keys.
+        if key == "vault_path":
+            doc["vault-path"] = value
+            continue
+        if key == "recordings_path":
+            doc["recordings-path"] = value
+            continue
+        if key == "user_name":
+            doc["user-name"] = value
+            continue
+
+        # orgs: DTO list → YAML dict-keyed-by-name. Preserve non-DTO
+        # sibling fields (``llm-backend``) from matching existing orgs.
         if key == "orgs" and isinstance(value, list):
-            new_list = CommentedSeq()
+            existing = doc.get("orgs", None)
+            if not isinstance(existing, (CommentedMap, dict)):
+                existing = {}
+            new_map = CommentedMap()
             for o in value:
+                name = str(o.get("name", ""))
                 m = CommentedMap()
-                m["name"] = o.get("name", "")
                 m["subfolder"] = o.get("subfolder", "")
-                m["default"] = bool(o.get("default", False))
-                new_list.append(m)
-            doc["orgs"] = new_list
+                prev = existing.get(name) if isinstance(existing, (CommentedMap, dict)) else None
+                if isinstance(prev, (CommentedMap, dict)) and "llm-backend" in prev:
+                    m["llm-backend"] = prev["llm-backend"]
+                if o.get("default"):
+                    m["default"] = True
+                new_map[name] = m
+            doc["orgs"] = new_map
             continue
 
+        # known_contacts: whole-list replacement; keep ``display-name``
+        # populated (defaults to name) so the existing loader's
+        # ``KnownContact`` projection doesn't lose information.
         if key == "known_contacts" and isinstance(value, list):
             new_list = CommentedSeq()
             for kc in value:
                 m = CommentedMap()
-                m["name"] = kc.get("name", "")
+                name = kc.get("name", "")
+                m["name"] = name
+                m["display-name"] = name
                 if "aliases" in kc:
                     m["aliases"] = list(kc["aliases"] or [])
                 if "email" in kc:
                     m["email"] = kc["email"]
                 new_list.append(m)
-            doc["known_contacts"] = new_list
+            doc["known-contacts"] = new_list
             continue
 
+        # detection: per-platform merge; snake DTO fields → kebab YAML.
         if key == "detection" and isinstance(value, dict):
             det = doc.setdefault("detection", CommentedMap())
             for platform, rule in value.items():
                 target = det.setdefault(platform, CommentedMap())
-                for k in (
-                    "enabled", "behavior", "default_org", "default_backend",
-                ):
-                    if k in rule:
-                        target[k] = rule[k]
+                if "enabled" in rule:
+                    target["enabled"] = rule["enabled"]
+                if "behavior" in rule:
+                    target["behavior"] = rule["behavior"]
+                if "default_org" in rule:
+                    target["default-org"] = rule["default_org"]
+                if "default_backend" in rule:
+                    target["default-backend"] = rule["default_backend"]
             continue
 
+        # calendar (DTO) → calendars (YAML); per-provider merge.
         if key == "calendar" and isinstance(value, dict):
-            cal = doc.setdefault("calendar", CommentedMap())
+            cal = doc.setdefault("calendars", CommentedMap())
             for provider, cfg in value.items():
                 target = cal.setdefault(provider, CommentedMap())
-                for k in ("enabled", "calendar_id", "org"):
-                    if k in cfg:
-                        target[k] = cfg[k]
+                if "enabled" in cfg:
+                    target["enabled"] = cfg["enabled"]
+                if "calendar_id" in cfg:
+                    target["calendar-id"] = cfg["calendar_id"]
+                if "org" in cfg:
+                    target["org"] = cfg["org"]
             continue
 
+        # No translation known for this key — fall through. Unknown
+        # top-level keys are caught by ``find_unknown_keys`` before this
+        # function runs, so reaching here is a programming error.
         doc[key] = value
 
 
-def validate_yaml_doc(doc: CommentedMap) -> None:
-    """Smoke-validate a ruamel doc against the API shape.
-
-    Re-projecting through ``yaml_doc_to_api_config`` exercises every
-    required-field / type check the DTO enforces (``vault_path`` is a
-    string, orgs entries have string names/subfolders, etc.). Any
-    ``ValueError`` bubbles to the handler, which maps it to 400.
+def _to_plain_dict(obj: Any) -> Any:
+    """Recursively unwrap ruamel ``CommentedMap``/``CommentedSeq`` to
+    plain ``dict``/``list`` so consumers (like ``parse_daemon_config_dict``)
+    that do ``isinstance`` checks against builtins behave correctly.
     """
-    yaml_doc_to_api_config(doc)
+    if isinstance(obj, (CommentedMap, dict)):
+        return {k: _to_plain_dict(v) for k, v in obj.items()}
+    if isinstance(obj, (CommentedSeq, list)):
+        return [_to_plain_dict(v) for v in obj]
+    return obj
+
+
+def validate_yaml_doc(doc: CommentedMap) -> None:
+    """Ensure a post-PATCH doc still parses through the canonical loader.
+
+    Runs the plain dict through :func:`parse_daemon_config_dict` so any
+    shape that would crash the daemon on next restart (missing
+    ``vault-path``, malformed ``orgs``, bad ``config-version``, ...)
+    surfaces as a ``ValueError`` here and is converted to a 400 by the
+    handler.
+    """
+    from recap.daemon.config import parse_daemon_config_dict
+    parse_daemon_config_dict(_to_plain_dict(doc))
