@@ -10,11 +10,22 @@ export class DaemonError extends Error {
 }
 
 export interface DaemonStatus {
+    uptime_seconds: number;
+    recent_errors: DaemonEvent[];
+    // Legacy (kept for back-compat; mirror new fields):
     state: "idle" | "armed" | "detected" | "recording" | "processing";
     recording: { path: string; org: string } | null;
     daemon_uptime: number;
     last_calendar_sync: string | null;
     errors: string[];
+}
+
+export interface JournalEntry {
+    ts: string;
+    level: "info" | "warning" | "error";
+    event: string;
+    message: string;
+    payload?: Record<string, unknown>;
 }
 
 export interface DaemonEvent {
@@ -123,10 +134,18 @@ export class DaemonClient {
         }
     }
 
-    on(event: string, handler: (data: DaemonEvent) => void): void {
+    on(event: string, handler: (data: DaemonEvent) => void): () => void {
         const handlers = this.eventHandlers.get(event) || [];
         handlers.push(handler);
         this.eventHandlers.set(event, handlers);
+        return () => {
+            const current = this.eventHandlers.get(event);
+            if (!current) return;
+            const idx = current.indexOf(handler);
+            if (idx !== -1) {
+                current.splice(idx, 1);
+            }
+        };
     }
 
     off(event: string, handler: (data: DaemonEvent) => void): void {
@@ -186,5 +205,23 @@ export class DaemonClient {
 
     async disarm(): Promise<void> {
         await this.post("/api/disarm");
+    }
+
+    async tailEvents(since?: string, limit?: number): Promise<JournalEntry[]> {
+        const params = new URLSearchParams();
+        if (since !== undefined) params.set("since", since);
+        if (limit !== undefined) params.set("limit", String(limit));
+        const query = params.toString();
+        const path = query ? `/api/events?${query}` : "/api/events";
+        const resp = await this.get<{ entries: JournalEntry[] }>(path);
+        return resp.entries;
+    }
+
+    onJournalEntry(handler: (entry: JournalEntry) => void): () => void {
+        const dispatch = (event: DaemonEvent) => {
+            const entry = (event as { entry?: JournalEntry }).entry;
+            if (entry) handler(entry);
+        };
+        return this.on("journal_entry", dispatch);
     }
 }
