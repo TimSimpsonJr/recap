@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
-import pathlib
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Optional
 

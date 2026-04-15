@@ -65,6 +65,19 @@ class TestDaemonStart:
         entries = d.event_journal.tail(limit=10)
         assert any(e["event"] == "test_event" and e["message"] == "hello" for e in entries)
 
+    def test_emit_event_swallows_journal_failures(self, tmp_path):
+        """Journal failures must never crash the daemon."""
+        cfg = _make_config(tmp_path)
+        d = Daemon(cfg)
+
+        class _BoomJournal:
+            def append(self, *args, **kwargs):
+                raise OSError("disk full")
+
+        d.event_journal = _BoomJournal()
+        # Should not raise -- just logs.
+        d.emit_event("error", "boom", "kaboom")
+
 
 class TestDaemonLoopAccess:
     def test_run_in_loop_schedules_coroutine(self, tmp_path):
@@ -90,3 +103,18 @@ class TestDaemonLoopAccess:
         finally:
             loop.close()
             d.loop = None
+
+    def test_run_in_loop_raises_when_loop_not_started(self, tmp_path):
+        cfg = _make_config(tmp_path)
+        d = Daemon(cfg)
+        # loop is None by default -- run_in_loop must raise RuntimeError
+
+        async def _c():
+            return 1
+
+        coro = _c()
+        try:
+            with pytest.raises(RuntimeError, match="not running"):
+                d.run_in_loop(coro)
+        finally:
+            coro.close()  # avoid "coroutine was never awaited" warning
