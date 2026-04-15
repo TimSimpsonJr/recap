@@ -275,22 +275,12 @@ class TestApiMeetingEndedAuth:
 
 
 @pytest.mark.asyncio
-class TestLegacyMeetingRoutesStillWork:
-    """Transitional: legacy unauth /meeting-detected and /meeting-ended.
-
-    The browser extension still POSTs to these without auth. They stay
-    until Phase 4 wires the extension to Bearer. Delegates to the same
-    handler logic as the `/api/` routes.
+class TestLegacyRoutesDeleted:
+    """Phase 4: the unauth ``/meeting-detected`` and ``/meeting-ended``
+    transitional routes are gone. Only ``/api/meeting-*`` remains.
     """
 
-    async def test_legacy_meeting_detected_works_without_auth(
-        self, client_with_detector
-    ):
-        client, mock_detector = client_with_detector
-        async def _started(**_kwargs):
-            return True
-        mock_detector.handle_extension_meeting_detected = _started
-
+    async def test_legacy_meeting_detected_returns_404(self, client):
         resp = await client.post(
             "/meeting-detected",
             json={
@@ -300,25 +290,11 @@ class TestLegacyMeetingRoutesStillWork:
                 "tabId": 42,
             },
         )
-        assert resp.status == 200
-        data = await resp.json()
-        assert data["status"] == "recording_started"
+        assert resp.status == 404
 
-    async def test_legacy_meeting_ended_works_without_auth(
-        self, client_with_detector
-    ):
-        client, mock_detector = client_with_detector
-        async def _stopped(**_kwargs):
-            return True
-        mock_detector.handle_extension_meeting_ended = _stopped
-
-        resp = await client.post(
-            "/meeting-ended",
-            json={"tabId": 42},
-        )
-        assert resp.status == 200
-        data = await resp.json()
-        assert data["status"] == "recording_stopped"
+    async def test_legacy_meeting_ended_returns_404(self, client):
+        resp = await client.post("/meeting-ended", json={"tabId": 42})
+        assert resp.status == 404
 
 
 @pytest.mark.asyncio

@@ -655,12 +655,7 @@ async def _bootstrap_token(request: web.Request) -> web.Response:
 
 
 async def _meeting_detected_api(request: web.Request) -> web.Response:
-    """Browser-extension hook for auto-starting a recording.
-
-    Shared by the Bearer-authed ``/api/meeting-detected`` and the
-    legacy unauthenticated ``/meeting-detected`` route; auth is
-    enforced at the middleware layer purely by path.
-    """
+    """Browser-extension hook for auto-starting a recording."""
     detector: MeetingDetector | None = request.app.get(_DETECTOR_KEY)
     if detector is None:
         return web.json_response({"error": "detector not available"}, status=503)
@@ -698,11 +693,7 @@ async def _meeting_detected_api(request: web.Request) -> web.Response:
 
 
 async def _meeting_ended_api(request: web.Request) -> web.Response:
-    """Browser-extension hook for auto-stopping a recording.
-
-    Shared by the Bearer-authed ``/api/meeting-ended`` and the legacy
-    unauthenticated ``/meeting-ended`` route.
-    """
+    """Browser-extension hook for auto-stopping a recording."""
     detector: MeetingDetector | None = request.app.get(_DETECTOR_KEY)
     if detector is None:
         return web.json_response({"error": "detector not available"}, status=503)
@@ -781,14 +772,6 @@ def create_app(
     # gated at request time by ``daemon.pairing.is_open`` + loopback
     # check; the route is always registered but 404s while closed.
     app.router.add_get("/bootstrap/token", _bootstrap_token)
-
-    # Transitional: remove in Phase 4.
-    # Legacy unauthenticated extension hooks — the browser extension
-    # still POSTs here without Bearer. Delegate to the same handlers
-    # that back the authenticated /api/* paths. Phase 4 wires the
-    # extension to the Bearer token and deletes these two lines.
-    app.router.add_post("/meeting-detected", _meeting_detected_api)
-    app.router.add_post("/meeting-ended", _meeting_ended_api)
 
     # Authenticated API routes (Bearer enforced by _auth_middleware for
     # every path starting with /api/, except /api/ws which gates via
