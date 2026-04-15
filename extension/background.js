@@ -1,4 +1,4 @@
-const RECAP_PORT = 9847;
+const DEFAULT_BASE_URL = "http://localhost:9847";
 
 const DEFAULT_MEETING_PATTERNS = [
   { pattern: "meet.google.com/", platform: "google_meet", excludeExact: "meet.google.com/" },
@@ -10,28 +10,55 @@ const DEFAULT_MEETING_PATTERNS = [
   { pattern: "meeting.tranzpay.io/", platform: "zoho_meet" },
 ];
 
-let recapPort = null;
+let cachedAuth = null;
+let daemonReachable = false;
 let activeMeetingTabs = new Map();
 
-async function findRecapPort() {
+const authReady = (async () => {
+  const result = await chrome.storage.local.get("recapAuth");
+  cachedAuth = result.recapAuth || null;
+})();
+
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area !== "local" || !changes.recapAuth) return;
+  cachedAuth = changes.recapAuth.newValue || null;
+  void findRecapDaemon();
+});
+
+function currentBaseUrl() {
+  return (cachedAuth && cachedAuth.baseUrl) || DEFAULT_BASE_URL;
+}
+
+function setBadge(state) {
+  if (state === "connected") {
+    chrome.action.setBadgeBackgroundColor({ color: "#4baa55" });
+    chrome.action.setBadgeText({ text: "ON" });
+    chrome.action.setTitle({ title: "Recap - Connected" });
+  } else if (state === "auth") {
+    chrome.action.setBadgeBackgroundColor({ color: "#d9534f" });
+    chrome.action.setBadgeText({ text: "AUTH" });
+    chrome.action.setTitle({ title: "Recap - Not paired. Open options to connect." });
+  } else {
+    chrome.action.setBadgeBackgroundColor({ color: "#7a8493" });
+    chrome.action.setBadgeText({ text: "" });
+    chrome.action.setTitle({ title: "Recap - Not connected" });
+  }
+}
+
+async function findRecapDaemon() {
+  await authReady;
+  const baseUrl = currentBaseUrl();
   try {
-    const resp = await fetch(`http://localhost:${RECAP_PORT}/health`, {
-      signal: AbortSignal.timeout(1000),
-    });
+    const resp = await fetch(`${baseUrl}/health`, { signal: AbortSignal.timeout(1000) });
     if (resp.ok) {
-      recapPort = RECAP_PORT;
-      chrome.action.setBadgeBackgroundColor({ color: "#4baa55" });
-      chrome.action.setBadgeText({ text: "ON" });
-      chrome.action.setTitle({ title: "Recap - Connected" });
-      return recapPort;
+      daemonReachable = true;
+      setBadge(cachedAuth && cachedAuth.token ? "connected" : "auth");
+      return true;
     }
   } catch (_) {}
-
-  recapPort = null;
-  chrome.action.setBadgeBackgroundColor({ color: "#7a8493" });
-  chrome.action.setBadgeText({ text: "" });
-  chrome.action.setTitle({ title: "Recap - Not connected" });
-  return null;
+  daemonReachable = false;
+  setBadge("offline");
+  return false;
 }
 
 async function getMeetingPatterns() {
@@ -54,16 +81,38 @@ function matchesMeetingUrl(url, patterns) {
 }
 
 async function notifyRecap(endpoint, data) {
-  if (!recapPort) await findRecapPort();
-  if (!recapPort) return;
+  await authReady;
+  if (!cachedAuth || !cachedAuth.token) {
+    console.warn("Recap: not paired; skipping", endpoint);
+    setBadge("auth");
+    return;
+  }
+  if (!daemonReachable) await findRecapDaemon();
+  if (!daemonReachable) return;
+
+  const url = `${currentBaseUrl()}${endpoint}`;
   try {
-    await fetch(`http://localhost:${recapPort}${endpoint}`, {
+    const resp = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${cachedAuth.token}`,
+      },
       body: JSON.stringify(data),
     });
-  } catch (_) {
-    recapPort = null;
+    if (resp.status === 401) {
+      console.warn("Recap: 401; clearing stored token");
+      await chrome.storage.local.remove("recapAuth");
+      setBadge("auth");
+      return;
+    }
+    if (!resp.ok) {
+      console.warn(`Recap: ${endpoint} returned ${resp.status}`);
+    }
+  } catch (e) {
+    console.warn("Recap:", endpoint, "failed:", e.message);
+    daemonReachable = false;
+    setBadge("offline");
   }
 }
 
@@ -73,33 +122,25 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
   const platform = matchesMeetingUrl(tab.url, patterns);
   if (platform && !activeMeetingTabs.has(tabId)) {
     activeMeetingTabs.set(tabId, { url: tab.url, title: tab.title, platform });
-    await notifyRecap("/meeting-detected", {
-      url: tab.url,
-      title: tab.title || "Meeting",
-      platform,
-      tabId,
+    await notifyRecap("/api/meeting-detected", {
+      url: tab.url, title: tab.title || "Meeting", platform, tabId,
     });
   } else if (!platform && activeMeetingTabs.has(tabId)) {
     activeMeetingTabs.delete(tabId);
-    await notifyRecap("/meeting-ended", { tabId });
+    await notifyRecap("/api/meeting-ended", { tabId });
   }
 });
 
 chrome.tabs.onRemoved.addListener(async (tabId) => {
   if (activeMeetingTabs.has(tabId)) {
     activeMeetingTabs.delete(tabId);
-    await notifyRecap("/meeting-ended", { tabId });
+    await notifyRecap("/api/meeting-ended", { tabId });
   }
 });
 
-// Use chrome.alarms instead of setInterval - MV3 service workers get terminated
-// after 30s of inactivity, so setInterval doesn't survive.
 chrome.alarms.create("recap-health-check", { periodInMinutes: 0.5 });
 chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === "recap-health-check") {
-    findRecapPort();
-  }
+  if (alarm.name === "recap-health-check") void findRecapDaemon();
 });
 
-// Initial check on service worker startup
-findRecapPort();
+void findRecapDaemon();
