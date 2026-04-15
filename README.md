@@ -92,7 +92,7 @@ Copy `obsidian-recap/main.js`, `obsidian-recap/manifest.json`, and `obsidian-rec
 uv run pytest -q
 ```
 
-48 test modules covering daemon, pipeline, recorder, streaming, calendar, and plugin integration.
+Pytest suite covers daemon, pipeline, recorder, streaming, calendar, and plugin integration.
 
 ## Project Structure
 
@@ -102,7 +102,7 @@ uv run pytest -q
 - `obsidian-recap/` -- Obsidian plugin: meeting list, live transcript, speaker correction, status bar, settings
 - `extension/` -- Chrome/Edge MV3 extension for meeting URL detection
 - `prompts/` -- Claude prompt templates for analysis and briefings
-- `tests/` -- Pytest suite (48 test modules)
+- `tests/` -- Pytest suite
 - `docs/plans/` -- Design docs and phase implementation plans
 
 ## Design
