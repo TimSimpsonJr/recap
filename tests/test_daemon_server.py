@@ -104,9 +104,9 @@ class TestApiStatusAuth:
         data = await resp.json()
         assert data["state"] == "idle"
         assert data["recording"] is None
-        assert data["daemon_uptime"] == 0
+        assert data["uptime_seconds"] == 0
         assert data["last_calendar_sync"] is None
-        assert data["errors"] == []
+        assert data["recent_errors"] == []
 
 
 @pytest.mark.asyncio
@@ -317,9 +317,6 @@ class TestApiStatusReal:
         data = await resp.json()
         assert data["uptime_seconds"] == 0
         assert data["recent_errors"] == []
-        # Legacy fields stay populated.
-        assert data["daemon_uptime"] == 0
-        assert data["errors"] == []
 
     async def test_returns_real_uptime_when_daemon_started(self, daemon_client):
         client, daemon = daemon_client
@@ -333,8 +330,6 @@ class TestApiStatusReal:
         # some drift from the server handling the request).
         assert data["uptime_seconds"] >= 4.5
         assert data["uptime_seconds"] < 60
-        # Legacy field mirrors the real uptime.
-        assert data["daemon_uptime"] == data["uptime_seconds"]
 
     async def test_returns_recent_errors_from_journal(self, daemon_client):
         client, daemon = daemon_client
@@ -359,8 +354,6 @@ class TestApiStatusReal:
         # Payload passes through untouched.
         boom2 = next(e for e in data["recent_errors"] if e["message"] == "boom-2")
         assert boom2["payload"] == {"path": "/tmp/foo"}
-        # Legacy ``errors`` field mirrors ``recent_errors``.
-        assert data["errors"] == data["recent_errors"]
 
     async def test_recent_errors_capped_at_ten(self, daemon_client):
         client, daemon = daemon_client

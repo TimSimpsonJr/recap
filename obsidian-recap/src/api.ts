@@ -11,14 +11,11 @@ export class DaemonError extends Error {
 }
 
 export interface DaemonStatus {
-    uptime_seconds: number;
-    recent_errors: DaemonEvent[];
-    // Legacy (kept for back-compat; mirror new fields):
     state: "idle" | "armed" | "detected" | "recording" | "processing";
     recording: { path: string; org: string } | null;
-    daemon_uptime: number;
     last_calendar_sync: string | null;
-    errors: DaemonEvent[];
+    uptime_seconds: number;
+    recent_errors: DaemonEvent[];
 }
 
 export interface JournalEntry {
