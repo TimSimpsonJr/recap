@@ -484,7 +484,7 @@ def main(argv: list[str] | None = None) -> None:
 
     auth_token = _preflight(config)
 
-    daemon = Daemon(config)
+    daemon = Daemon(config, config_path=args.config)
     try:
         asyncio.run(_run_daemon(daemon, args, auth_token))
     except KeyboardInterrupt:

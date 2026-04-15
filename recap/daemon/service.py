@@ -10,6 +10,8 @@ import argparse
 import asyncio
 import concurrent.futures
 import logging
+import pathlib
+import threading
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -44,8 +46,15 @@ class Daemon:
         await d.stop()
     """
 
-    def __init__(self, config: "DaemonConfig") -> None:
+    def __init__(
+        self,
+        config: "DaemonConfig",
+        *,
+        config_path: Optional[pathlib.Path] = None,
+    ) -> None:
         self.config = config
+        self.config_path = config_path
+        self.config_lock = threading.Lock()
         recap_dir = config.vault_path / "_Recap" / ".recap"
         self.event_journal_path = recap_dir / "events.jsonl"
         self.event_index_path = recap_dir / "event-index.json"

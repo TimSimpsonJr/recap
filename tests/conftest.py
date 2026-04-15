@@ -4,9 +4,48 @@ from __future__ import annotations
 import argparse
 import asyncio
 import pathlib
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import pytest
+import pytest_asyncio
+
+
+# Shared auth token for fixtures that wire a real Daemon + aiohttp app.
+# Individual tests import this as ``tests.conftest.AUTH_TOKEN`` or can
+# read it via the ``daemon_client`` fixture tuple.
+AUTH_TOKEN = "test-secret-token-abc123"
+
+# Minimal snake_case config body used by ``daemon_client``. Written to
+# ``tmp_path/config.yaml`` so ``/api/config`` has a real file to round-trip.
+# A leading comment is included so comment-preservation tests have
+# something to assert against.
+MINIMAL_API_CONFIG_YAML = """\
+# Top-of-file marker comment (do not remove)
+vault_path: "{vault}"
+recordings_path: "{rec}"
+user_name: "TestUser"
+orgs:
+  - name: alpha
+    subfolder: Clients/Alpha
+    default: true
+  - name: beta
+    subfolder: Clients/Beta
+    default: false
+detection:
+  google_meet:
+    enabled: true
+    behavior: prompt
+calendar: {{}}
+known_contacts: []
+recording:
+  silence_timeout_minutes: 5
+  max_duration_hours: 3
+logging:
+  retention_days: 7
+daemon_ports:
+  plugin_port: 9847
+"""
 
 
 @pytest.fixture
@@ -140,3 +179,34 @@ def build_daemon_callbacks(daemon) -> dict[str, Any]:
 def minimal_daemon_args() -> argparse.Namespace:
     """Return the minimal argparse Namespace Daemon.start() expects."""
     return argparse.Namespace(config=pathlib.Path("test-config.yaml"))
+
+
+@pytest_asyncio.fixture
+async def daemon_client(aiohttp_client, tmp_path):
+    """Return ``(client, daemon)`` with an app wired to a real Daemon.
+
+    Writes a minimal snake_case ``config.yaml`` to ``tmp_path`` and
+    points ``daemon.config_path`` at it so ``/api/config`` has a real
+    file to GET + PATCH. Shared by ``test_api_events``,
+    ``test_api_config``, and the Phase 4 integration test.
+    """
+    from recap.daemon.server import create_app
+    from recap.daemon.service import Daemon
+
+    cfg = make_daemon_config(tmp_path)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        MINIMAL_API_CONFIG_YAML.format(
+            vault=(tmp_path / "vault").as_posix(),
+            rec=(tmp_path / "rec").as_posix(),
+        ),
+        encoding="utf-8",
+    )
+    daemon = Daemon(cfg, config_path=config_path)
+    daemon.started_at = (
+        datetime.now(timezone.utc).astimezone() - timedelta(seconds=5)
+    )
+    app = create_app(auth_token=AUTH_TOKEN)
+    app["daemon"] = daemon
+    client = await aiohttp_client(app)
+    return client, daemon

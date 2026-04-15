@@ -14,6 +14,12 @@ from typing import TYPE_CHECKING, Any, Callable, Awaitable
 import aiohttp
 from aiohttp import web
 
+from recap.daemon.api_config import (
+    api_config_to_json_dict,
+    load_yaml_doc,
+    yaml_doc_to_api_config,
+)
+
 if TYPE_CHECKING:
     from recap.daemon.calendar.scheduler import CalendarSyncScheduler
     from recap.daemon.config import DaemonConfig
@@ -166,6 +172,21 @@ async def _api_events(request: web.Request) -> web.Response:
         filtered.append(entry)
 
     return web.json_response({"entries": filtered[-limit:]})
+
+
+async def _api_config_get(request: web.Request) -> web.Response:
+    """GET /api/config -- return the allowlisted, secret-free config DTO."""
+    daemon: Daemon = request.app["daemon"]
+    if daemon.config_path is None:
+        return web.json_response(
+            {"error": "config path not available"}, status=503,
+        )
+    try:
+        doc = load_yaml_doc(daemon.config_path)
+        api = yaml_doc_to_api_config(doc)
+    except (OSError, ValueError) as e:
+        return web.json_response({"error": str(e)}, status=500)
+    return web.json_response(api_config_to_json_dict(api))
 
 
 async def _record_start(request: web.Request) -> web.Response:
@@ -778,6 +799,7 @@ def create_app(
     # its own query-token check).
     app.router.add_get("/api/status", _api_status)
     app.router.add_get("/api/events", _api_events)
+    app.router.add_get("/api/config", _api_config_get)
     app.router.add_post("/api/record/start", _record_start)
     app.router.add_post("/api/record/stop", _record_stop)
     app.router.add_post("/api/arm", _arm)

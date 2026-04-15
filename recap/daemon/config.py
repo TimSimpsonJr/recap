@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import pathlib
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
 
 import yaml
 
@@ -161,25 +161,16 @@ def _parse_detection(raw: dict) -> DetectionConfig:
     )
 
 
-def load_daemon_config(path: pathlib.Path) -> DaemonConfig:
-    """Load daemon configuration from a YAML file.
+def parse_daemon_config_dict(raw: dict[str, Any]) -> DaemonConfig:
+    """Parse a raw config dict into a :class:`DaemonConfig`.
 
-    Args:
-        path: Path to the YAML config file.
-
-    Returns:
-        A populated DaemonConfig instance.
+    Pure function; does no file I/O. Kebab-case keys are the source of
+    truth on disk (see ``config.example.yaml``).
 
     Raises:
-        FileNotFoundError: If the config file does not exist.
-        ValueError: If required fields are missing or config-version is wrong.
+        ValueError: If required fields are missing or ``config-version``
+            is unsupported.
     """
-    if not path.exists():
-        raise FileNotFoundError(f"Config file not found: {path}")
-
-    with open(path) as f:
-        raw = yaml.safe_load(f) or {}
-
     # Validate config version
     version = raw.get("config-version")
     if version != 1:
@@ -292,3 +283,20 @@ def load_daemon_config(path: pathlib.Path) -> DaemonConfig:
         calendars=calendars,
         _orgs=orgs,
     )
+
+
+def load_daemon_config(path: pathlib.Path) -> DaemonConfig:
+    """Load daemon configuration from a YAML file.
+
+    Raises:
+        FileNotFoundError: If the config file does not exist.
+        ValueError: If required fields are missing or ``config-version``
+            is wrong.
+    """
+    if not path.exists():
+        raise FileNotFoundError(f"Config file not found: {path}")
+
+    with open(path) as f:
+        raw = yaml.safe_load(f) or {}
+
+    return parse_daemon_config_dict(raw)
