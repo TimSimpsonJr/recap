@@ -60,6 +60,8 @@ def extract_teams_participants(hwnd: int) -> list[str] | None:
     This function is intentionally defensive — it must never crash.
     """
     try:
+        # uiautomation is a Windows-only untyped library; imported lazily so tests
+        # without the package can still import this module.
         import uiautomation as auto  # type: ignore[import-untyped]
 
         control = auto.ControlFromHandle(hwnd)
@@ -100,6 +102,8 @@ def _walk_for_participants(
         return
 
     try:
+        # uiautomation is Windows-only and untyped; lazy import keeps this module
+        # importable on platforms without the package.
         import uiautomation as auto  # type: ignore[import-untyped]
 
         # Look for ListItem controls — Teams roster uses these for participants
@@ -109,6 +113,8 @@ def _walk_for_participants(
                 names.append(name.strip())
                 return  # don't recurse into the list item
 
+        # control is typed as `object` at the function boundary; uiautomation
+        # controls expose GetChildren() at runtime. Trust the runtime here.
         for child in control.GetChildren():  # type: ignore[union-attr]
             _walk_for_participants(child, names, depth + 1, max_depth)
 

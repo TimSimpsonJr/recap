@@ -58,6 +58,8 @@ class StreamingTranscriber:
 
     def _load_model(self) -> None:
         """Load the parakeet-stream model. Lazy-imports the library."""
+        # parakeet_stream is an optional streaming-ASR dependency; lazy import
+        # avoids a hard requirement for environments that don't run streaming.
         import parakeet_stream  # type: ignore[import-not-found]
 
         self._model = parakeet_stream.load_model(

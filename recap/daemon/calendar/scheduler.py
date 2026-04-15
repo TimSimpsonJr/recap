@@ -267,12 +267,12 @@ class CalendarSyncScheduler:
         client_id = get_credential(provider, "client_id")
         client_secret = get_credential(provider, "client_secret")
 
-        if not all([refresh_tok, client_id, client_secret]):
+        if refresh_tok is None or client_id is None or client_secret is None:
             return False
 
         try:
-            mgr = OAuthManager(provider, client_id, client_secret)  # type: ignore[arg-type]
-            tokens = mgr.refresh_token(refresh_tok)  # type: ignore[arg-type]
+            mgr = OAuthManager(provider, client_id, client_secret)
+            tokens = mgr.refresh_token(refresh_tok)
             store_credential(provider, "access_token", tokens["access_token"])
             if "refresh_token" in tokens:
                 store_credential(provider, "refresh_token", tokens["refresh_token"])

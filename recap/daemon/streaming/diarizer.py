@@ -123,6 +123,8 @@ class StreamingDiarizer:
 
     def _load_model(self) -> None:
         """Lazy-import NeMo and load the streaming Sortformer model."""
+        # nemo is a heavy optional ML dependency without type stubs; lazy import
+        # avoids dragging it into every process.
         from nemo.collections.asr.models import SortformerEncLabelModel  # type: ignore[import-untyped]
 
         self._model = SortformerEncLabelModel.from_pretrained(self._model_name)
