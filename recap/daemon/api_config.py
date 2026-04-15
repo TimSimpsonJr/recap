@@ -180,3 +180,159 @@ def yaml_doc_to_api_config(doc: CommentedMap) -> ApiConfig:
 
 def api_config_to_json_dict(cfg: ApiConfig) -> dict[str, Any]:
     return dataclasses.asdict(cfg)
+
+
+# ---------------------------------------------------------------------------
+# PATCH helpers (design §2.3)
+# ---------------------------------------------------------------------------
+
+_READ_ONLY_KEYS = frozenset({"default_org"})
+
+
+def _field_names(cls: Any) -> set[str]:
+    return {f.name for f in dataclasses.fields(cls)}
+
+
+def find_unknown_keys(body: dict[str, Any]) -> list[str]:
+    """Return dotted paths of keys not in the ApiConfig allowlist.
+
+    Walks one level into ``orgs``, ``detection``, ``calendar``, and
+    ``known_contacts`` so nested typos are caught with an actionable
+    path (e.g. ``detection.google_meet.bogus``).
+    """
+    unknown: list[str] = []
+    top_allowed = _field_names(ApiConfig)
+
+    for key, value in body.items():
+        if key in _READ_ONLY_KEYS:
+            unknown.append(f"{key} (read-only)")
+            continue
+        if key not in top_allowed:
+            unknown.append(key)
+            continue
+
+        if key == "orgs" and isinstance(value, list):
+            allowed = _field_names(ApiOrgConfig)
+            for entry in value:
+                if not isinstance(entry, dict):
+                    continue
+                for k in entry:
+                    if k not in allowed:
+                        unknown.append(f"orgs[].{k}")
+        elif key == "detection" and isinstance(value, dict):
+            allowed = _field_names(ApiDetectionRule)
+            for platform, rule in value.items():
+                if not isinstance(rule, dict):
+                    continue
+                for k in rule:
+                    if k not in allowed:
+                        unknown.append(f"detection.{platform}.{k}")
+        elif key == "calendar" and isinstance(value, dict):
+            allowed = _field_names(ApiCalendarProvider)
+            for provider, cfg in value.items():
+                if not isinstance(cfg, dict):
+                    continue
+                for k in cfg:
+                    if k not in allowed:
+                        unknown.append(f"calendar.{provider}.{k}")
+        elif key == "known_contacts" and isinstance(value, list):
+            allowed = _field_names(ApiKnownContact)
+            for entry in value:
+                if not isinstance(entry, dict):
+                    continue
+                for k in entry:
+                    if k not in allowed:
+                        unknown.append(f"known_contacts[].{k}")
+
+    return unknown
+
+
+def apply_api_patch_to_yaml_doc(
+    doc: CommentedMap, patch: dict[str, Any],
+) -> None:
+    """Apply a validated PATCH body to a ruamel doc, in place.
+
+    Scalars map 1:1 onto top-level keys. ``orgs`` and ``known_contacts``
+    are whole-list replacements. ``detection`` and ``calendar`` are
+    per-platform/provider merges so sibling keys and comments survive.
+
+    Flat keys backed by nested YAML (``recording_*``, ``logging_*``,
+    ``plugin_port``) are routed to their respective sub-mapping.
+    """
+    for key, value in patch.items():
+        if key in _READ_ONLY_KEYS:
+            continue
+
+        if key == "recording_silence_timeout_minutes":
+            rec = doc.setdefault("recording", CommentedMap())
+            rec["silence_timeout_minutes"] = value
+            continue
+        if key == "recording_max_duration_hours":
+            rec = doc.setdefault("recording", CommentedMap())
+            rec["max_duration_hours"] = value
+            continue
+        if key == "logging_retention_days":
+            log = doc.setdefault("logging", CommentedMap())
+            log["retention_days"] = value
+            continue
+        if key == "plugin_port":
+            ports = doc.setdefault("daemon_ports", CommentedMap())
+            ports["plugin_port"] = value
+            continue
+
+        if key == "orgs" and isinstance(value, list):
+            new_list = CommentedSeq()
+            for o in value:
+                m = CommentedMap()
+                m["name"] = o.get("name", "")
+                m["subfolder"] = o.get("subfolder", "")
+                m["default"] = bool(o.get("default", False))
+                new_list.append(m)
+            doc["orgs"] = new_list
+            continue
+
+        if key == "known_contacts" and isinstance(value, list):
+            new_list = CommentedSeq()
+            for kc in value:
+                m = CommentedMap()
+                m["name"] = kc.get("name", "")
+                if "aliases" in kc:
+                    m["aliases"] = list(kc["aliases"] or [])
+                if "email" in kc:
+                    m["email"] = kc["email"]
+                new_list.append(m)
+            doc["known_contacts"] = new_list
+            continue
+
+        if key == "detection" and isinstance(value, dict):
+            det = doc.setdefault("detection", CommentedMap())
+            for platform, rule in value.items():
+                target = det.setdefault(platform, CommentedMap())
+                for k in (
+                    "enabled", "behavior", "default_org", "default_backend",
+                ):
+                    if k in rule:
+                        target[k] = rule[k]
+            continue
+
+        if key == "calendar" and isinstance(value, dict):
+            cal = doc.setdefault("calendar", CommentedMap())
+            for provider, cfg in value.items():
+                target = cal.setdefault(provider, CommentedMap())
+                for k in ("enabled", "calendar_id", "org"):
+                    if k in cfg:
+                        target[k] = cfg[k]
+            continue
+
+        doc[key] = value
+
+
+def validate_yaml_doc(doc: CommentedMap) -> None:
+    """Smoke-validate a ruamel doc against the API shape.
+
+    Re-projecting through ``yaml_doc_to_api_config`` exercises every
+    required-field / type check the DTO enforces (``vault_path`` is a
+    string, orgs entries have string names/subfolders, etc.). Any
+    ``ValueError`` bubbles to the handler, which maps it to 400.
+    """
+    yaml_doc_to_api_config(doc)

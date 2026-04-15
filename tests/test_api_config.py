@@ -1,4 +1,4 @@
-"""Tests for /api/config GET + DTO translation (Phase 4 Task 8)."""
+"""Tests for /api/config GET + PATCH + DTO translation (Phase 4 Tasks 8-9)."""
 from __future__ import annotations
 
 import pathlib
@@ -8,6 +8,9 @@ from ruamel.yaml.comments import CommentedMap
 
 from recap.daemon.api_config import (
     api_config_to_json_dict,
+    apply_api_patch_to_yaml_doc,
+    dump_yaml_doc,
+    find_unknown_keys,
     load_yaml_doc,
     yaml_doc_to_api_config,
 )
@@ -173,5 +176,217 @@ class TestApiConfigGet:
         resp = await client.get(
             "/api/config",
             headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 503
+
+
+# ---------------------------------------------------------------------------
+# PATCH — ruamel round-trip
+# ---------------------------------------------------------------------------
+
+def _yaml_with(*extra_lines: str) -> str:
+    base = (
+        "# Important top comment\n"
+        "vault_path: /v\n"
+        "recordings_path: /r\n"
+    )
+    return base + "".join(line + "\n" for line in extra_lines)
+
+
+def _dump_to_string(doc: CommentedMap) -> str:
+    import io
+    buf = io.StringIO()
+    dump_yaml_doc(doc, buf)
+    return buf.getvalue()
+
+
+class TestApplyPatchToYamlDoc:
+    def test_scalar_patch_preserves_sibling_comments(
+        self, tmp_path: pathlib.Path,
+    ) -> None:
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "# Important comment\n"
+            "vault_path: /old\n"
+            "# Another comment\n"
+            "recordings_path: /r\n",
+            encoding="utf-8",
+        )
+        doc = load_yaml_doc(config_path)
+        apply_api_patch_to_yaml_doc(doc, {"vault_path": "/new"})
+        dumped = _dump_to_string(doc)
+        assert "/new" in dumped
+        assert "# Important comment" in dumped
+        assert "# Another comment" in dumped
+
+    def test_list_patch_is_whole_replacement(
+        self, tmp_path: pathlib.Path,
+    ) -> None:
+        config_path = tmp_path / "config.yaml"
+        config_path.write_text(
+            "vault_path: /v\n"
+            "recordings_path: /r\n"
+            "orgs:\n"
+            "  - name: alpha\n"
+            "    subfolder: A\n"
+            "    default: true\n"
+            "  - name: beta\n"
+            "    subfolder: B\n"
+            "    default: false\n",
+            encoding="utf-8",
+        )
+        doc = load_yaml_doc(config_path)
+        apply_api_patch_to_yaml_doc(
+            doc,
+            {"orgs": [{"name": "gamma", "subfolder": "G", "default": True}]},
+        )
+        assert len(doc["orgs"]) == 1
+        assert doc["orgs"][0]["name"] == "gamma"
+
+
+class TestFindUnknownKeys:
+    def test_top_level_unknown_key(self) -> None:
+        assert find_unknown_keys({"nope": 1}) == ["nope"]
+
+    def test_nested_detection_unknown_subfield_caught(self) -> None:
+        out = find_unknown_keys(
+            {"detection": {"google_meet": {"enabled": True, "bogus": 1}}},
+        )
+        assert "detection.google_meet.bogus" in out
+
+    def test_orgs_entry_unknown_field(self) -> None:
+        out = find_unknown_keys(
+            {
+                "orgs": [
+                    {
+                        "name": "x", "subfolder": "y",
+                        "default": True, "zzz": "nope",
+                    },
+                ],
+            },
+        )
+        assert "orgs[].zzz" in out
+
+    def test_calendar_entry_unknown_field(self) -> None:
+        out = find_unknown_keys(
+            {"calendar": {"google": {"enabled": True, "nope": "x"}}},
+        )
+        assert "calendar.google.nope" in out
+
+    def test_known_contacts_entry_unknown_field(self) -> None:
+        out = find_unknown_keys(
+            {"known_contacts": [{"name": "X", "bad": "y"}]},
+        )
+        assert "known_contacts[].bad" in out
+
+    def test_default_org_flagged_as_read_only(self) -> None:
+        out = find_unknown_keys({"default_org": "alpha"})
+        assert any("default_org" in entry for entry in out)
+
+    def test_allowed_top_level_key_not_flagged(self) -> None:
+        assert find_unknown_keys({"vault_path": "/v"}) == []
+
+
+@pytest.mark.asyncio
+class TestApiConfigPatch:
+    async def test_patch_updates_config_yaml_and_preserves_comments(
+        self, daemon_client,
+    ) -> None:
+        client, daemon = daemon_client
+        config_path = daemon.config_path
+        # Prepend an extra marker comment we can look for after the PATCH.
+        original = config_path.read_text(encoding="utf-8")
+        config_path.write_text(
+            "# MARKER-COMMENT-123\n" + original, encoding="utf-8",
+        )
+
+        resp = await client.patch(
+            "/api/config",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+            json={"user_name": "NewName"},
+        )
+        assert resp.status == 200
+        body = await resp.json()
+        assert body.get("restart_required") is True
+
+        after = config_path.read_text(encoding="utf-8")
+        assert "NewName" in after
+        assert "# MARKER-COMMENT-123" in after
+
+    async def test_patch_unknown_top_level_key_returns_400(
+        self, daemon_client,
+    ) -> None:
+        client, _ = daemon_client
+        resp = await client.patch(
+            "/api/config",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+            json={"nonsense_field": True},
+        )
+        assert resp.status == 400
+
+    async def test_patch_unknown_nested_key_returns_400(
+        self, daemon_client,
+    ) -> None:
+        client, _ = daemon_client
+        resp = await client.patch(
+            "/api/config",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+            json={
+                "detection": {
+                    "google_meet": {"enabled": True, "bogus_field": 1},
+                },
+            },
+        )
+        assert resp.status == 400
+
+    async def test_patch_default_org_rejected(self, daemon_client) -> None:
+        client, _ = daemon_client
+        resp = await client.patch(
+            "/api/config",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+            json={"default_org": "alpha"},
+        )
+        assert resp.status == 400
+
+    async def test_patch_non_dict_body_returns_400(
+        self, daemon_client,
+    ) -> None:
+        client, _ = daemon_client
+        resp = await client.patch(
+            "/api/config",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+            json=[1, 2, 3],
+        )
+        assert resp.status == 400
+
+    async def test_patch_requires_bearer(self, daemon_client) -> None:
+        client, _ = daemon_client
+        resp = await client.patch("/api/config", json={"user_name": "X"})
+        assert resp.status == 401
+
+    async def test_patch_emits_config_updated_event(
+        self, daemon_client,
+    ) -> None:
+        client, daemon = daemon_client
+        before = len(daemon.event_journal.tail(limit=500))
+        resp = await client.patch(
+            "/api/config",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+            json={"user_name": "Journaled"},
+        )
+        assert resp.status == 200
+        events = daemon.event_journal.tail(limit=500)
+        assert len(events) > before
+        assert any(e.get("event") == "config_updated" for e in events)
+
+    async def test_patch_missing_config_path_returns_503(
+        self, daemon_client,
+    ) -> None:
+        client, daemon = daemon_client
+        daemon.config_path = None
+        resp = await client.patch(
+            "/api/config",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+            json={"user_name": "X"},
         )
         assert resp.status == 503

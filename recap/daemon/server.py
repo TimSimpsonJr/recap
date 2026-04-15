@@ -6,6 +6,7 @@ import asyncio
 import hmac
 import json
 import logging
+import os
 import pathlib
 from datetime import datetime, timezone
 from pathlib import Path
@@ -16,7 +17,11 @@ from aiohttp import web
 
 from recap.daemon.api_config import (
     api_config_to_json_dict,
+    apply_api_patch_to_yaml_doc,
+    dump_yaml_doc,
+    find_unknown_keys,
     load_yaml_doc,
+    validate_yaml_doc,
     yaml_doc_to_api_config,
 )
 
@@ -187,6 +192,65 @@ async def _api_config_get(request: web.Request) -> web.Response:
     except (OSError, ValueError) as e:
         return web.json_response({"error": str(e)}, status=500)
     return web.json_response(api_config_to_json_dict(api))
+
+
+async def _api_config_patch(request: web.Request) -> web.Response:
+    """PATCH /api/config -- ruamel round-trip, strict key validation,
+    atomic write, ``config_updated`` journal event.
+    """
+    daemon: Daemon = request.app["daemon"]
+    if daemon.config_path is None:
+        return web.json_response(
+            {"error": "config path not available"}, status=503,
+        )
+
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return web.json_response({"error": "invalid JSON"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response(
+            {"error": "request body must be a JSON object"}, status=400,
+        )
+
+    unknown = find_unknown_keys(body)
+    if unknown:
+        return web.json_response(
+            {"error": f"unknown or read-only fields: {unknown}"},
+            status=400,
+        )
+
+    with daemon.config_lock:
+        try:
+            doc = load_yaml_doc(daemon.config_path)
+            apply_api_patch_to_yaml_doc(doc, body)
+            validate_yaml_doc(doc)
+        except ValueError as e:
+            return web.json_response({"error": str(e)}, status=400)
+        except OSError as e:
+            return web.json_response({"error": str(e)}, status=500)
+
+        tmp_path = daemon.config_path.with_suffix(
+            daemon.config_path.suffix + ".tmp",
+        )
+        try:
+            with tmp_path.open("w", encoding="utf-8") as f:
+                dump_yaml_doc(doc, f)
+            os.replace(tmp_path, daemon.config_path)
+        except OSError as e:
+            if tmp_path.exists():
+                try:
+                    tmp_path.unlink()
+                except OSError:
+                    pass
+            return web.json_response({"error": str(e)}, status=500)
+
+    daemon.emit_event(
+        "info", "config_updated",
+        f"Config updated (keys: {sorted(body.keys())})",
+        payload={"changed_keys": sorted(body.keys())},
+    )
+    return web.json_response({"status": "ok", "restart_required": True})
 
 
 async def _record_start(request: web.Request) -> web.Response:
@@ -800,6 +864,7 @@ def create_app(
     app.router.add_get("/api/status", _api_status)
     app.router.add_get("/api/events", _api_events)
     app.router.add_get("/api/config", _api_config_get)
+    app.router.add_patch("/api/config", _api_config_patch)
     app.router.add_post("/api/record/start", _record_start)
     app.router.add_post("/api/record/stop", _record_stop)
     app.router.add_post("/api/arm", _arm)
