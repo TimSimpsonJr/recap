@@ -1,4 +1,5 @@
-import { Modal, App } from "obsidian";
+import { Modal, App, Notice } from "obsidian";
+import { DaemonClient, JournalEntry } from "./api";
 
 export interface RecapNotification {
     timestamp: string;
@@ -7,85 +8,92 @@ export interface RecapNotification {
     message: string;
 }
 
-export class NotificationHistory {
-    private notifications: RecapNotification[] = [];
-    private maxSize = 100;
+function entryToNotification(entry: JournalEntry): RecapNotification {
+    const payload = entry.payload as { title?: string } | undefined;
+    const title = payload?.title ?? entry.event.replace(/_/g, " ");
+    return { timestamp: entry.ts, type: entry.level, title, message: entry.message };
+}
 
-    add(type: RecapNotification["type"], title: string, message: string): void {
-        this.notifications.unshift({
-            timestamp: new Date().toISOString(),
-            type,
-            title,
-            message,
-        });
-        if (this.notifications.length > this.maxSize) {
-            this.notifications.pop();
+export class NotificationHistory {
+    private client: DaemonClient | null = null;
+    private cache: RecapNotification[] = [];
+    private unsubscribe: (() => void) | null = null;
+    private readonly maxSize = 100;
+    private listeners: Array<() => void> = [];
+
+    setClient(client: DaemonClient | null): void {
+        if (this.unsubscribe) { this.unsubscribe(); this.unsubscribe = null; }
+        this.client = client;
+        this.cache = [];
+        if (client) {
+            void this.load();
+            this.unsubscribe = client.onJournalEntry((entry) => {
+                this.cache.push(entryToNotification(entry));
+                if (this.cache.length > this.maxSize) {
+                    this.cache.splice(0, this.cache.length - this.maxSize);
+                }
+                this.notifyListeners();
+            });
         }
     }
 
-    getAll(): RecapNotification[] {
-        return [...this.notifications];
+    async load(): Promise<void> {
+        if (!this.client) return;
+        try {
+            const entries = await this.client.tailEvents(undefined, this.maxSize);
+            this.cache = entries.map(entryToNotification);
+            this.notifyListeners();
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            new Notice(`Recap: notification history backfill failed — ${msg}`);
+            console.error("Recap:", e);
+        }
     }
 
-    clear(): void {
-        this.notifications = [];
+    getAll(): RecapNotification[] { return [...this.cache]; }
+
+    subscribe(callback: () => void): () => void {
+        this.listeners.push(callback);
+        return () => {
+            const idx = this.listeners.indexOf(callback);
+            if (idx >= 0) this.listeners.splice(idx, 1);
+        };
     }
 
-    get count(): number {
-        return this.notifications.length;
+    detach(): void {
+        if (this.unsubscribe) { this.unsubscribe(); this.unsubscribe = null; }
+        this.client = null;
+        this.cache = [];
+        this.notifyListeners();
+    }
+
+    private notifyListeners(): void {
+        for (const cb of this.listeners) {
+            try { cb(); } catch (e) { console.error("Recap:", e); }
+        }
     }
 }
 
 export class NotificationHistoryModal extends Modal {
-    private history: NotificationHistory;
-
-    constructor(app: App, history: NotificationHistory) {
-        super(app);
-        this.history = history;
-    }
+    constructor(app: App, private history: NotificationHistory) { super(app); }
 
     onOpen(): void {
         const { contentEl } = this;
         contentEl.empty();
-        contentEl.addClass("recap-notification-modal");
-
-        contentEl.createEl("h2", { text: "Notification History" });
-
-        const notifications = this.history.getAll();
-
-        if (notifications.length === 0) {
-            contentEl.createEl("p", { text: "No notifications yet.", cls: "recap-empty-state" });
+        contentEl.createEl("h2", { text: "Recap notifications" });
+        const list = contentEl.createEl("div", { cls: "recap-notification-list" });
+        const entries = this.history.getAll().slice().reverse();
+        if (entries.length === 0) {
+            list.createEl("p", { text: "No notifications yet." });
             return;
         }
-
-        const list = contentEl.createDiv({ cls: "recap-notification-list" });
-
-        for (const n of notifications) {
-            const row = list.createDiv({ cls: `recap-notification-row recap-notification-${n.type}` });
-            const header = row.createDiv({ cls: "recap-notification-header" });
-
-            // Type icon
-            const icon = n.type === "error" ? "✕" : n.type === "warning" ? "⚠" : "ℹ";
-            header.createSpan({ text: icon, cls: "recap-notification-icon" });
-            header.createSpan({ text: n.title, cls: "recap-notification-title" });
-            header.createSpan({
-                text: new Date(n.timestamp).toLocaleString(),
-                cls: "recap-notification-time",
-            });
-
-            row.createDiv({ text: n.message, cls: "recap-notification-message" });
+        for (const n of entries) {
+            const row = list.createEl("div", { cls: `recap-notif recap-notif-${n.type}` });
+            row.createEl("span", { cls: "recap-notif-time", text: n.timestamp });
+            row.createEl("strong", { text: n.title });
+            row.createEl("span", { text: n.message });
         }
-
-        // Clear button
-        const footer = contentEl.createDiv({ cls: "recap-modal-buttons" });
-        const clearBtn = footer.createEl("button", { text: "Clear All" });
-        clearBtn.addEventListener("click", () => {
-            this.history.clear();
-            this.onOpen(); // Re-render
-        });
     }
 
-    onClose(): void {
-        this.contentEl.empty();
-    }
+    onClose(): void { this.contentEl.empty(); }
 }

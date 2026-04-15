@@ -51,6 +51,7 @@ export default class RecapPlugin extends Plugin {
 
         if (token) {
             this.client = new DaemonClient(this.settings.daemonUrl, token);
+            this.notificationHistory.setClient(this.client);
         }
 
         // Status bar
@@ -196,6 +197,7 @@ export default class RecapPlugin extends Plugin {
     }
 
     onunload() {
+        this.notificationHistory.detach();
         this.client?.disconnectWebSocket();
     }
 
@@ -292,9 +294,10 @@ export default class RecapPlugin extends Plugin {
             }
         });
 
-        // Bug 3: Wire state_change to notifications using actual daemon events
+        // Status-bar + live-transcript updates driven by state_change.
+        // Notification entries are produced by the daemon journal and streamed
+        // to the plugin via WebSocket; see NotificationHistory.setClient.
         this.client.on("state_change", (event) => {
-            const previousState = this.lastKnownState;
             const state = event.state as string;
             this.lastKnownState = state;
 
@@ -304,15 +307,6 @@ export default class RecapPlugin extends Plugin {
             const leaves = this.app.workspace.getLeavesOfType(VIEW_LIVE_TRANSCRIPT);
             for (const leaf of leaves) {
                 (leaf.view as LiveTranscriptView).updateStatus(state);
-            }
-
-            // Generate notifications from state transitions
-            if (state === "recording") {
-                this.notificationHistory.add("info", "Recording Started", `Recording for ${event.org || "unknown"}`);
-            } else if (state === "processing") {
-                this.notificationHistory.add("info", "Processing", "Pipeline running...");
-            } else if (state === "idle" && previousState === "processing") {
-                this.notificationHistory.add("info", "Complete", "Meeting processed");
             }
         });
 
@@ -327,17 +321,15 @@ export default class RecapPlugin extends Plugin {
             }
         });
 
-        // Wire error events
+        // Wire error events (history entry comes from daemon journal over WS)
         this.client.on("error", (event) => {
             const message = (event.message as string) || "Unknown error";
-            this.notificationHistory.add("error", "Daemon Error", message);
             new Notice(`Recap error: ${message}`, 8000);
         });
 
-        // Wire silence_warning events
+        // Wire silence_warning events (history entry comes from daemon journal over WS)
         this.client.on("silence_warning", (event) => {
             const message = (event.message as string) || "Extended silence during recording";
-            this.notificationHistory.add("warning", "Silence Detected", message);
             new Notice(`Recap: ${message}`, 8000);
         });
 
@@ -354,9 +346,11 @@ export default class RecapPlugin extends Plugin {
     // Bug 5: Reconnect when daemon URL changes in settings
     async reconnect(): Promise<void> {
         this.client?.disconnectWebSocket();
+        this.notificationHistory.detach();
         const token = await this.readAuthToken();
         if (token) {
             this.client = new DaemonClient(this.settings.daemonUrl, token);
+            this.notificationHistory.setClient(this.client);
             this.connectWebSocket();
             try {
                 const status = await this.client.getStatus();
