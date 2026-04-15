@@ -90,7 +90,12 @@ def _make_process_recording(daemon: Daemon):
                 event_index=daemon.event_index,
             )
             recorder.state_machine.processing_complete()
-            notify("Recap", f"Meeting processed: {note_path.stem}")
+            notify(
+                "Recap",
+                f"Meeting processed: {note_path.stem}",
+                journal=daemon.event_journal,
+                event="pipeline_complete",
+            )
         except Exception as e:
             # Ensure state machine returns to idle even on failure
             try:
@@ -101,7 +106,13 @@ def _make_process_recording(daemon: Daemon):
                     reset_error,
                 )
             logger.error("Pipeline failed: %s", e)
-            notify("Recap", f"Pipeline failed: {e}")
+            notify(
+                "Recap",
+                f"Pipeline failed: {e}",
+                journal=daemon.event_journal,
+                level="error",
+                event="pipeline_failed",
+            )
             await _broadcast_safe(daemon, {
                 "event": "error",
                 "scope": "pipeline",
@@ -143,7 +154,13 @@ def _handle_async_error(daemon: Daemon, future) -> None:
         future.result()
     except Exception as e:
         logger.error("Async callback failed: %s", e)
-        notify("Recap Error", str(e))
+        notify(
+            "Recap Error",
+            str(e),
+            journal=daemon.event_journal,
+            level="error",
+            event="async_callback_failed",
+        )
         # Schedule the error broadcast separately so it doesn't recurse on
         # this failure path.
         if daemon.loop is not None and daemon.loop.is_running():
@@ -216,17 +233,31 @@ def _build_subservices(daemon: Daemon, auth_token: str) -> dict[str, Any]:
 
     # Silence + duration notifications.
     recorder.on_silence_detected = lambda: (
-        notify("Recap", "No audio for 5 minutes. Still in a meeting?"),
+        notify(
+            "Recap",
+            "No audio for 5 minutes. Still in a meeting?",
+            journal=daemon.event_journal,
+            level="warning",
+            event="silence_warning",
+        ),
         _schedule_async(daemon, _broadcast_safe(daemon, {
             "event": "silence_warning",
             "message": "No audio for 5 minutes. Still in a meeting?",
         })),
     )
     recorder.on_max_duration_warning = lambda: notify(
-        "Recap", "Recording for 3+ hours. Still going?",
+        "Recap",
+        "Recording for 3+ hours. Still going?",
+        journal=daemon.event_journal,
+        level="warning",
+        event="max_duration_warning",
     )
     recorder.on_max_duration_reached = lambda: notify(
-        "Recap", "Max recording duration reached. Stopping.",
+        "Recap",
+        "Max recording duration reached. Stopping.",
+        journal=daemon.event_journal,
+        level="warning",
+        event="max_duration_reached",
     )
 
     # Signal popup callback -- runs when the detector sees a Signal call.
