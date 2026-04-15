@@ -58,3 +58,4 @@ docs/mockups/
 htmlcov/
 .coverage
 .coverage.*
+coverage.xml
