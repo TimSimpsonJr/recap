@@ -1,13 +1,15 @@
 """Tests for the Daemon service class."""
 from __future__ import annotations
 
+import argparse
 import asyncio
 import pathlib
 from datetime import datetime
+from typing import Any
 
 import pytest
 
-from recap.daemon.config import DaemonConfig, OrgConfig
+from recap.daemon.config import DaemonConfig, DaemonPortConfig, OrgConfig
 from recap.daemon.service import Daemon
 
 
@@ -18,8 +20,8 @@ def _make_config(tmp_path: pathlib.Path) -> DaemonConfig:
     cfg.recordings_path = tmp_path / "rec"
     cfg.recordings_path.mkdir()
     cfg._orgs = [OrgConfig(name="d", subfolder="Clients/D", default=True)]
-    # Minimum surface the Daemon class needs. Extend with more fields once
-    # Task 3 migrates __main__.py callers.
+    # Lifecycle test needs daemon_ports for the HTTP runner.
+    cfg.daemon_ports = DaemonPortConfig(plugin_port=0)
     return cfg
 
 
@@ -118,3 +120,148 @@ class TestDaemonLoopAccess:
                 d.run_in_loop(coro)
         finally:
             coro.close()  # avoid "coroutine was never awaited" warning
+
+
+# ----------------------------------------------------------------------
+# Stub subservices for the lifecycle test (Phase 3 Task 3)
+# ----------------------------------------------------------------------
+
+
+class _StubRecorder:
+    """Minimal recorder stub: only exposes the surface ``stop()`` touches."""
+
+    def __init__(self) -> None:
+        self.stopped = False
+
+    def stop(self) -> None:
+        self.stopped = True
+
+
+class _StubScheduler:
+    """Stub CalendarSyncScheduler with async start() + sync stop()."""
+
+    def __init__(self) -> None:
+        self.started = False
+        self.stopped = False
+        self._task: asyncio.Task | None = None
+
+    async def start(self) -> None:
+        self.started = True
+        # Spawn a benign task that just sleeps until cancelled, mirroring
+        # the real scheduler's polling-loop shape.
+        self._task = asyncio.get_running_loop().create_task(self._run())
+
+    async def _run(self) -> None:
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            return
+
+    def stop(self) -> None:
+        self.stopped = True
+        if self._task is not None:
+            self._task.cancel()
+            self._task = None
+
+
+class _StubDetector:
+    """Stub MeetingDetector: sync start() / stop() like the real one."""
+
+    def __init__(self) -> None:
+        self.started = False
+        self.stopped = False
+        self._task: asyncio.Task | None = None
+
+    def start(self) -> None:
+        self.started = True
+        self._task = asyncio.get_event_loop().create_task(self._run())
+
+    async def _run(self) -> None:
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            return
+
+    def stop(self) -> None:
+        self.stopped = True
+        if self._task is not None:
+            self._task.cancel()
+            self._task = None
+
+
+def _stub_callbacks(daemon: Daemon) -> dict[str, Any]:
+    async def _noop(*args, **kwargs):
+        return None
+
+    return {
+        "auth_token": "test-token",
+        "recorder": _StubRecorder(),
+        "detector": _StubDetector(),
+        "scheduler": _StubScheduler(),
+        "pipeline_trigger": _noop,
+    }
+
+
+def _minimal_args() -> argparse.Namespace:
+    return argparse.Namespace(config=pathlib.Path("test-config.yaml"))
+
+
+class TestDaemonLifecycle:
+    """Integration: full start() -> wait -> stop() round trip."""
+
+    @pytest.mark.asyncio
+    async def test_start_and_stop_cycle(self, tmp_path):
+        """start() brings up services; stop() tears them down cleanly."""
+        cfg = _make_config(tmp_path)
+        d = Daemon(cfg)
+        callbacks = _stub_callbacks(d)
+
+        await d.start(args=_minimal_args(), callbacks=callbacks)
+
+        # Daemon state is fully populated.
+        assert d.started_at is not None
+        assert d.loop is not None
+        assert d.app is not None
+        assert d.app["daemon"] is d
+        # Index file rebuilt at startup (Codex lock-in from Phase 2).
+        assert d.event_index_path.exists()
+
+        # Subservices are wired and started.
+        assert d.recorder is callbacks["recorder"]
+        assert d.detector is callbacks["detector"]
+        assert d.scheduler is callbacks["scheduler"]
+        assert d.scheduler.started is True
+        assert d.detector.started is True
+
+        # Journal recorded the lifecycle event.
+        journal_entries = d.event_journal.tail(limit=10)
+        assert any(
+            e["event"] == "daemon_started" for e in journal_entries
+        ), f"expected daemon_started in {journal_entries}"
+
+        await d.stop()
+
+        # Subservices got stopped.
+        assert d.scheduler.stopped is True
+        assert d.detector.stopped is True
+        assert d.recorder.stopped is True
+
+        # Journal recorded the stop event.
+        stop_entries = d.event_journal.tail(limit=10)
+        assert any(
+            e["event"] == "daemon_stopped" for e in stop_entries
+        ), f"expected daemon_stopped in {stop_entries}"
+
+    @pytest.mark.asyncio
+    async def test_stop_is_idempotent(self, tmp_path):
+        cfg = _make_config(tmp_path)
+        d = Daemon(cfg)
+        await d.start(args=_minimal_args(), callbacks=_stub_callbacks(d))
+        await d.stop()
+        # Second stop must not raise and must not double-emit daemon_stopped.
+        await d.stop()
+        stops = [
+            e for e in d.event_journal.tail(limit=20)
+            if e["event"] == "daemon_stopped"
+        ]
+        assert len(stops) == 1, f"expected exactly one daemon_stopped, got {len(stops)}"

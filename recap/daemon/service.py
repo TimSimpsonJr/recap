@@ -6,6 +6,7 @@ lifecycle.
 """
 from __future__ import annotations
 
+import argparse
 import asyncio
 import concurrent.futures
 import logging
@@ -16,6 +17,7 @@ from aiohttp import web
 
 from recap.daemon.calendar.index import EventIndex
 from recap.daemon.events import EventJournal
+from recap.daemon.server import create_app
 
 if TYPE_CHECKING:
     from recap.daemon.config import DaemonConfig
@@ -26,8 +28,14 @@ logger = logging.getLogger(__name__)
 class Daemon:
     """Runtime container for the Recap daemon process.
 
-    Owns: config, loop, app, event_journal, event_index, started_at. After
-    Task 3 migration, also holds recorder, detector, scheduler.
+    Owns: config, loop, app, event_journal, event_index, started_at,
+    recorder, detector, scheduler, and the aiohttp HTTP runner.
+
+    Lifecycle:
+        d = Daemon(config)
+        await d.start(args=args, callbacks=callbacks)
+        # ... daemon runs ...
+        await d.stop()
     """
 
     def __init__(self, config: "DaemonConfig") -> None:
@@ -43,10 +51,16 @@ class Daemon:
         self.loop: Optional[asyncio.AbstractEventLoop] = None
         self.app: Optional[web.Application] = None
 
-        # Subservices -- populated after Task 3 migration from __main__.py:
+        # Subservices (populated by start() from the callbacks dict):
         self.recorder: Any = None
         self.detector: Any = None
         self.scheduler: Any = None
+
+        # HTTP server runner + shutdown coordination (populated by start()):
+        self._runner: Optional[web.AppRunner] = None
+        self._site: Optional[web.BaseSite] = None
+        self._stop_event: Optional[asyncio.Event] = None
+        self._stopped: bool = False
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -66,6 +80,150 @@ class Daemon:
         self.event_index.rebuild(self.config.vault_path)
         self.event_journal.prune_old_backups()
         self.emit_event("info", "daemon_started", "Daemon started")
+
+    async def start(
+        self,
+        *,
+        args: argparse.Namespace,
+        callbacks: dict[str, Any],
+    ) -> None:
+        """Bring up the daemon: rebuild index, wire services, start HTTP server.
+
+        ``callbacks`` is a Phase-3-transitional dict providing the pre-built
+        subservices and the auth token. Required keys:
+
+        - ``auth_token`` (str): bytes/string auth token for the HTTP middleware.
+        - ``recorder`` (Recorder): pre-constructed recorder with callbacks
+          already wired (the callbacks may close over ``daemon`` -- they're
+          only invoked after start() returns).
+        - ``detector`` (MeetingDetector): pre-constructed detector.
+        - ``scheduler`` (CalendarSyncScheduler): pre-constructed scheduler.
+        - ``pipeline_trigger`` (callable): the async process_recording bound
+          to this daemon, passed into ``create_app`` for HTTP routes.
+
+        After start():
+        - ``self.loop`` is the running event loop.
+        - ``self.app`` is the aiohttp application, with ``app["daemon"] = self``
+          available to route handlers (Tasks 6/8/9).
+        - ``self.recorder`` / ``self.detector`` / ``self.scheduler`` are the
+          live subservices.
+        - HTTP server is listening on ``config.daemon_ports.plugin_port``.
+        - Scheduler and detector polling loops are running.
+        - A ``daemon_started`` entry has been appended to the journal.
+        """
+        if self.started_at is not None:
+            raise RuntimeError("Daemon.start() called twice")
+
+        self.loop = asyncio.get_running_loop()
+        self._stop_event = asyncio.Event()
+
+        # Codex lock-in (Phase 2): unconditional rebuild every start.
+        logger.info("Rebuilding EventIndex from vault (startup)")
+        self.event_index.rebuild(self.config.vault_path)
+        self.event_journal.prune_old_backups()
+
+        # Required subservices supplied by the caller.
+        self.recorder = callbacks["recorder"]
+        self.detector = callbacks["detector"]
+        self.scheduler = callbacks["scheduler"]
+        auth_token = callbacks["auth_token"]
+        pipeline_trigger = callbacks["pipeline_trigger"]
+
+        # Build the aiohttp app and expose ``daemon`` to route handlers.
+        self.app = create_app(
+            auth_token=auth_token,
+            recorder=self.recorder,
+            detector=self.detector,
+            pipeline_trigger=pipeline_trigger,
+            config=self.config,
+            scheduler=self.scheduler,
+        )
+        self.app["daemon"] = self
+
+        # Bring up the HTTP server (non-blocking).
+        port = self.config.daemon_ports.plugin_port
+        logger.info("Starting HTTP server on port %d", port)
+        self._runner = web.AppRunner(self.app)
+        await self._runner.setup()
+        self._site = web.TCPSite(self._runner, "127.0.0.1", port)
+        await self._site.start()
+
+        # Start subservice polling loops.
+        await self.scheduler.start()
+        logger.info("Calendar sync started")
+        self.detector.start()
+        logger.info("Meeting detection started")
+
+        self.started_at = datetime.now(timezone.utc).astimezone()
+        self._stopped = False
+        self.emit_event("info", "daemon_started", "Daemon started")
+
+    async def stop(self) -> None:
+        """Tear down the daemon. Idempotent.
+
+        Stops in inverse order of start(): scheduler -> detector -> recorder ->
+        HTTP runner. Emits ``daemon_stopped`` to the journal.
+        """
+        if self._stopped:
+            return
+        self._stopped = True
+
+        # Scheduler (cancels its task).
+        if self.scheduler is not None:
+            try:
+                self.scheduler.stop()
+                logger.info("Calendar sync stopped")
+            except Exception:
+                logger.exception("Error stopping calendar scheduler")
+
+        # Detector (cancels its task).
+        if self.detector is not None:
+            try:
+                self.detector.stop()
+                logger.info("Meeting detection stopped")
+            except Exception:
+                logger.exception("Error stopping meeting detector")
+
+        # Recorder: stop any active capture cleanly. No-op if idle.
+        if self.recorder is not None:
+            stop_method = getattr(self.recorder, "stop", None)
+            if stop_method is not None:
+                try:
+                    result = stop_method()
+                    if asyncio.iscoroutine(result):
+                        await result
+                except Exception:
+                    logger.exception("Error stopping recorder")
+
+        # HTTP runner.
+        if self._runner is not None:
+            try:
+                await self._runner.cleanup()
+            except Exception:
+                logger.exception("Error cleaning up HTTP runner")
+            self._runner = None
+            self._site = None
+
+        if self._stop_event is not None:
+            self._stop_event.set()
+
+        self.emit_event("info", "daemon_stopped", "Daemon stopped")
+
+    async def wait_for_shutdown(self) -> None:
+        """Block until ``request_shutdown()`` (or ``stop()``) is called."""
+        if self._stop_event is None:
+            raise RuntimeError("Daemon.start() must be called first")
+        await self._stop_event.wait()
+
+    def request_shutdown(self) -> None:
+        """Signal the daemon to begin shutdown.
+
+        Safe to call from a signal handler or another thread (uses
+        ``loop.call_soon_threadsafe``).
+        """
+        if self._stop_event is None or self.loop is None:
+            return
+        self.loop.call_soon_threadsafe(self._stop_event.set)
 
     # ------------------------------------------------------------------
     # Journaling

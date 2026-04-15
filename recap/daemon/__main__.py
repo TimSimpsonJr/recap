@@ -1,6 +1,7 @@
 """Entry point: python -m recap.daemon <config-path>"""
 from __future__ import annotations
 
+import argparse
 import asyncio
 import logging
 import os
@@ -10,12 +11,10 @@ import sys
 import threading
 from datetime import datetime
 from pathlib import Path
-
-from aiohttp import web
+from typing import Any
 
 from recap.artifacts import RecordingMetadata, load_recording_metadata
 from recap.daemon.auth import ensure_auth_token
-from recap.daemon.calendar.index import EventIndex
 from recap.daemon.calendar.scheduler import CalendarSyncScheduler
 from recap.daemon.config import DaemonConfig, load_daemon_config
 from recap.daemon.logging_setup import setup_logging
@@ -25,23 +24,23 @@ from recap.daemon.recorder.recorder import Recorder
 from recap.daemon.recorder.recovery import find_orphaned_recordings
 from recap.daemon.recorder.signal_popup import show_signal_popup
 from recap.daemon.runtime_config import build_runtime_config
+from recap.daemon.server import broadcast
+from recap.daemon.service import Daemon
 from recap.daemon.signal_metadata import build_signal_metadata
-from recap.daemon.server import broadcast, create_app
 from recap.daemon.startup import validate_startup
 from recap.daemon.tray import RecapTray
-from recap.models import MeetingMetadata
 from recap.pipeline import run_pipeline
 
 logger = logging.getLogger("recap.daemon")
 
 
-def _make_process_recording(
-    config: DaemonConfig,
-    recorder: Recorder,
-    emit_event,
-    event_index: EventIndex | None = None,
-):
-    """Create the async process_recording coroutine bound to daemon state."""
+# ----------------------------------------------------------------------
+# Pipeline trigger factory (now closes over the Daemon instead of holders)
+# ----------------------------------------------------------------------
+
+
+def _make_process_recording(daemon: Daemon):
+    """Create the async process_recording coroutine bound to a Daemon."""
 
     async def process_recording(
         flac_path: Path,
@@ -49,6 +48,8 @@ def _make_process_recording(
         from_stage: str | None = None,
     ) -> None:
         """Run the pipeline in a background task after recording stops."""
+        config = daemon.config
+        recorder = daemon.recorder
         try:
             org_config = next(
                 (o for o in config.orgs if o.name == org),
@@ -86,7 +87,7 @@ def _make_process_recording(
                 streaming_transcript=streaming_transcript,
                 from_stage=from_stage,
                 recording_metadata=recording_metadata,
-                event_index=event_index,
+                event_index=daemon.event_index,
             )
             recorder.state_machine.processing_complete()
             notify("Recap", f"Meeting processed: {note_path.stem}")
@@ -101,127 +102,135 @@ def _make_process_recording(
                 )
             logger.error("Pipeline failed: %s", e)
             notify("Recap", f"Pipeline failed: {e}")
-            if emit_event is not None:
-                await emit_event({
-                    "event": "error",
-                    "scope": "pipeline",
-                    "message": str(e),
-                    "stage": from_stage or "full",
-                    "recording_path": str(flac_path),
-                })
+            await _broadcast_safe(daemon, {
+                "event": "error",
+                "scope": "pipeline",
+                "message": str(e),
+                "stage": from_stage or "full",
+                "recording_path": str(flac_path),
+            })
 
     return process_recording
 
 
-def main() -> None:
-    # Parse config path from args
-    if len(sys.argv) < 2:
-        print("Usage: python -m recap.daemon <config-path>")
-        sys.exit(1)
+# ----------------------------------------------------------------------
+# Broadcast helpers (WebSocket frames out to plugin subscribers)
+# ----------------------------------------------------------------------
 
-    config_path = pathlib.Path(sys.argv[1])
-    if not config_path.exists():
-        print(f"Config file not found: {config_path}")
-        sys.exit(1)
 
-    # Load config
+async def _broadcast_safe(daemon: Daemon, message: dict) -> None:
+    """Broadcast ``message`` to WebSocket subscribers if the app is up."""
+    if daemon.app is not None:
+        await broadcast(daemon.app, message)
+
+
+def _schedule_async(daemon: Daemon, coro) -> None:
+    """Schedule ``coro`` on the daemon's loop from any thread.
+
+    Used by sync callbacks (recorder, tray, signal popup) that need to
+    fire async work. Errors are logged + surfaced via ``error`` events.
+    """
+    if daemon.loop is None or not daemon.loop.is_running():
+        # Loop not running yet (or already torn down) -- best-effort no-op.
+        coro.close()
+        return
+    future = daemon.run_in_loop(coro)
+    future.add_done_callback(lambda f: _handle_async_error(daemon, f))
+
+
+def _handle_async_error(daemon: Daemon, future) -> None:
     try:
-        config = load_daemon_config(config_path)
-    except (ValueError, FileNotFoundError) as e:
-        print(f"Config error: {e}")
-        sys.exit(1)
+        future.result()
+    except Exception as e:
+        logger.error("Async callback failed: %s", e)
+        notify("Recap Error", str(e))
+        # Schedule the error broadcast separately so it doesn't recurse on
+        # this failure path.
+        if daemon.loop is not None and daemon.loop.is_running():
+            asyncio.run_coroutine_threadsafe(
+                _broadcast_safe(daemon, {
+                    "event": "error",
+                    "scope": "async_callback",
+                    "message": str(e),
+                }),
+                daemon.loop,
+            )
 
-    # Setup logging
-    log_path = config.vault_path / config.logging.path
-    setup_logging(log_path, config.logging.retention_days)
-    logger.info("Recap daemon starting")
 
-    # Startup validation
-    result = validate_startup(vault_path=config.vault_path, check_gpu=True)
-    for check in result.warnings:
-        logger.warning("Startup check: %s -- %s", check.name, check.message)
-        notify("Recap", check.message)
+# ----------------------------------------------------------------------
+# Subservice construction + callback wiring (replaces the holder bag)
+# ----------------------------------------------------------------------
 
-    if not result.can_start:
-        for check in result.checks:
-            if check.fatal and not check.passed:
-                logger.error(
-                    "Fatal startup check: %s -- %s", check.name, check.message,
-                )
-                notify("Recap -- Cannot Start", check.message)
-        sys.exit(1)
 
-    logger.info("Startup validation passed")
+def _build_subservices(daemon: Daemon, auth_token: str) -> dict[str, Any]:
+    """Construct recorder / detector / scheduler and wire their callbacks.
 
-    # Check for orphaned recordings
-    status_dir = config.vault_path / "_Recap" / ".recap" / "status"
-    orphans = find_orphaned_recordings(config.recordings_path, status_dir=status_dir)
-    for path in orphans:
-        logger.warning("Orphaned recording found: %s", path)
-        notify("Recap", f"Incomplete recording found: {path.name}")
+    Callbacks close over ``daemon``; they only access ``daemon.loop`` /
+    ``daemon.app`` when invoked, by which time ``Daemon.start()`` has
+    populated those attributes. This replaces the old mutable-list closure
+    bag pattern that ``__main__.py`` used pre-Phase-3.
+    """
+    config = daemon.config
 
-    # Auth token
-    recap_dir = config.vault_path / "_Recap" / ".recap"
-    recap_dir.mkdir(parents=True, exist_ok=True)
-    auth_token_path = recap_dir / "auth-token"
-    auth_token = ensure_auth_token(auth_token_path)
-    logger.info("Auth token ready")
-
-    # Event-id -> note index, singleton for this process.
-    # Always rebuild on startup: cheap, and heals drift from out-of-band
-    # renames or a corrupt persisted index. Decision locked per Codex
-    # review 2026-04-14 — do NOT gate on file existence.
-    event_index_path = recap_dir / "event-index.json"
-    event_index = EventIndex(event_index_path)
-    logger.info("Rebuilding EventIndex from vault (startup)")
-    event_index.rebuild(config.vault_path)
-
-    # The event loop is needed to call async methods from synchronous
-    # callbacks (tray, recorder).  We capture it after web.run_app starts,
-    # but stash it in a mutable container so closures can reference it.
-    _loop_holder: list[asyncio.AbstractEventLoop | None] = [None]
-    _app_holder: list[web.Application | None] = [None]
-
-    async def _emit_event(message: dict) -> None:
-        app_ = _app_holder[0]
-        if app_ is not None:
-            await broadcast(app_, message)
-
-    # Create recorder
+    # Recorder.
     recorder = Recorder(
         recordings_path=config.recordings_path,
         silence_timeout_minutes=config.recording.silence_timeout_minutes,
         max_duration_hours=config.recording.max_duration_hours,
     )
+    daemon.recorder = recorder  # so the closures below can reach it via daemon
 
-    # Build the pipeline trigger
-    process_recording = _make_process_recording(
-        config, recorder, _emit_event, event_index=event_index,
-    )
+    # Pipeline trigger -- depends on daemon.recorder.
+    process_recording = _make_process_recording(daemon)
 
-    # Wire recording-stopped callback: spawn pipeline in the event loop
+    # Recording-stopped callback: spawn the pipeline on the event loop.
     def _on_recording_stopped(flac_path: Path, org: str) -> None:
-        loop = _loop_holder[0]
-        if loop is not None and loop.is_running():
-            asyncio.run_coroutine_threadsafe(
-                process_recording(flac_path, org), loop,
-            )
-        else:
+        if daemon.loop is None or not daemon.loop.is_running():
             logger.warning(
-                "Event loop not available — cannot trigger pipeline for %s",
+                "Event loop not available -- cannot trigger pipeline for %s",
                 flac_path,
             )
+            return
+        asyncio.run_coroutine_threadsafe(
+            process_recording(flac_path, org), daemon.loop,
+        )
 
     recorder.on_recording_stopped = _on_recording_stopped
 
-    # Wire silence/duration callbacks to notifications
-    recorder.on_silence_detected = None
-    recorder.on_max_duration_warning = None
-    recorder.on_max_duration_reached = None
+    # Streaming segment callback: bridge audio thread -> WebSocket broadcast.
+    def _on_streaming_segment(segment: dict) -> None:
+        if daemon.loop is None or not daemon.loop.is_running() or daemon.app is None:
+            return
+        asyncio.run_coroutine_threadsafe(
+            broadcast(daemon.app, {
+                "event": "transcript_segment",
+                "speaker": segment.get("speaker", "UNKNOWN"),
+                "text": segment.get("text", ""),
+                "start": segment.get("start", 0),
+                "end": segment.get("end", 0),
+            }),
+            daemon.loop,
+        )
 
-    # Signal popup callback — runs when the detector sees a Signal call
+    recorder.on_streaming_segment = _on_streaming_segment
+
+    # Silence + duration notifications.
+    recorder.on_silence_detected = lambda: (
+        notify("Recap", "No audio for 5 minutes. Still in a meeting?"),
+        _schedule_async(daemon, _broadcast_safe(daemon, {
+            "event": "silence_warning",
+            "message": "No audio for 5 minutes. Still in a meeting?",
+        })),
+    )
+    recorder.on_max_duration_warning = lambda: notify(
+        "Recap", "Recording for 3+ hours. Still going?",
+    )
+    recorder.on_max_duration_reached = lambda: notify(
+        "Recap", "Max recording duration reached. Stopping.",
+    )
+
+    # Signal popup callback -- runs when the detector sees a Signal call.
     def on_signal_detected(meeting_window, enriched_metadata):
-        """Show Signal call popup in a separate thread."""
         org_names = [org.name for org in config.orgs]
         signal_config = config.detection.signal
         defaults = {
@@ -234,124 +243,51 @@ def main() -> None:
                 "Signal recording started: org=%s, backend=%s",
                 result["org"], result["backend"],
             )
-            loop = _loop_holder[0]
-            if loop is not None and loop.is_running():
-                metadata = build_signal_metadata(result, meeting_window, enriched_metadata)
-                asyncio.run_coroutine_threadsafe(
-                    recorder.start(result["org"], metadata=metadata, detected=True), loop,
-                )
+            if daemon.loop is None or not daemon.loop.is_running():
+                logger.warning("Event loop not available -- cannot start Signal recording")
+                return
+            metadata = build_signal_metadata(result, meeting_window, enriched_metadata)
+            asyncio.run_coroutine_threadsafe(
+                recorder.start(result["org"], metadata=metadata, detected=True),
+                daemon.loop,
+            )
         else:
             logger.info("Signal recording declined")
 
-    # Create meeting detector
+    # Detector.
     detector = MeetingDetector(
         config=config,
         recorder=recorder,
         on_signal_detected=on_signal_detected,
-        event_index=event_index,
+        event_index=daemon.event_index,
     )
 
-    # Create calendar sync scheduler
-    calendar_scheduler = CalendarSyncScheduler(
+    # Scheduler -- needs an async on_rename_queued callback.
+    async def _on_rename_queued(count: int) -> None:
+        await _broadcast_safe(daemon, {
+            "event": "rename_queued",
+            "count": count,
+        })
+
+    scheduler = CalendarSyncScheduler(
         config=config,
         vault_path=config.vault_path,
         detector=detector,
-        on_rename_queued=lambda count: _emit_event({
-            "event": "rename_queued",
-            "count": count,
-        }),
-        event_index=event_index,
+        on_rename_queued=_on_rename_queued,
+        event_index=daemon.event_index,
     )
 
-    # Create HTTP app (pass recorder, detector, scheduler so endpoints can use them)
-    app = create_app(
-        auth_token=auth_token,
-        recorder=recorder,
-        detector=detector,
-        pipeline_trigger=process_recording,
-        config=config,
-        scheduler=calendar_scheduler,
-    )
-    _app_holder[0] = app
-
-    # Wire streaming segment callback: bridge from audio thread to async
-    # event loop for WebSocket broadcast of live transcript segments.
-    def _on_streaming_segment(segment: dict) -> None:
-        loop = _loop_holder[0]
-        if loop is not None and loop.is_running():
-            asyncio.run_coroutine_threadsafe(
-                broadcast(app, {
-                    "event": "transcript_segment",
-                    "speaker": segment.get("speaker", "UNKNOWN"),
-                    "text": segment.get("text", ""),
-                    "start": segment.get("start", 0),
-                    "end": segment.get("end", 0),
-                }),
-                loop,
-            )
-
-    recorder.on_streaming_segment = _on_streaming_segment
-
-    # Helper to schedule async work from synchronous callbacks (tray, state machine)
-    def _handle_async_error(future):
-        try:
-            future.result()
-        except Exception as e:
-            logger.error("Async callback failed: %s", e)
-            notify("Recap Error", str(e))
-            _run_async(_emit_event({
-                "event": "error",
-                "scope": "async_callback",
-                "message": str(e),
-            }))
-
-    def _run_async(coro):
-        """Schedule an async coroutine from any thread."""
-        loop = _loop_holder[0]
-        if loop is not None and loop.is_running():
-            future = asyncio.run_coroutine_threadsafe(coro, loop)
-            future.add_done_callback(_handle_async_error)
-
-    recorder.on_silence_detected = lambda: (
-        notify("Recap", "No audio for 5 minutes. Still in a meeting?"),
-        _run_async(_emit_event({
-            "event": "silence_warning",
-            "message": "No audio for 5 minutes. Still in a meeting?",
-        })),
-    )
-    recorder.on_max_duration_warning = lambda: notify(
-        "Recap", "Recording for 3+ hours. Still going?",
-    )
-    recorder.on_max_duration_reached = lambda: notify(
-        "Recap", "Max recording duration reached. Stopping.",
-    )
-
-    # Wire state changes to tray updates + WebSocket broadcasts
-    def on_state_change(old, new):
-        org = recorder.state_machine.current_org or ""
-        tray.update_state(new.value, org)
-        # Schedule broadcast on the event loop (state change may fire
-        # from any thread, but broadcast is async)
-        _run_async(
-            broadcast(app, {
-                "event": "state_change",
-                "state": new.value,
-                "org": org,
-            })
-        )
-
-    recorder.set_on_state_change(on_state_change)
-
-    # Setup tray — wire menu items to recorder
+    # Tray + state-change wiring (constructed after recorder so it closes
+    # over recorder.state_machine).
     org_names = [org.name for org in config.orgs]
 
     def on_start_recording(org: str) -> None:
         logger.info("Start recording requested for org: %s", org)
-        _run_async(recorder.start(org))
+        _schedule_async(daemon, recorder.start(org))
 
     def on_stop_recording() -> None:
         logger.info("Stop recording requested")
-        _run_async(recorder.stop())
+        _schedule_async(daemon, recorder.stop())
 
     def on_quit() -> None:
         logger.info("Quit requested from tray")
@@ -364,37 +300,139 @@ def main() -> None:
         on_quit=on_quit,
     )
 
-    # Start tray in background thread
+    def on_state_change(old, new):
+        org = recorder.state_machine.current_org or ""
+        tray.update_state(new.value, org)
+        _schedule_async(daemon, _broadcast_safe(daemon, {
+            "event": "state_change",
+            "state": new.value,
+            "org": org,
+        }))
+
+    recorder.set_on_state_change(on_state_change)
+
+    # Start tray in background thread (independent of Daemon lifecycle --
+    # the tray thread is daemonized so it exits with the process).
     tray_thread = threading.Thread(target=tray.run, daemon=True, name="recap-tray")
     tray_thread.start()
     logger.info("System tray started")
 
-    # Capture the event loop once the server starts so tray callbacks
-    # can schedule async work on it, and start meeting detection.
-    async def _on_startup(app_: web.Application) -> None:
-        _loop_holder[0] = asyncio.get_event_loop()
-        detector.start()
-        logger.info("Meeting detection started")
-        await calendar_scheduler.start()
-        logger.info("Calendar sync started")
+    return {
+        "auth_token": auth_token,
+        "recorder": recorder,
+        "detector": detector,
+        "scheduler": scheduler,
+        "pipeline_trigger": process_recording,
+    }
 
-    async def _on_cleanup(app_: web.Application) -> None:
-        calendar_scheduler.stop()
-        logger.info("Calendar sync stopped")
-        detector.stop()
-        logger.info("Meeting detection stopped")
 
-    app.on_startup.append(_on_startup)
-    app.on_cleanup.append(_on_cleanup)
+# ----------------------------------------------------------------------
+# Pre-flight (logging, validation, orphan scan, auth token)
+# ----------------------------------------------------------------------
 
-    # Run HTTP server (blocking)
-    logger.info("Starting HTTP server on port %d", config.daemon_ports.plugin_port)
-    web.run_app(
-        app,
-        host="127.0.0.1",
-        port=config.daemon_ports.plugin_port,
-        print=lambda msg: logger.info(msg),
+
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        prog="python -m recap.daemon",
+        description="Run the Recap daemon.",
     )
+    parser.add_argument("config", type=pathlib.Path, help="Path to daemon config YAML")
+    return parser.parse_args(argv)
+
+
+def _preflight(config: DaemonConfig) -> str:
+    """Run startup validation, orphan scan, ensure auth token. Returns token.
+
+    Raises ``SystemExit`` on fatal validation failures. Logging is already
+    configured by the caller.
+    """
+    logger.info("Recap daemon starting")
+
+    result = validate_startup(vault_path=config.vault_path, check_gpu=True)
+    for check in result.warnings:
+        logger.warning("Startup check: %s -- %s", check.name, check.message)
+        notify("Recap", check.message)
+
+    if not result.can_start:
+        for check in result.checks:
+            if check.fatal and not check.passed:
+                logger.error(
+                    "Fatal startup check: %s -- %s", check.name, check.message,
+                )
+                notify("Recap -- Cannot Start", check.message)
+        raise SystemExit(1)
+
+    logger.info("Startup validation passed")
+
+    # Check for orphaned recordings.
+    status_dir = config.vault_path / "_Recap" / ".recap" / "status"
+    orphans = find_orphaned_recordings(config.recordings_path, status_dir=status_dir)
+    for path in orphans:
+        logger.warning("Orphaned recording found: %s", path)
+        notify("Recap", f"Incomplete recording found: {path.name}")
+
+    # Auth token (must live in {vault}/_Recap/.recap/ for the plugin to find it).
+    recap_dir = config.vault_path / "_Recap" / ".recap"
+    recap_dir.mkdir(parents=True, exist_ok=True)
+    auth_token = ensure_auth_token(recap_dir / "auth-token")
+    logger.info("Auth token ready")
+
+    return auth_token
+
+
+# ----------------------------------------------------------------------
+# Async lifecycle entry
+# ----------------------------------------------------------------------
+
+
+async def _run_daemon(daemon: Daemon, args: argparse.Namespace, auth_token: str) -> None:
+    """Drive the daemon: build subservices, start, wait for shutdown, stop."""
+    callbacks = _build_subservices(daemon, auth_token)
+
+    # Install SIGINT handler that signals shutdown via the Daemon's stop_event.
+    # On Windows asyncio doesn't support add_signal_handler for SIGINT, so
+    # we use signal.signal + call_soon_threadsafe (Daemon.request_shutdown
+    # handles the threadsafe hop internally).
+    def _on_sigint(signum, frame):  # noqa: ARG001
+        logger.info("SIGINT received -- shutting down")
+        daemon.request_shutdown()
+
+    previous_handler = signal.signal(signal.SIGINT, _on_sigint)
+
+    try:
+        await daemon.start(args=args, callbacks=callbacks)
+        await daemon.wait_for_shutdown()
+    finally:
+        signal.signal(signal.SIGINT, previous_handler)
+        await daemon.stop()
+
+
+def main(argv: list[str] | None = None) -> None:
+    args = _parse_args(argv)
+
+    if not args.config.exists():
+        print(f"Config file not found: {args.config}")
+        sys.exit(1)
+
+    try:
+        config = load_daemon_config(args.config)
+    except (ValueError, FileNotFoundError) as e:
+        print(f"Config error: {e}")
+        sys.exit(1)
+
+    log_path = config.vault_path / config.logging.path
+    setup_logging(log_path, config.logging.retention_days)
+
+    auth_token = _preflight(config)
+
+    daemon = Daemon(config)
+    try:
+        asyncio.run(_run_daemon(daemon, args, auth_token))
+    except KeyboardInterrupt:
+        # Belt-and-suspenders: SIGINT handler should have triggered a clean
+        # shutdown, but if asyncio.run still raises KeyboardInterrupt, we
+        # exit cleanly here.
+        logger.info("Daemon interrupted by user")
 
 
 if __name__ == "__main__":
