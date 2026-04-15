@@ -99,8 +99,8 @@ async def _api_status(request: web.Request) -> web.Response:
             {
                 "state": "idle",
                 "recording": None,
-                "uptime_seconds": uptime,
                 "last_calendar_sync": last_sync,
+                "uptime_seconds": uptime,
                 "recent_errors": recent_errors,
             }
         )
@@ -117,8 +117,8 @@ async def _api_status(request: web.Request) -> web.Response:
         {
             "state": state,
             "recording": recording_info,
-            "uptime_seconds": uptime,
             "last_calendar_sync": last_sync,
+            "uptime_seconds": uptime,
             "recent_errors": recent_errors,
         }
     )

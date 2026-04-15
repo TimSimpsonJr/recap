@@ -308,7 +308,7 @@ class TestApiStatusReal:
     """
 
     async def test_no_daemon_still_returns_placeholder(self, client):
-        """Backwards-compatible: missing daemon yields uptime=0, errors=[]."""
+        """Missing daemon yields uptime=0, recent_errors=[]."""
         resp = await client.get(
             "/api/status",
             headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
