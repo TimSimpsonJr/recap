@@ -115,9 +115,86 @@
       transition: opacity 0.2s;
     }
     #saved-msg.visible { opacity: 1; }
+    #auth-section {
+      margin-bottom: 32px;
+      padding-bottom: 24px;
+      border-bottom: 1px solid #252c36;
+    }
+    #auth-section h2 { margin-bottom: 12px; }
+    .form-row {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    .form-row label {
+      color: #7a8493;
+      font-size: 13px;
+      min-width: 100px;
+    }
+    .form-row input[type="text"] {
+      flex: 1;
+      background: #1c2128;
+      border: 1px solid #363d47;
+      color: #d4dae3;
+      padding: 6px 10px;
+      border-radius: 4px;
+      font-size: 13px;
+    }
+    .form-row input[type="text"]:focus {
+      outline: none;
+      border-color: #C4A84D;
+    }
+    #save-url-btn {
+      background: #1c2128;
+      border: 1px solid #363d47;
+      color: #d4dae3;
+    }
+    #save-url-btn:hover { background: #252c36; }
+    #connect-btn {
+      background: #4baa55;
+      color: #fff;
+    }
+    #connect-btn:hover { background: #3d9447; }
+    #disconnect-btn {
+      background: #1c2128;
+      border: 1px solid #363d47;
+      color: #d4dae3;
+    }
+    #disconnect-btn:hover {
+      color: #e55;
+      border-color: #e55;
+    }
+    .error-msg {
+      color: #e55;
+      font-size: 13px;
+      margin-bottom: 8px;
+    }
+    .status-msg {
+      font-size: 13px;
+      margin-top: 8px;
+    }
+    .status-msg[data-variant="ok"] { color: #4baa55; }
+    .status-msg[data-variant="error"] { color: #e55; }
+    .status-msg[data-variant="warning"] { color: #C4A84D; }
+    .status-msg[data-variant="neutral"] { color: #7a8493; }
   </style>
 </head>
 <body>
+  <section id="auth-section">
+    <h2>Daemon connection</h2>
+    <div class="form-row">
+      <label for="base-url-input">Daemon URL:</label>
+      <input type="text" id="base-url-input" placeholder="http://localhost:9847" />
+    </div>
+    <p id="base-url-error" class="error-msg" hidden></p>
+    <div class="form-row">
+      <button id="save-url-btn">Save URL</button>
+      <button id="connect-btn">Connect</button>
+      <button id="disconnect-btn" hidden>Disconnect</button>
+    </div>
+    <p id="auth-status" class="status-msg">Not paired.</p>
+  </section>
   <h2>Meeting URL Patterns</h2>
   <p class="subtitle">Configure which URLs trigger meeting detection. Each pattern is matched against the page URL.</p>
   <div id="patterns"></div>
