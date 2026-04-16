@@ -4,6 +4,8 @@ Parent design: `docs/plans/2026-04-14-fix-everything-design.md` §Final Integrat
 
 All automated gates and Review Blockers are verified (see the bottom section). This checklist is the five live-system scenarios that can only be proved on real hardware with real accounts — it is the last gate before shipping Phases 1-6.
 
+> **⚠️ 2026-04-16 update:** Real-hardware walkthrough on 2026-04-16 surfaced library drift (`parakeet-stream`, `pyflac`, `pyarrow`) and daemon bugs (over-eager Teams/Signal detection, tkinter-wrong-thread popup) that the mocked test suite did not catch. Scenarios 1 + 2 are BLOCKED on `docs/plans/2026-04-16-phase7-ml-stack-refresh.md`. Scenarios 3, 4, 5 can still run after tightening `detection.*.enabled` in config.yaml. Do not merge to master until Phase 7 lands.
+
 **Prereqs on the machine you run this on:**
 - Windows 11 + NVIDIA RTX 4070 (or compatible CUDA 12.6-capable card) + SSD.
 - `ffmpeg` + `ffprobe` on PATH.
