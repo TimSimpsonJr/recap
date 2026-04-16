@@ -130,6 +130,34 @@ class TestLoadDaemonConfig:
         assert config.recording.silence_timeout_minutes == 5
         assert config.recording.max_duration_hours == 4
 
+    def test_ollama_model_loads_from_yaml(self, tmp_path):
+        """`ollama.model` in YAML must populate DaemonConfig.ollama.model so
+        build_runtime_config can thread it into PipelineRuntimeConfig.
+        Without this field the pipeline dispatches `ollama run "" ...`.
+        """
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(yaml.dump({
+            "config-version": 1,
+            "vault-path": str(tmp_path),
+            "recordings-path": str(tmp_path),
+            "ollama": {"model": "qwen2.5:14b"},
+        }))
+        config = load_daemon_config(config_file)
+        assert config.ollama.model == "qwen2.5:14b"
+
+    def test_ollama_model_defaults_to_empty_when_absent(self, tmp_path):
+        """Backwards-compat: configs without an `ollama` section load cleanly
+        with an empty model string (no KeyError, no crash).
+        """
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(yaml.dump({
+            "config-version": 1,
+            "vault-path": str(tmp_path),
+            "recordings-path": str(tmp_path),
+        }))
+        config = load_daemon_config(config_file)
+        assert config.ollama.model == ""
+
     def test_pipeline_defaults(self, tmp_path):
         config_file = tmp_path / "config.yaml"
         config_file.write_text(yaml.dump({

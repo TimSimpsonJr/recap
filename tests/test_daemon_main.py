@@ -11,6 +11,7 @@ import pathlib
 from recap.artifacts import RecordingMetadata
 from recap.daemon.config import (
     DaemonConfig,
+    OllamaConfig,
     OrgConfig,
     PipelineSettings,
     RecordingConfig,
@@ -25,6 +26,7 @@ def _make_daemon_config() -> DaemonConfig:
     cfg.recordings_path = pathlib.Path("/tmp/rec")
     cfg.pipeline = PipelineSettings()
     cfg.recording = RecordingConfig()
+    cfg.ollama = OllamaConfig()
     return cfg
 
 

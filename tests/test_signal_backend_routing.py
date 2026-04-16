@@ -37,6 +37,7 @@ import pytest
 from recap.artifacts import RecordingMetadata, write_recording_metadata
 from recap.daemon.config import (
     DaemonConfig,
+    OllamaConfig,
     OrgConfig,
     PipelineSettings,
     RecordingConfig,
@@ -154,6 +155,7 @@ def _make_meeting_metadata() -> MeetingMetadata:
 def _build_daemon_config(
     vault_path: pathlib.Path,
     recordings_path: pathlib.Path,
+    ollama_model: str = "",
 ) -> DaemonConfig:
     """Minimal DaemonConfig so build_runtime_config can read pipeline + recording."""
     return DaemonConfig(
@@ -169,6 +171,7 @@ def _build_daemon_config(
             archive_format="aac",
             delete_source_after_archive=False,
         ),
+        ollama=OllamaConfig(model=ollama_model),
     )
 
 
@@ -178,6 +181,7 @@ def _invoke_pipeline_with_backend(
     recordings_path: pathlib.Path,
     metadata_backend: str | None,
     org_backend: str,
+    ollama_model: str = "",
 ) -> MagicMock:
     """Run the pipeline end-to-end with the requested backends and return the
     ``subprocess.run`` mock so callers can assert on argv.
@@ -193,7 +197,9 @@ def _invoke_pipeline_with_backend(
     transcript = _make_transcript()
     meeting_metadata = _make_meeting_metadata()
 
-    daemon_config = _build_daemon_config(vault_path, recordings_path)
+    daemon_config = _build_daemon_config(
+        vault_path, recordings_path, ollama_model=ollama_model,
+    )
     org_config = OrgConfig(
         name="alpha",
         subfolder="Clients/Alpha",
@@ -309,4 +315,43 @@ def test_claude_backend_in_metadata_dispatches_claude_subprocess(
     )
     assert "--print" in cmd, (
         f"claude argv should contain '--print'; got cmd={cmd!r}"
+    )
+
+
+@pytest.mark.skipif(
+    shutil.which("ffmpeg") is None or shutil.which("ffprobe") is None,
+    reason="ffmpeg + ffprobe required for real audio duration probe",
+)
+def test_ollama_model_from_config_reaches_subprocess_argv(
+    vault_path: pathlib.Path,
+    recordings_path: pathlib.Path,
+) -> None:
+    """``ollama.model`` in DaemonConfig must appear as argv[2] in the
+    ollama subprocess command.
+
+    Regression guard for the pre-fix state where
+    ``build_runtime_config`` hardcoded ``ollama_model=""``, producing
+    ``['ollama', 'run', '', '--format', 'json']`` -- which fails to
+    dispatch any model. This asserts that the YAML-configured model name
+    flows: DaemonConfig.ollama.model -> PipelineRuntimeConfig.ollama_model
+    -> analyze.analyze -> subprocess.run argv.
+    """
+    audio_path = recordings_path / "ollama-model-test.flac"
+    _make_silent_flac(audio_path)
+
+    mock_subprocess_run = _invoke_pipeline_with_backend(
+        audio_path=audio_path,
+        vault_path=vault_path,
+        recordings_path=recordings_path,
+        metadata_backend="ollama",
+        org_backend="claude",
+        ollama_model="qwen2.5:14b",
+    )
+
+    assert mock_subprocess_run.called
+    cmd = mock_subprocess_run.call_args[0][0]
+    assert cmd[:3] == ["ollama", "run", "qwen2.5:14b"], (
+        f"Expected ollama to be invoked with the configured model name; "
+        f"got cmd={cmd!r}. This means DaemonConfig.ollama.model did not "
+        f"flow through PipelineRuntimeConfig.ollama_model to analyze."
     )

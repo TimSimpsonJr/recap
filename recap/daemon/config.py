@@ -101,6 +101,19 @@ class KnownContact:
 
 
 @dataclass
+class OllamaConfig:
+    """Top-level ollama backend settings.
+
+    ``model`` is the argument passed to ``ollama run <model>`` when an org's
+    ``llm-backend`` is set to ``ollama``. An empty string is treated as
+    unconfigured — the analyze subprocess will fail loudly rather than
+    silently dispatch ``ollama run "" ...``, which is the intended contract:
+    selecting the ollama backend requires naming a model.
+    """
+    model: str = ""
+
+
+@dataclass
 class DaemonConfig:
     vault_path: pathlib.Path
     recordings_path: pathlib.Path
@@ -113,6 +126,7 @@ class DaemonConfig:
     daemon_ports: DaemonPortConfig = field(default_factory=DaemonPortConfig)
     known_contacts: list[KnownContact] = field(default_factory=list)
     calendars: dict[str, CalendarProviderConfig] = field(default_factory=dict)
+    ollama: OllamaConfig = field(default_factory=OllamaConfig)
     _orgs: list[OrgConfig] = field(default_factory=list)
 
     @property
@@ -267,6 +281,10 @@ def parse_daemon_config_dict(raw: dict[str, Any]) -> DaemonConfig:
         for c in contacts_raw
     ]
 
+    # Parse ollama settings
+    ollama_raw = raw.get("ollama", {}) or {}
+    ollama = OllamaConfig(model=ollama_raw.get("model", ""))
+
     return DaemonConfig(
         vault_path=pathlib.Path(raw["vault-path"]),
         recordings_path=pathlib.Path(raw["recordings-path"]),
@@ -279,6 +297,7 @@ def parse_daemon_config_dict(raw: dict[str, Any]) -> DaemonConfig:
         daemon_ports=daemon_ports,
         known_contacts=known_contacts,
         calendars=calendars,
+        ollama=ollama,
         _orgs=orgs,
     )
 

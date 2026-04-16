@@ -91,7 +91,12 @@ def make_daemon_config(tmp_path: pathlib.Path):
     ``test_daemon_service.py`` in Phase 3 Task 6 so other test modules
     (server, integration) can reuse it.
     """
-    from recap.daemon.config import DaemonConfig, DaemonPortConfig, OrgConfig
+    from recap.daemon.config import (
+        DaemonConfig,
+        DaemonPortConfig,
+        OllamaConfig,
+        OrgConfig,
+    )
 
     cfg = DaemonConfig.__new__(DaemonConfig)
     cfg.vault_path = tmp_path / "vault"
@@ -100,6 +105,7 @@ def make_daemon_config(tmp_path: pathlib.Path):
     cfg.recordings_path.mkdir()
     cfg._orgs = [OrgConfig(name="d", subfolder="Clients/D", default=True)]
     cfg.daemon_ports = DaemonPortConfig(plugin_port=0)
+    cfg.ollama = OllamaConfig()
     return cfg
 
 

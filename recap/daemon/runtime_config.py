@@ -33,7 +33,7 @@ def build_runtime_config(
         diarization_model=config.pipeline.diarization_model,
         device="cuda",
         llm_backend=backend,
-        ollama_model="",
+        ollama_model=config.ollama.model,
         archive_format=config.recording.archive_format,
         archive_bitrate="64k",
         delete_source_after_archive=config.recording.delete_source_after_archive,
