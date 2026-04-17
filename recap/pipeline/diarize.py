@@ -49,7 +49,7 @@ def diarize(
     """
     model = _load_diarization_model(model_name, device)
     try:
-        segments = model.diarize(audio_path)
+        segments = model.diarize(str(audio_path))
     finally:
         _unload_model(model)
     return segments
