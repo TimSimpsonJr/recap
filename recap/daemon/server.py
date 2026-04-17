@@ -944,6 +944,39 @@ async def _meeting_ended_api(request: web.Request) -> web.Response:
     })
 
 
+@web.middleware
+async def _cors_middleware(request: web.Request, handler):
+    """Add CORS headers so the Obsidian plugin (``app://`` origin) can
+    call ``/api/*`` from within an Electron/Chromium context.
+
+    The daemon binds to loopback only and all ``/api/*`` mutations require
+    a Bearer token, so ``Access-Control-Allow-Origin: *`` is acceptable —
+    the real security boundary is auth, not origin. Without this
+    middleware, Chromium's preflight OPTIONS for requests with an
+    ``Authorization`` header is rejected (no OPTIONS handler + no allow
+    headers), and the plugin sees ``Failed to fetch`` with no route
+    actually reached.
+
+    Must run BEFORE ``_auth_middleware`` (i.e. appear earlier in the
+    middleware list) so OPTIONS preflight doesn't get 401'd.
+    """
+    if request.method == "OPTIONS":
+        return web.Response(
+            status=200,
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": (
+                    "GET, POST, PATCH, DELETE, OPTIONS"
+                ),
+                "Access-Control-Allow-Headers": "Authorization, Content-Type",
+                "Access-Control-Max-Age": "600",
+            },
+        )
+    response = await handler(request)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    return response
+
+
 def _auth_middleware(auth_token: str):
     """Return middleware that enforces Bearer token auth on /api/* routes.
 
@@ -977,7 +1010,9 @@ def create_app(
     scheduler: CalendarSyncScheduler | None = None,
 ) -> web.Application:
     """Create and return the daemon aiohttp application."""
-    app = web.Application(middlewares=[_auth_middleware(auth_token)])
+    app = web.Application(
+        middlewares=[_cors_middleware, _auth_middleware(auth_token)],
+    )
     app[_WS_CLIENTS_KEY] = set()
     app[_AUTH_TOKEN_KEY] = auth_token
     if recorder is not None:

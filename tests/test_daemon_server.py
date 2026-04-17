@@ -712,3 +712,36 @@ class TestApiNonDictBody:
             )
             data = await resp.json()
             assert data["error"] == "request body must be a JSON object"
+
+
+@pytest.mark.asyncio
+class TestCorsMiddleware:
+    """CORS headers for the Obsidian plugin's app:// origin.
+
+    The plugin runs in an Electron/Chromium context and issues
+    cross-origin ``fetch`` requests with an ``Authorization`` header.
+    Chromium sends preflight OPTIONS for those. Without CORS
+    middleware, the daemon 401s the preflight (no Bearer) and the
+    plugin sees ``Failed to fetch`` with no handler ever invoked.
+    """
+
+    async def test_options_preflight_returns_200_without_auth(self, client):
+        """OPTIONS must succeed WITHOUT a Bearer token so preflight passes."""
+        resp = await client.options("/api/status")
+        assert resp.status == 200
+
+    async def test_options_preflight_has_cors_allow_headers(self, client):
+        """Preflight response must advertise the allowed methods + headers."""
+        resp = await client.options("/api/status")
+        assert resp.headers["Access-Control-Allow-Origin"] == "*"
+        assert "Authorization" in resp.headers["Access-Control-Allow-Headers"]
+        assert "GET" in resp.headers["Access-Control-Allow-Methods"]
+
+    async def test_api_response_carries_cors_origin_header(self, client):
+        """Actual /api/* responses must include Access-Control-Allow-Origin."""
+        resp = await client.get(
+            "/api/status",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 200
+        assert resp.headers["Access-Control-Allow-Origin"] == "*"
