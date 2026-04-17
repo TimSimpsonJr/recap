@@ -271,3 +271,85 @@ def test_audio_capture_on_chunk_swallows_exceptions(tmp_path, caplog):
     assert isinstance(captured[0][0], bytes) and isinstance(captured[0][1], int)
     # The failure was logged.
     assert "on_chunk callback raised" in caplog.text
+
+
+class TestSoxrResamplerWrapper:
+    """Thin stateful-streaming wrapper around soxr.ResampleStream.
+
+    Isolated from _SourceStream so the resample contract (frame counts
+    across chunk boundaries, rate-change rebuild, mono int16 in / mono
+    int16 out) can be verified without PyAudio in the way.
+    """
+
+    def test_identity_rate_is_passthrough(self):
+        pytest.importorskip("numpy")
+        import numpy as np
+        from recap.daemon.recorder.audio import _SoxrResamplerWrapper
+
+        r = _SoxrResamplerWrapper(input_rate=48000, output_rate=48000)
+        total_in = 0
+        total_out = 0
+        for _ in range(4):
+            pcm = np.zeros(1024, dtype=np.int16).tobytes()
+            out = r.process(pcm)
+            total_in += 1024
+            total_out += len(out) // 2
+        assert abs(total_out - total_in) <= 128
+
+    def test_upsample_44100_to_48000_frame_ratio(self):
+        pytest.importorskip("numpy")
+        import numpy as np
+        from recap.daemon.recorder.audio import _SoxrResamplerWrapper
+
+        r = _SoxrResamplerWrapper(input_rate=44100, output_rate=48000)
+        total_in = 0
+        total_out = 0
+        for _ in range(44):
+            pcm = np.zeros(1024, dtype=np.int16).tobytes()
+            out = r.process(pcm)
+            total_in += 1024
+            total_out += len(out) // 2
+        expected = total_in * 48000 / 44100
+        assert abs(total_out - expected) / expected < 0.02
+
+    def test_rate_change_rebuilds_resampler(self):
+        pytest.importorskip("numpy")
+        import numpy as np
+        from recap.daemon.recorder.audio import _SoxrResamplerWrapper
+
+        r = _SoxrResamplerWrapper(input_rate=48000, output_rate=48000)
+        assert r.input_rate == 48000
+        r.process(np.zeros(1024, dtype=np.int16).tobytes())
+        r.rebuild(input_rate=44100)
+        # input_rate must reflect the new rate.
+        assert r.input_rate == 44100
+        # The rebuilt resampler still produces bytes without crashing.
+        out2 = r.process(np.zeros(1024, dtype=np.int16).tobytes())
+        assert isinstance(out2, bytes)
+
+    def test_no_discontinuity_across_chunk_boundaries(self):
+        pytest.importorskip("numpy")
+        import numpy as np
+        from recap.daemon.recorder.audio import _SoxrResamplerWrapper
+
+        r = _SoxrResamplerWrapper(input_rate=44100, output_rate=48000)
+        sample_rate = 44100
+        t = np.arange(44100 * 2) / sample_rate
+        signal = (0.5 * np.sin(2 * np.pi * 440 * t) * 32767).astype(np.int16)
+        out_bytes = b""
+        for i in range(0, len(signal), 1024):
+            chunk = signal[i:i + 1024].tobytes()
+            out_bytes += r.process(chunk)
+        out = np.frombuffer(out_bytes, dtype=np.int16)
+        assert len(out) > 0
+
+        # If the resampler preserved continuity, the dominant frequency
+        # of the output is still ~440 Hz (at the 48 kHz output rate).
+        # A broken chunk-boundary handler (drops, inversions, zeros)
+        # would smear the spectrum or shift the peak.
+        fft_mag = np.abs(np.fft.rfft(out.astype(np.float64)))
+        freqs = np.fft.rfftfreq(len(out), d=1.0 / 48000)
+        peak_freq = freqs[np.argmax(fft_mag)]
+        assert abs(peak_freq - 440) < 5, (
+            f"dominant output frequency {peak_freq:.1f} Hz; expected ~440 Hz"
+        )

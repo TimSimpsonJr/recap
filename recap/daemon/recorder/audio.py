@@ -28,6 +28,77 @@ try:
 except Exception:  # pragma: no cover - depends on local env
     pyflac = None  # type: ignore[assignment]
 
+try:
+    import soxr
+except Exception:  # pragma: no cover - depends on local env
+    soxr = None  # type: ignore[assignment]
+
+
+def _require_soxr() -> Any:
+    global soxr
+    if soxr is None:
+        try:
+            import soxr as imported_soxr
+        except Exception as exc:  # pragma: no cover - depends on local env
+            raise RuntimeError(
+                "soxr is required for streaming audio resampling. "
+                "Install the daemon extras.",
+            ) from exc
+        soxr = imported_soxr
+    return soxr
+
+
+class _SoxrResamplerWrapper:
+    """Stateful streaming wrapper around ``soxr.ResampleStream``.
+
+    Owns one resampler instance configured for (input_rate -> output_rate).
+    ``process(pcm_bytes)`` accepts mono int16 LE bytes and returns mono
+    int16 LE bytes at the output rate. State is preserved across calls
+    so per-chunk edge artifacts are avoided.
+
+    ``rebuild(input_rate=...)`` tears down the current resampler and
+    builds a new one at the new input rate (output rate is fixed).
+    Called by ``_SourceStream`` when a reopen lands on a device with a
+    different native rate.
+    """
+
+    def __init__(self, *, input_rate: int, output_rate: int) -> None:
+        self._output_rate = output_rate
+        self._input_rate = input_rate
+        self._stream = self._build_stream(input_rate)
+
+    def _build_stream(self, input_rate: int) -> Any:
+        runtime_soxr = _require_soxr()
+        return runtime_soxr.ResampleStream(
+            in_rate=float(input_rate),
+            out_rate=float(self._output_rate),
+            num_channels=1,
+            dtype="int16",
+            quality="HQ",
+        )
+
+    @property
+    def input_rate(self) -> int:
+        return self._input_rate
+
+    @property
+    def output_rate(self) -> int:
+        return self._output_rate
+
+    def process(self, pcm_bytes: bytes) -> bytes:
+        """Feed mono int16 LE bytes in, get mono int16 LE bytes out."""
+        numpy = _require_numpy()
+        if not pcm_bytes:
+            return b""
+        arr = numpy.frombuffer(pcm_bytes, dtype=numpy.int16)
+        out = self._stream.resample_chunk(arr, last=False)
+        return out.tobytes() if out is not None and len(out) > 0 else b""
+
+    def rebuild(self, *, input_rate: int) -> None:
+        """Tear down and rebuild for a new input rate."""
+        self._input_rate = input_rate
+        self._stream = self._build_stream(input_rate)
+
 
 class AudioDeviceError(Exception):
     """Raised when no suitable audio device is found."""
