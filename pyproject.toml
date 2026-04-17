@@ -44,4 +44,7 @@ extra-index-url = ["https://download.pytorch.org/whl/cu126"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--cov=recap --cov-fail-under=70 --cov-report=term-missing"
+addopts = "--cov=recap --cov-fail-under=70 --cov-report=term-missing -m 'not integration'"
+markers = [
+    "integration: tests that import real ML/system libraries; slow; opt-in via -m integration",
+]
