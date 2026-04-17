@@ -90,3 +90,22 @@ def test_detect_meeting_windows_excludes_unconfirmed_candidates(monkeypatch):
     monkeypatch.setattr(det.call_state, "is_call_active", lambda h, p: False)
     result = det.detect_meeting_windows({"teams"})
     assert result == []
+
+
+def test_excluded_hwnds_do_not_match_any_platform(monkeypatch):
+    import recap.daemon.recorder.detection as det
+    monkeypatch.setattr(det, "_enumerate_windows", lambda: [(42, "Signal call detected")])
+    det.exclude_hwnd(42)
+    try:
+        result = det.detect_meeting_windows({"signal"})
+    finally:
+        det.include_hwnd(42)
+    assert result == []
+
+
+def test_exclude_include_are_symmetric():
+    import recap.daemon.recorder.detection as det
+    det.exclude_hwnd(123)
+    assert 123 in det._EXCLUDED_HWNDS
+    det.include_hwnd(123)
+    assert 123 not in det._EXCLUDED_HWNDS
