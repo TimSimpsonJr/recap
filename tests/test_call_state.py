@@ -39,10 +39,12 @@ class TestPublicSurface:
     def test_has_call_state_checker_is_exported(self):
         assert callable(has_call_state_checker)
 
-    def test_no_checkers_registered_by_default(self):
-        # Task 10 ships with an empty dict; Task 11 populates it.
-        assert has_call_state_checker("teams") is False
-        assert has_call_state_checker("zoom") is False
+    def test_checkers_registered_for_teams_and_zoom(self):
+        # Task 11 populates checkers for teams + zoom.
+        # Signal intentionally remains regex-only (§3.6 per-platform policy).
+        assert has_call_state_checker("teams") is True
+        assert has_call_state_checker("zoom") is True
+        assert has_call_state_checker("signal") is False
 
     def test_is_call_active_returns_true_when_no_checker(self):
         # Regex-trust fallback — no checker registered means "assume active".
@@ -87,3 +89,40 @@ class TestModuleImportCompatibility:
         )
 
         assert reexported is call_state.extract_teams_participants
+
+
+class FakeControl:
+    def __init__(self, ControlTypeName="", Name="", children=None):
+        self.ControlTypeName = ControlTypeName
+        self.Name = Name
+        self._children = children or []
+
+    def GetChildren(self):
+        return self._children
+
+
+def test_is_call_active_returns_true_when_leave_button_present():
+    from recap.daemon.recorder.call_state import _is_teams_call_active
+    leave_btn = FakeControl("ButtonControl", "Leave")
+    root = FakeControl(children=[leave_btn])
+    assert _is_teams_call_active(root) is True
+
+
+def test_is_call_active_returns_false_when_no_call_controls():
+    from recap.daemon.recorder.call_state import _is_teams_call_active
+    chat_btn = FakeControl("ButtonControl", "Chat")
+    root = FakeControl(children=[chat_btn])
+    assert _is_teams_call_active(root) is False
+
+
+def test_is_call_active_returns_true_for_unregistered_platform():
+    from recap.daemon.recorder.call_state import is_call_active
+    assert is_call_active(hwnd=1, platform="signal") is True
+
+
+def test_is_call_active_returns_true_on_uia_exception(monkeypatch):
+    import uiautomation
+    from recap.daemon.recorder.call_state import is_call_active
+    def raise_it(_): raise RuntimeError("uia broken")
+    monkeypatch.setattr(uiautomation, "ControlFromHandle", raise_it)
+    assert is_call_active(hwnd=1, platform="teams") is True

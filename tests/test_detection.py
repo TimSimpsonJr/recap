@@ -76,3 +76,17 @@ class TestDetectMeetingWindows:
         with patch("recap.daemon.recorder.detection._enumerate_windows", return_value=[]):
             meetings = detect_meeting_windows()
         assert len(meetings) == 0
+
+
+def test_is_window_alive_returns_false_for_closed_hwnd(monkeypatch):
+    import recap.daemon.recorder.detection as det
+    monkeypatch.setattr(det.win32gui, "IsWindow", lambda h: False)
+    assert det.is_window_alive(999) is False
+
+
+def test_detect_meeting_windows_excludes_unconfirmed_candidates(monkeypatch):
+    import recap.daemon.recorder.detection as det
+    monkeypatch.setattr(det, "_enumerate_windows", lambda: [(42, "Standup | Microsoft Teams")])
+    monkeypatch.setattr(det.call_state, "is_call_active", lambda h, p: False)
+    result = det.detect_meeting_windows({"teams"})
+    assert result == []

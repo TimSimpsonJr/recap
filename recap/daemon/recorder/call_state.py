@@ -111,8 +111,40 @@ def extract_teams_participants(hwnd: int) -> list[str] | None:
         return None
 
 
-# Per-platform call-state checkers populated in Task 11.
-_CALL_STATE_CHECKERS: dict[str, Callable[[Any], bool]] = {}
+def _is_teams_call_active(control: Any) -> bool:
+    """Return True if a Teams window shows an in-call Leave/Hang up/End call button."""
+
+    def is_leave_button(c: Any) -> bool:
+        ct = getattr(c, "ControlTypeName", None)
+        name = getattr(c, "Name", "") or ""
+        return (
+            ct == "ButtonControl"
+            and name.strip().lower() in {"leave", "hang up", "end call"}
+        )
+
+    return _walk_depth_limited(control, is_leave_button) is not None
+
+
+def _is_zoom_call_active(control: Any) -> bool:
+    """Return True if a Zoom window exposes in-call controls (mute/video/leave)."""
+
+    def is_zoom_control(c: Any) -> bool:
+        ct = getattr(c, "ControlTypeName", None)
+        name = (getattr(c, "Name", "") or "").lower()
+        return ct == "ButtonControl" and any(
+            t in name
+            for t in ("mute", "unmute", "start video", "stop video", "leave meeting")
+        )
+
+    return _walk_depth_limited(control, is_zoom_control) is not None
+
+
+# Per-platform call-state checkers. Signal is intentionally omitted
+# (§3.6 per-platform policy — regex-only).
+_CALL_STATE_CHECKERS: dict[str, Callable[[Any], bool]] = {
+    "teams": _is_teams_call_active,
+    "zoom": _is_zoom_call_active,
+}
 
 
 def is_call_active(hwnd: int, platform: str) -> bool:

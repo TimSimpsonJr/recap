@@ -4,10 +4,17 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from recap.daemon.recorder import call_state
+
 try:
     import win32gui  # type: ignore[import-untyped]
 except Exception:  # pragma: no cover - depends on Windows runtime
     win32gui = None  # type: ignore[assignment]
+
+
+# Hwnds that failed confirmation and should be skipped on subsequent scans.
+# Task 14 will add helpers to mutate this set with TTL semantics.
+_EXCLUDED_HWNDS: set[int] = set()
 
 
 # Patterns for matching active meeting windows by platform.
@@ -64,10 +71,24 @@ def detect_meeting_windows(
     meetings: list[MeetingWindow] = []
 
     for hwnd, title in windows:
+        if hwnd in _EXCLUDED_HWNDS:
+            continue
         for platform in platforms:
             pattern = MEETING_PATTERNS.get(platform)
             if pattern and pattern.search(title):
+                if not call_state.is_call_active(hwnd, platform):
+                    continue
                 meetings.append(MeetingWindow(hwnd=hwnd, title=title, platform=platform))
                 break  # one match per window is enough
 
     return meetings
+
+
+def is_window_alive(hwnd: int) -> bool:
+    """Hard Windows signal: the window still exists and is visible."""
+    if win32gui is None:
+        return True
+    try:
+        return win32gui.IsWindow(hwnd) and win32gui.IsWindowVisible(hwnd)
+    except Exception:
+        return True
