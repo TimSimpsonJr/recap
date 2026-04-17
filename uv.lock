@@ -4929,6 +4929,7 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "pyyaml" },
     { name = "ruamel-yaml" },
+    { name = "soxr" },
 ]
 
 [package.optional-dependencies]
@@ -4979,6 +4980,7 @@ requires-dist = [
     { name = "pywin32", marker = "extra == 'daemon'", specifier = ">=306" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "ruamel-yaml", specifier = ">=0.18" },
+    { name = "soxr", specifier = ">=1.0.0" },
     { name = "torch", marker = "extra == 'ml'", specifier = ">=2.1" },
     { name = "uiautomation", marker = "extra == 'daemon'", specifier = ">=2.0" },
 ]
