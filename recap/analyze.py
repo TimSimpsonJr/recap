@@ -32,17 +32,39 @@ def _build_prompt(
     return prompt
 
 
+def _strip_markdown_fence(text: str) -> str:
+    """Return ``text`` with a surrounding ```json fence removed, if present."""
+    match = re.search(r"```(?:json)?\s*\n(.*?)\n```", text, re.DOTALL)
+    return match.group(1) if match else text
+
+
 def _parse_claude_output(raw: str) -> AnalysisResult:
-    text = raw.strip()
-    # Strip markdown code fences if present
-    fence_match = re.search(r"```(?:json)?\s*\n(.*?)\n```", text, re.DOTALL)
-    if fence_match:
-        text = fence_match.group(1)
+    text = _strip_markdown_fence(raw.strip())
 
     try:
         data = json.loads(text)
     except json.JSONDecodeError as e:
         raise ValueError(f"Failed to parse Claude output as JSON: {e}\nRaw: {text[:500]}")
+
+    # ``claude --print --output-format json`` wraps the model response in an
+    # envelope: {"type":"result","subtype":"success","result":"<string>",...}
+    # where the actual analysis JSON lives inside the ``result`` field. Only
+    # unwrap when BOTH the envelope marker and a string ``result`` payload are
+    # present so bare analysis JSON (e.g. from ``ollama run --format json``)
+    # passes through untouched.
+    if (
+        isinstance(data, dict)
+        and data.get("type") == "result"
+        and isinstance(data.get("result"), str)
+    ):
+        inner = _strip_markdown_fence(data["result"].strip())
+        try:
+            data = json.loads(inner)
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                f"Failed to parse Claude CLI envelope result as JSON: {e}\n"
+                f"Inner: {inner[:500]}"
+            )
 
     return AnalysisResult.from_dict(data)
 

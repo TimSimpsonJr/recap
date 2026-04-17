@@ -94,6 +94,48 @@ class TestParseClaude:
         with pytest.raises(ValueError, match="Failed to parse"):
             _parse_claude_output("this is not json at all")
 
+    def test_parse_unwraps_claude_cli_envelope(self, sample_claude_json):
+        """``claude --print --output-format json`` returns a wrapper envelope
+        ``{"type":"result","subtype":"success","result":"<analysis>",...}`` --
+        the actual analysis JSON lives inside the ``result`` field as a string.
+        The parser must unwrap the envelope before calling
+        ``AnalysisResult.from_dict`` or it crashes on ``KeyError: 'meeting_type'``
+        (the envelope has no such key)."""
+        envelope = {
+            "type": "result",
+            "subtype": "success",
+            "cost_usd": 0.0,
+            "duration_ms": 1234,
+            "num_turns": 1,
+            "result": json.dumps(sample_claude_json),
+            "session_id": "deadbeef",
+        }
+        raw = json.dumps(envelope)
+        result = _parse_claude_output(raw)
+        assert isinstance(result, AnalysisResult)
+        assert result.meeting_type == "client-call"
+
+    def test_parse_unwraps_envelope_with_fenced_inner_result(self, sample_claude_json):
+        """Some Claude outputs wrap the analysis JSON in markdown code fences
+        INSIDE the envelope's ``result`` string. Unwrapping must strip those
+        fences too, not just the top-level ones."""
+        inner = f"```json\n{json.dumps(sample_claude_json)}\n```"
+        envelope = {"type": "result", "subtype": "success", "result": inner}
+        raw = json.dumps(envelope)
+        result = _parse_claude_output(raw)
+        assert result.meeting_type == "client-call"
+
+    def test_parse_preserves_direct_analysis_json_for_ollama(self, sample_claude_json):
+        """Ollama (``ollama run --format json``) returns analysis JSON
+        directly without the Claude CLI envelope. The unwrap logic must
+        NOT mistake a bare analysis dict for an envelope just because a
+        ``type`` key happens to appear -- unwrap only when BOTH envelope
+        markers are present AND ``result`` is a string."""
+        # sample_claude_json has no envelope markers; it's the bare analysis.
+        raw = json.dumps(sample_claude_json)
+        result = _parse_claude_output(raw)
+        assert result.meeting_type == "client-call"
+
 
 class TestAnalyze:
     @patch("recap.analyze.subprocess")
