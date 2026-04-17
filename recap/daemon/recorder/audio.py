@@ -283,6 +283,142 @@ class _SourceStream:
         with self._lock:
             self._resampled_buffer += resampled
 
+    # Backoff ladder (seconds).
+    _BACKOFF_STEPS = (0.25, 0.5, 1.0, 2.0)
+    # Degrade window: after this many seconds in RECONNECTING, flip to DEGRADED.
+    _DEGRADE_AFTER_SECONDS = 5.0
+
+    def attempt_reopen_if_due(self) -> None:
+        """Drain-thread entry point for health maintenance.
+
+        Cheap when healthy: checks the latest default-device identity
+        against the bound identity, returns immediately if they match.
+        Only does reopen work when needed AND the backoff window has
+        elapsed. See design §3.
+        """
+        with self._lock:
+            if self._state == _SourceHealth.STOPPED:
+                return
+
+            needs_reopen = False
+            try:
+                runtime_pyaudio = _require_pyaudio()
+                probe = runtime_pyaudio.PyAudio()
+                try:
+                    if self._kind == "loopback":
+                        info = probe.get_default_wasapi_loopback()
+                    else:
+                        info = probe.get_default_wasapi_device(d_in=True)
+                finally:
+                    try:
+                        probe.terminate()
+                    except Exception:
+                        pass
+                self._latest_default_identity = self._compute_identity(info)
+                if self._latest_default_identity != self._bound_identity:
+                    needs_reopen = True
+            except Exception:
+                logger.exception("%s identity probe failed", self._kind)
+                needs_reopen = True
+
+            if self._state in (_SourceHealth.RECONNECTING, _SourceHealth.DEGRADED):
+                needs_reopen = True
+
+            if not needs_reopen:
+                return
+
+            now = time.monotonic()
+            if now < self._next_reopen_at:
+                return
+
+            if self._state == _SourceHealth.HEALTHY:
+                self._state = _SourceHealth.RECONNECTING
+                self._reconnect_started_at = now
+                self._reconnect_attempts = 0
+                logger.warning("%s reconnecting", self._kind)
+            elif not hasattr(self, "_reconnect_started_at"):
+                self._reconnect_started_at = now
+
+            step = self._BACKOFF_STEPS[
+                min(self._reconnect_attempts, len(self._BACKOFF_STEPS) - 1)
+            ]
+            self._next_reopen_at = now + step
+            self._reconnect_attempts += 1
+
+            if (
+                self._state == _SourceHealth.RECONNECTING
+                and now - self._reconnect_started_at >= self._DEGRADE_AFTER_SECONDS
+            ):
+                self._state = _SourceHealth.DEGRADED
+                logger.warning("%s degraded (silent)", self._kind)
+
+        try:
+            self._do_reopen()
+        except Exception as exc:
+            logger.warning("%s reopen failed: %s", self._kind, exc)
+            return
+
+        with self._lock:
+            was_degraded = self._state == _SourceHealth.DEGRADED
+            self._state = _SourceHealth.HEALTHY
+            self._reconnect_attempts = 0
+            self._next_reopen_at = 0.0
+            if hasattr(self, "_reconnect_started_at"):
+                delattr(self, "_reconnect_started_at")
+        if was_degraded:
+            logger.warning("%s recovered (from degraded)", self._kind)
+
+    def _do_reopen(self) -> None:
+        """Tear down the current stream, open a new one on the current
+        default device, rebuild the resampler if the native rate
+        changed. No journaling here -- caller owns state transitions."""
+        old_stream = self._stream
+        old_pa = self._pa
+        if old_stream is not None:
+            try:
+                old_stream.stop_stream()
+                old_stream.close()
+            except Exception:
+                pass
+        if old_pa is not None:
+            try:
+                old_pa.terminate()
+            except Exception:
+                pass
+
+        runtime_pyaudio = _require_pyaudio()
+        pa = runtime_pyaudio.PyAudio()
+        if self._kind == "loopback":
+            info = pa.get_default_wasapi_loopback()
+        else:
+            info = pa.get_default_wasapi_device(d_in=True)
+
+        native_rate = int(info["defaultSampleRate"])
+        new_identity = self._compute_identity(info)
+
+        with self._lock:
+            self._bound_identity = new_identity
+            self._latest_default_identity = new_identity
+            if self._resampler is None or self._resampler.input_rate != native_rate:
+                self._resampler = _SoxrResamplerWrapper(
+                    input_rate=native_rate,
+                    output_rate=self._output_rate,
+                )
+            self._raw_buffer = b""
+            self._resampled_buffer = b""
+
+        chunk_size = 1024
+        self._stream = pa.open(
+            format=runtime_pyaudio.paInt16,
+            channels=1,
+            rate=native_rate,
+            input=True,
+            input_device_index=info["index"],
+            frames_per_buffer=chunk_size,
+            stream_callback=self._on_audio_callback,
+        )
+        self._pa = pa
+
     def stop(self) -> None:
         """Transition to STOPPED before tearing down internals so a
         racing watchdog tick doesn't try to reopen a shutting-down

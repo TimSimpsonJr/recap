@@ -554,3 +554,130 @@ class TestSourceStreamPump:
         src._pump_raw_to_resampled()  # must not raise even with resampler=None
         # Raw buffer untouched because the pump exited early.
         assert len(src._raw_buffer) == 2048
+
+
+class TestSourceStreamReopen:
+    """_SourceStream.attempt_reopen_if_due() detects identity drift and
+    stream-status unhealthiness, performs reopen with backoff, rebuilds
+    the resampler on rate change, and emits edge-triggered warnings."""
+
+    def _patch_pa(self, monkeypatch, *, native_rate, identity_suffix="a"):
+        import recap.daemon.recorder.audio as audio_mod
+        from unittest.mock import MagicMock
+        pa_instance = MagicMock()
+        info = {
+            "name": f"MockMic-{identity_suffix}",
+            "index": 1,
+            "hostApi": 0,
+            "maxInputChannels": 1,
+            "defaultSampleRate": native_rate,
+        }
+        pa_instance.get_default_wasapi_device.return_value = info
+        pa_instance.open.return_value = MagicMock()
+        pa_module = MagicMock()
+        pa_module.PyAudio.return_value = pa_instance
+        pa_module.paInt16 = 8
+        pa_module.paContinue = 0
+        monkeypatch.setattr(audio_mod, "_require_pyaudio", lambda: pa_module)
+        return pa_instance
+
+    def test_no_op_when_healthy_and_identity_matches(self, monkeypatch):
+        from recap.daemon.recorder.audio import _SourceStream, _SourceHealth
+
+        pa = self._patch_pa(monkeypatch, native_rate=48000.0)
+        src = _SourceStream(kind="mic", output_rate=48000)
+        src.start()
+        open_count_before = pa.open.call_count
+
+        src.attempt_reopen_if_due()
+
+        assert pa.open.call_count == open_count_before
+        assert src.state == _SourceHealth.HEALTHY
+
+    def test_identity_change_triggers_reopen(self, monkeypatch, caplog):
+        from recap.daemon.recorder.audio import _SourceStream, _SourceHealth
+
+        pa = self._patch_pa(monkeypatch, native_rate=48000.0, identity_suffix="a")
+        src = _SourceStream(kind="mic", output_rate=48000)
+        src.start()
+        initial_identity = src._bound_identity
+
+        pa.get_default_wasapi_device.return_value = {
+            "name": "MockMic-b",
+            "index": 9,
+            "hostApi": 0,
+            "maxInputChannels": 1,
+            "defaultSampleRate": 48000.0,
+        }
+
+        import logging
+        with caplog.at_level(logging.WARNING):
+            src.attempt_reopen_if_due()
+
+        assert src.state == _SourceHealth.HEALTHY
+        assert src._bound_identity != initial_identity
+        assert pa.open.call_count == 2
+
+    def test_rate_change_rebuilds_resampler(self, monkeypatch):
+        from recap.daemon.recorder.audio import _SourceStream
+
+        pa = self._patch_pa(monkeypatch, native_rate=48000.0, identity_suffix="a")
+        src = _SourceStream(kind="mic", output_rate=48000)
+        src.start()
+        assert src._resampler.input_rate == 48000
+
+        pa.get_default_wasapi_device.return_value = {
+            "name": "MockMic-b",
+            "index": 9,
+            "hostApi": 0,
+            "maxInputChannels": 1,
+            "defaultSampleRate": 44100.0,
+        }
+        src.attempt_reopen_if_due()
+        assert src._resampler.input_rate == 44100
+
+    def test_reopen_respects_backoff(self, monkeypatch):
+        from recap.daemon.recorder.audio import _SourceStream, _SourceHealth
+
+        pa = self._patch_pa(monkeypatch, native_rate=48000.0, identity_suffix="a")
+        src = _SourceStream(kind="mic", output_rate=48000)
+        src.start()
+
+        pa.open.side_effect = RuntimeError("device busy")
+        with src._lock:
+            src._state = _SourceHealth.RECONNECTING
+
+        src.attempt_reopen_if_due()
+        first_open_count = pa.open.call_count
+        # Immediate re-call is a no-op (backoff gate).
+        src.attempt_reopen_if_due()
+        assert pa.open.call_count == first_open_count
+
+    def test_degrades_after_window_exhausted(self, monkeypatch):
+        from recap.daemon.recorder.audio import _SourceStream, _SourceHealth
+        import time
+
+        pa = self._patch_pa(monkeypatch, native_rate=48000.0, identity_suffix="a")
+        src = _SourceStream(kind="mic", output_rate=48000)
+        src.start()
+
+        pa.open.side_effect = RuntimeError("device busy")
+        with src._lock:
+            src._state = _SourceHealth.RECONNECTING
+            src._reconnect_started_at = time.monotonic() - 6.0
+
+        src.attempt_reopen_if_due()
+        assert src.state == _SourceHealth.DEGRADED
+
+    def test_degraded_can_recover_to_healthy(self, monkeypatch):
+        from recap.daemon.recorder.audio import _SourceStream, _SourceHealth
+
+        pa = self._patch_pa(monkeypatch, native_rate=48000.0, identity_suffix="a")
+        src = _SourceStream(kind="mic", output_rate=48000)
+        with src._lock:
+            src._state = _SourceHealth.DEGRADED
+            src._next_reopen_at = 0.0
+
+        pa.open.side_effect = None
+        src.attempt_reopen_if_due()
+        assert src.state == _SourceHealth.HEALTHY
