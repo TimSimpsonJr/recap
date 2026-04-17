@@ -318,7 +318,11 @@ def run_pipeline(
         write_meeting_note,
         write_profile_stubs,
     )
-    from recap.pipeline.audio_convert import convert_flac_to_aac, delete_source_if_configured
+    from recap.pipeline.audio_convert import (
+        convert_flac_to_aac,
+        delete_source_if_configured,
+        ensure_mono_for_ml,
+    )
 
     prompt_path = config.prompt_template_path or DEFAULT_PROMPT_TEMPLATE
     duration = _get_audio_duration(audio_path)
@@ -371,49 +375,76 @@ def run_pipeline(
         transcript = streaming_transcript
         save_transcript(audio_path, transcript)
     else:
-        # ------------------------------------------------------------------
-        # 1. Transcribe
-        # ------------------------------------------------------------------
-        if not _should_skip("transcribe", from_stage):
-            _stage_started(config, recording_stem, "transcribe")
-            transcript_save = transcript_path(audio_path)
-
-            def do_transcribe():
-                return transcribe(
-                    audio_path=audio_path,
-                    model_name=config.transcription_model,
-                    device=config.device,
-                    save_transcript=transcript_save,
-                )
-
-            transcript = _run_with_retry(
-                do_transcribe, "transcribe", config, recording_stem, note_path,
+        # Parakeet (AudioToBPEDataset) and Sortformer both require mono
+        # input and crash on the 2-channel FLAC the recorder writes for
+        # diarization channel-hinting. Produce a mono sidecar once, reuse
+        # it across transcribe + diarize, and clean it up in the finally.
+        try:
+            ml_audio_path = ensure_mono_for_ml(audio_path)
+        except Exception:
+            # Best-effort: if the probe/downmix fails, fall back to the
+            # original path so the pipeline still attempts the stage.
+            # Mono-input recordings will succeed; stereo will produce a
+            # clearer model-level error than silently corrupting state.
+            logger.exception(
+                "Mono conversion failed for %s; using original audio path",
+                audio_path.name,
             )
-            save_transcript(audio_path, transcript)
-            _stage_completed(config, recording_stem, "transcribe")
-        else:
-            # Load from saved transcript if skipping
-            transcript = load_transcript(audio_path)
+            ml_audio_path = audio_path
 
-        # ------------------------------------------------------------------
-        # 2. Diarize
-        # ------------------------------------------------------------------
-        if not _should_skip("diarize", from_stage) and transcript is not None:
-            _stage_started(config, recording_stem, "diarize")
+        try:
+            # ------------------------------------------------------------------
+            # 1. Transcribe
+            # ------------------------------------------------------------------
+            if not _should_skip("transcribe", from_stage):
+                _stage_started(config, recording_stem, "transcribe")
+                transcript_save = transcript_path(audio_path)
 
-            def do_diarize():
-                segments = diarize(
-                    audio_path=audio_path,
-                    model_name=config.diarization_model,
-                    device=config.device,
+                def do_transcribe():
+                    return transcribe(
+                        audio_path=ml_audio_path,
+                        model_name=config.transcription_model,
+                        device=config.device,
+                        save_transcript=transcript_save,
+                    )
+
+                transcript = _run_with_retry(
+                    do_transcribe, "transcribe", config, recording_stem, note_path,
                 )
-                return assign_speakers(transcript, segments)
+                save_transcript(audio_path, transcript)
+                _stage_completed(config, recording_stem, "transcribe")
+            else:
+                # Load from saved transcript if skipping
+                transcript = load_transcript(audio_path)
 
-            transcript = _run_with_retry(
-                do_diarize, "diarize", config, recording_stem, note_path,
-            )
-            save_transcript(audio_path, transcript)
-            _stage_completed(config, recording_stem, "diarize")
+            # ------------------------------------------------------------------
+            # 2. Diarize
+            # ------------------------------------------------------------------
+            if not _should_skip("diarize", from_stage) and transcript is not None:
+                _stage_started(config, recording_stem, "diarize")
+
+                def do_diarize():
+                    segments = diarize(
+                        audio_path=ml_audio_path,
+                        model_name=config.diarization_model,
+                        device=config.device,
+                    )
+                    return assign_speakers(transcript, segments)
+
+                transcript = _run_with_retry(
+                    do_diarize, "diarize", config, recording_stem, note_path,
+                )
+                save_transcript(audio_path, transcript)
+                _stage_completed(config, recording_stem, "diarize")
+        finally:
+            # Delete the mono sidecar but keep the stereo archive.
+            if ml_audio_path != audio_path:
+                try:
+                    ml_audio_path.unlink(missing_ok=True)
+                except OSError:
+                    logger.exception(
+                        "Failed to delete mono sidecar %s", ml_audio_path,
+                    )
 
     # ------------------------------------------------------------------
     # Apply speaker corrections (if a .speakers.json exists)
