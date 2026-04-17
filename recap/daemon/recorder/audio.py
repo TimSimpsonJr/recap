@@ -110,7 +110,7 @@ def find_microphone_device() -> dict[str, Any]:
     p = runtime_pyaudio.PyAudio()
     try:
         p.get_host_api_info_by_type(runtime_pyaudio.paWASAPI)
-        device = p.get_default_wasapi_device("input")
+        device = p.get_default_wasapi_device(d_in=True)
         if device.get("maxInputChannels", 0) < 1:
             raise AudioDeviceError(
                 f"Default WASAPI input device has no input channels: {device.get('name')}"
@@ -318,7 +318,7 @@ class AudioCapture:
 
         # Find devices
         loopback_info = self._pa.get_default_wasapi_loopback()
-        mic_info = self._pa.get_default_wasapi_device("input")
+        mic_info = self._pa.get_default_wasapi_device(d_in=True)
 
         chunk_size = 1024
 

@@ -42,3 +42,24 @@ def test_win32gui_required_apis():
     import win32gui
     for name in ("IsWindow", "IsWindowVisible", "EnumWindows", "GetWindowText"):
         assert hasattr(win32gui, name), f"win32gui missing {name}"
+
+
+def test_pyaudiowpatch_get_default_wasapi_device_uses_kw_only():
+    """PyAudioWPatch renamed the positional 'input'/'output' arg to
+    keyword-only d_in/d_out. Regression guard for the 2026-04-17 bug
+    where the recorder passed positional 'input' and every record/start
+    failed with 'takes 1 positional argument but 2 were given'.
+    """
+    import inspect
+    import pyaudiowpatch as pa
+    p = pa.PyAudio()
+    try:
+        sig = inspect.signature(p.get_default_wasapi_device)
+        # Both params must be KEYWORD_ONLY
+        for name in ("d_in", "d_out"):
+            assert name in sig.parameters, f"missing {name}"
+            assert (
+                sig.parameters[name].kind == inspect.Parameter.KEYWORD_ONLY
+            ), f"{name} should be keyword-only"
+    finally:
+        p.terminate()
