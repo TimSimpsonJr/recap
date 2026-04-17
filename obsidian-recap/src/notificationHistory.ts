@@ -82,9 +82,23 @@ export class NotificationHistory {
 }
 
 export class NotificationHistoryModal extends Modal {
+    private unsubscribe: (() => void) | null = null;
+
     constructor(app: App, private history: NotificationHistory) { super(app); }
 
     onOpen(): void {
+        this.render();
+        // Live-refresh while the modal is open: re-render whenever the
+        // history cache changes (new WS entry, HTTP backfill on reconnect, etc.).
+        this.unsubscribe = this.history.subscribe(() => this.render());
+    }
+
+    onClose(): void {
+        if (this.unsubscribe) { this.unsubscribe(); this.unsubscribe = null; }
+        this.contentEl.empty();
+    }
+
+    private render(): void {
         const { contentEl } = this;
         contentEl.empty();
         contentEl.createEl("h2", { text: "Recap notifications" });
@@ -101,6 +115,4 @@ export class NotificationHistoryModal extends Modal {
             row.createEl("span", { text: n.message });
         }
     }
-
-    onClose(): void { this.contentEl.empty(); }
 }

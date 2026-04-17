@@ -294,6 +294,10 @@ export default class RecapPlugin extends Plugin {
         // Bug 6: Re-fetch status on WebSocket connect to clear offline state
         this.client.on("_connected", async () => {
             this.statusBar?.setConnected();
+            // Backfill any journal entries emitted while the daemon was unreachable;
+            // DaemonClient keeps its onJournalEntry handlers across reconnects, but
+            // HTTP tail of /api/events is only done here.
+            void this.notificationHistory.load();
             try {
                 const status = await this.client!.getStatus();
                 this.lastKnownState = status.state;

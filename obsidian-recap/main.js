@@ -1375,7 +1375,19 @@ var NotificationHistoryModal = class extends import_obsidian8.Modal {
     super(app);
     this.history = history;
   }
+  unsubscribe = null;
   onOpen() {
+    this.render();
+    this.unsubscribe = this.history.subscribe(() => this.render());
+  }
+  onClose() {
+    if (this.unsubscribe) {
+      this.unsubscribe();
+      this.unsubscribe = null;
+    }
+    this.contentEl.empty();
+  }
+  render() {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.createEl("h2", { text: "Recap notifications" });
@@ -1391,9 +1403,6 @@ var NotificationHistoryModal = class extends import_obsidian8.Modal {
       row.createEl("strong", { text: n.title });
       row.createEl("span", { text: n.message });
     }
-  }
-  onClose() {
-    this.contentEl.empty();
   }
 };
 
@@ -1635,6 +1644,7 @@ var RecapPlugin = class extends import_obsidian9.Plugin {
       return;
     this.client.on("_connected", async () => {
       this.statusBar?.setConnected();
+      void this.notificationHistory.load();
       try {
         const status = await this.client.getStatus();
         this.lastKnownState = status.state;
