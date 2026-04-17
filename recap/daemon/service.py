@@ -12,6 +12,7 @@ import concurrent.futures
 import logging
 import pathlib
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -82,6 +83,11 @@ class Daemon:
         self._stopped: bool = False
         self._pairing_timeout_task: Optional[asyncio.Task[None]] = None
 
+        # Dedicated single-worker executor for tkinter popup work. All
+        # popup tk state lives and dies on this one thread so finalization
+        # never trips ``Tcl_AsyncDelete`` across workers. Created in start().
+        self._popup_executor: Optional[ThreadPoolExecutor] = None
+
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
@@ -136,6 +142,12 @@ class Daemon:
 
         self.loop = asyncio.get_running_loop()
         self._stop_event = asyncio.Event()
+
+        # Single-worker popup executor. ``max_workers=1`` is the whole
+        # point: tkinter state must not hop threads.
+        self._popup_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="signal-popup-ui",
+        )
 
         # Codex lock-in (Phase 2): unconditional rebuild every start.
         logger.info("Rebuilding EventIndex from vault (startup)")
@@ -239,6 +251,22 @@ class Daemon:
                 logger.info("Meeting detection stopped")
             except Exception:
                 logger.exception("Error stopping meeting detector")
+
+        # Signal popup worker: sticky-signal any running/queued dialogs to
+        # bail out, then wait a bounded period for the dedicated executor
+        # thread to exit. Without this, a popup mid-dialog blocks daemon
+        # exit indefinitely.
+        from recap.daemon.recorder import signal_popup
+        signal_popup.request_shutdown()
+        if not signal_popup.wait_for_shutdown(timeout=5.0):
+            logger.warning(
+                "signal popup worker did not finish within 5s; daemon "
+                "shutdown compromised -- user may need to force-kill the "
+                "process.",
+            )
+        if self._popup_executor is not None:
+            self._popup_executor.shutdown(wait=False)
+            self._popup_executor = None
 
         # Recorder: stop any active capture cleanly. No-op if idle.
         if self.recorder is not None:

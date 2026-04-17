@@ -19,7 +19,6 @@ from __future__ import annotations
 import json
 import pathlib
 import shutil
-import subprocess
 from datetime import date
 from unittest.mock import patch
 
@@ -41,6 +40,7 @@ from recap.models import (
     Utterance,
 )
 from recap.pipeline import PipelineRuntimeConfig, run_pipeline
+from tests.conftest import make_silent_flac
 
 
 # Patch targets match the lazy imports inside run_pipeline. See
@@ -51,25 +51,6 @@ _PATCH_ASSIGN = "recap.pipeline.diarize.assign_speakers"
 _PATCH_ANALYZE = "recap.analyze.analyze"
 _PATCH_CONVERT = "recap.pipeline.audio_convert.convert_flac_to_aac"
 _PATCH_DELETE_SRC = "recap.pipeline.audio_convert.delete_source_if_configured"
-
-
-def _make_silent_flac(path: pathlib.Path, seconds: int = 2) -> None:
-    """Generate a short silent FLAC via ffmpeg so ffprobe can read duration.
-
-    Keeping this at 2s to minimize test runtime while still producing
-    a real audio file that `_get_audio_duration` can probe.
-    """
-    subprocess.run(
-        [
-            "ffmpeg", "-y",
-            "-f", "lavfi",
-            "-i", "anullsrc=channel_layout=mono:sample_rate=16000",
-            "-t", str(seconds),
-            str(path),
-        ],
-        check=True,
-        capture_output=True,
-    )
 
 
 @pytest.fixture
@@ -160,7 +141,7 @@ def test_run_pipeline_writes_full_meeting_note(
     present and a body with Summary / Key Points / Action Items.
     """
     audio_path = recordings_path / "2026-04-15-100000-alpha.flac"
-    _make_silent_flac(audio_path)
+    make_silent_flac(audio_path)
 
     participants = [Participant(name="Alex"), Participant(name="Bri")]
     metadata = MeetingMetadata(
@@ -326,7 +307,7 @@ def test_run_pipeline_upserts_calendar_seeded_note(
 
     # Now the recording lands with the SAME event_id -> upsert, not duplicate.
     audio_path = recordings_path / "2026-04-15-100000-alpha.flac"
-    _make_silent_flac(audio_path)
+    make_silent_flac(audio_path)
 
     participants = [Participant(name="Alex"), Participant(name="Bri")]
     metadata = MeetingMetadata(

@@ -58,17 +58,28 @@ def transcribe(
     """
     model = _load_model(model_name, device)
     try:
-        results = model.transcribe([str(audio_path)])
+        # timestamps=True tells NeMo to populate hyp.timestamp with a dict
+        # containing "segment"/"word"/"char"/"timestep" keys. Without this
+        # flag the attribute is an empty list and no alignment is available.
+        results = model.transcribe([str(audio_path)], timestamps=True)
         hyp = results[0]
 
-        # Parse segments from NeMo hypothesis timestep data
-        segments = hyp.timestep.get("segment", [])
+        # NeMo renamed Hypothesis.timestep -> Hypothesis.timestamp. With
+        # timestamps=True the value is a dict; the "segment" entry is a list
+        # of per-segment dicts with keys: "segment" (the text), "start",
+        # "end", "start_offset", "end_offset". Silent audio yields an empty
+        # list, which is fine.
+        timestamp = getattr(hyp, "timestamp", None)
+        if isinstance(timestamp, dict):
+            segments = timestamp.get("segment", [])
+        else:
+            segments = []
         utterances = [
             Utterance(
                 speaker="UNKNOWN",
                 start=seg["start"],
                 end=seg["end"],
-                text=seg["text"],
+                text=seg["segment"],
             )
             for seg in segments
         ]

@@ -11,10 +11,26 @@ class TestTranscribe:
         # NeMo transcribe returns a list of hypothesis objects
         mock_hyp = MagicMock()
         mock_hyp.text = "Hello world how are you"
-        mock_hyp.timestep = {
+        # NeMo (current) populates hyp.timestamp as a dict when transcribe is
+        # called with timestamps=True. The "segment" list holds per-segment
+        # dicts keyed by "segment" (text), "start", "end", "start_offset",
+        # "end_offset".
+        mock_hyp.timestamp = {
             "segment": [
-                {"start": 0.0, "end": 1.5, "text": "Hello world"},
-                {"start": 1.8, "end": 3.2, "text": "how are you"},
+                {
+                    "segment": "Hello world",
+                    "start": 0.0,
+                    "end": 1.5,
+                    "start_offset": 0,
+                    "end_offset": 19,
+                },
+                {
+                    "segment": "how are you",
+                    "start": 1.8,
+                    "end": 3.2,
+                    "start_offset": 23,
+                    "end_offset": 40,
+                },
             ]
         }
         mock.transcribe.return_value = [mock_hyp]

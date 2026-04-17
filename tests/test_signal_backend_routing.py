@@ -28,7 +28,6 @@ from __future__ import annotations
 import json
 import pathlib
 import shutil
-import subprocess
 from datetime import date
 from unittest.mock import MagicMock, patch
 
@@ -45,6 +44,7 @@ from recap.daemon.config import (
 from recap.daemon.runtime_config import build_runtime_config
 from recap.models import MeetingMetadata, Participant, TranscriptResult, Utterance
 from recap.pipeline import run_pipeline
+from tests.conftest import make_silent_flac
 
 
 # Patch targets match the lazy imports inside ``run_pipeline``. These mirror
@@ -77,25 +77,6 @@ _STUB_ANALYSIS_PAYLOAD = {
     "people": [],
     "companies": [],
 }
-
-
-def _make_silent_flac(path: pathlib.Path, seconds: int = 2) -> None:
-    """Generate a short silent FLAC via ffmpeg so ffprobe can read duration.
-
-    Matches tests/test_e2e_pipeline.py so the two tests share the same
-    real-audio fixture pattern.
-    """
-    subprocess.run(
-        [
-            "ffmpeg", "-y",
-            "-f", "lavfi",
-            "-i", "anullsrc=channel_layout=mono:sample_rate=16000",
-            "-t", str(seconds),
-            str(path),
-        ],
-        check=True,
-        capture_output=True,
-    )
 
 
 def _stub_subprocess_result() -> MagicMock:
@@ -254,7 +235,7 @@ def test_ollama_backend_in_metadata_dispatches_ollama_subprocess(
     inside ``run_pipeline``.
     """
     audio_path = recordings_path / "ollama-test.flac"
-    _make_silent_flac(audio_path)
+    make_silent_flac(audio_path)
 
     mock_subprocess_run = _invoke_pipeline_with_backend(
         audio_path=audio_path,
@@ -293,7 +274,7 @@ def test_claude_backend_in_metadata_dispatches_claude_subprocess(
     either direction.
     """
     audio_path = recordings_path / "claude-test.flac"
-    _make_silent_flac(audio_path)
+    make_silent_flac(audio_path)
 
     mock_subprocess_run = _invoke_pipeline_with_backend(
         audio_path=audio_path,
@@ -337,7 +318,7 @@ def test_ollama_model_from_config_reaches_subprocess_argv(
     -> analyze.analyze -> subprocess.run argv.
     """
     audio_path = recordings_path / "ollama-model-test.flac"
-    _make_silent_flac(audio_path)
+    make_silent_flac(audio_path)
 
     mock_subprocess_run = _invoke_pipeline_with_backend(
         audio_path=audio_path,

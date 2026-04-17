@@ -279,9 +279,18 @@ def _build_subservices(daemon: Daemon, auth_token: str) -> dict[str, Any]:
         available_backends = [default_backend] + [
             b for b in ("claude", "ollama") if b != default_backend
         ]
+        # The popup executor is created by ``Daemon.start()``; by the time
+        # this callback fires the detector has been started, which happens
+        # after start() -- so _popup_executor is populated.
+        if daemon._popup_executor is None:
+            logger.warning(
+                "Signal popup executor not initialized; skipping popup",
+            )
+            return
         result = await show_signal_popup(
             org_slug=default_org_slug,
             available_backends=available_backends,
+            executor=daemon._popup_executor,
         )
         if result:
             logger.info(
@@ -292,6 +301,7 @@ def _build_subservices(daemon: Daemon, auth_token: str) -> dict[str, Any]:
             await recorder.start(
                 result["org"], metadata=metadata, detected=True,
             )
+            detector.mark_active_recording(meeting_window.hwnd)
         else:
             logger.info("Signal recording declined")
 

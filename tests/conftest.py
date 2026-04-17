@@ -57,6 +57,23 @@ daemon:
 """
 
 
+def make_silent_flac(path: pathlib.Path, seconds: int = 2) -> pathlib.Path:
+    """Generate a short silent FLAC via ffmpeg (stdlib subprocess only)."""
+    import subprocess
+    subprocess.run(
+        [
+            "ffmpeg", "-y",
+            "-f", "lavfi",
+            "-i", "anullsrc=channel_layout=mono:sample_rate=16000",
+            "-t", str(seconds),
+            str(path),
+        ],
+        check=True,
+        capture_output=True,
+    )
+    return path
+
+
 @pytest.fixture
 def tmp_vault(tmp_path: pathlib.Path) -> pathlib.Path:
     """Create a temporary vault structure for testing."""
