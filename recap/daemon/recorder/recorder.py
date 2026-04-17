@@ -59,6 +59,7 @@ class Recorder:
         # Async monitoring tasks
         self._silence_task: asyncio.Task | None = None
         self._duration_task: asyncio.Task | None = None
+        self._capture_health_task: asyncio.Task | None = None
 
         # Streaming transcription/diarization (best-effort)
         self._transcriber: StreamingTranscriber | None = None
@@ -206,6 +207,7 @@ class Recorder:
         # Start async monitoring tasks
         self._silence_task = asyncio.create_task(self._monitor_silence())
         self._duration_task = asyncio.create_task(self._monitor_duration())
+        self._capture_health_task = asyncio.create_task(self._monitor_capture_health())
 
         logger.info("Recording started: %s", path)
         return path
@@ -235,6 +237,19 @@ class Recorder:
             except asyncio.CancelledError:
                 pass
             self._duration_task = None
+
+        # Cancel capture-health monitor. Ordering matters: clear the
+        # attribute to None BEFORE cancelling so that if the monitor
+        # itself is what called stop() (fatal-event path), its own
+        # "await self.stop()" won't race to cancel itself.
+        if self._capture_health_task is not None:
+            task = self._capture_health_task
+            self._capture_health_task = None
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
 
         # Stop audio capture
         path = self._current_path
@@ -347,6 +362,29 @@ class Recorder:
                 self._streaming_result = None
         else:
             self._streaming_result = None
+
+    async def _monitor_capture_health(self) -> None:
+        """Watch AudioCapture._fatal_event for both-sources-dead
+        condition. When tripped, stop the recording cleanly and log
+        the error so the user knows why it stopped. ``threading.Event``
+        is not awaitable, so this polls at 500 ms."""
+        try:
+            while self._audio_capture is not None:
+                cap = self._audio_capture
+                fatal_event = getattr(cap, "_fatal_event", None)
+                if fatal_event is not None and fatal_event.is_set():
+                    err = getattr(cap, "_fatal_error", None)
+                    logger.error("Capture fatal: %s", err)
+                    try:
+                        await self.stop()
+                    except Exception:
+                        logger.exception(
+                            "Recorder stop() during fatal capture handling raised",
+                        )
+                    return
+                await asyncio.sleep(0.5)
+        except asyncio.CancelledError:
+            raise
 
     async def _monitor_silence(self) -> None:
         """Async task that periodically checks for silence timeout."""
