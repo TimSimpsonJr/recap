@@ -37,11 +37,11 @@ export class LiveTranscriptView extends ItemView {
         this.statusEl.empty();
         switch (state) {
             case "recording":
-                this.statusEl.setText("⏺ Recording — live transcript will appear here");
+                this.statusEl.setText("⏺ Recording — transcript will appear in the meeting note after the pipeline completes.");
                 this.statusEl.addClass("recap-recording");
                 break;
             default:
-                this.statusEl.setText("Not recording. Start a recording to see live transcript.");
+                this.statusEl.setText("Live transcript is not available in this version. Recorded meetings will show the full transcript in the note after the pipeline completes.");
                 this.statusEl.removeClass("recap-recording");
         }
     }
