@@ -146,6 +146,14 @@ def test_audio_capture_does_not_pass_channels_to_encoder(tmp_path, monkeypatch):
     _, kwargs = mock_encoder_cls.call_args
     assert "channels" not in kwargs, f"StreamEncoder called with channels: {kwargs}"
 
+    # Stop to tear down the drain thread before monkeypatch is unwound;
+    # otherwise the background thread races into real PyAudio after
+    # teardown and crashes the process.
+    try:
+        capture.stop()
+    except Exception:
+        pass
+
 
 def test_audio_capture_start_uses_matched_device_rate(tmp_path, monkeypatch):
     """When loopback and mic both report the same native rate, start() uses that
@@ -194,6 +202,12 @@ def test_audio_capture_start_uses_matched_device_rate(tmp_path, monkeypatch):
     # The public ``sample_rate`` property reflects the actual capture rate so
     # downstream consumers (on_chunk subscribers, FLAC readers) see the truth.
     assert capture.sample_rate == 48000
+
+    # Stop to tear down the drain thread before monkeypatch is unwound.
+    try:
+        capture.stop()
+    except Exception:
+        pass
 
 
 def test_audio_capture_start_raises_on_device_rate_mismatch(tmp_path, monkeypatch):
@@ -681,3 +695,62 @@ class TestSourceStreamReopen:
         pa.open.side_effect = None
         src.attempt_reopen_if_due()
         assert src.state == _SourceHealth.HEALTHY
+
+
+class TestAudioCaptureDrain:
+    """Wall-clock drain loop: health-check cadence driven by monotonic
+    time, final partial tick on stop, cross-thread fatal state on
+    both-sources-degraded."""
+
+    def test_fatal_event_fires_when_both_sources_degraded(self, monkeypatch, tmp_path):
+        """Both sources DEGRADED -> _fatal_error set, _fatal_event
+        tripped, drain loop exits cleanly (no raise)."""
+        from recap.daemon.recorder.audio import (
+            AudioCapture,
+            AudioCaptureBothSourcesFailedError,
+            _SourceHealth,
+        )
+        import recap.daemon.recorder.audio as audio_mod
+        from unittest.mock import MagicMock
+
+        monkeypatch.setattr(audio_mod, "_require_pyflac", lambda: MagicMock())
+        pa_instance = MagicMock()
+        info = {
+            "name": "Mock", "index": 1, "hostApi": 0,
+            "maxInputChannels": 1, "defaultSampleRate": 48000.0,
+        }
+        pa_instance.get_default_wasapi_device.return_value = info
+        pa_instance.get_default_wasapi_loopback.return_value = info
+        pa_instance.open.return_value = MagicMock()
+        pa_module = MagicMock()
+        pa_module.PyAudio.return_value = pa_instance
+        pa_module.paInt16 = 8
+        monkeypatch.setattr(audio_mod, "_require_pyaudio", lambda: pa_module)
+
+        cap = AudioCapture(output_path=tmp_path / "x.flac", sample_rate=48000)
+        cap.start()
+
+        with cap._mic_source._lock:
+            cap._mic_source._state = _SourceHealth.DEGRADED
+        with cap._loopback_source._lock:
+            cap._loopback_source._state = _SourceHealth.DEGRADED
+
+        assert cap._fatal_event.wait(timeout=2.0) is True
+        assert isinstance(cap._fatal_error, AudioCaptureBothSourcesFailedError)
+
+        cap.stop()
+
+    def test_fatal_error_is_sticky_until_next_start(self, tmp_path):
+        from recap.daemon.recorder.audio import AudioCapture
+
+        cap = AudioCapture(output_path=tmp_path / "x.flac", sample_rate=48000)
+        cap._fatal_error = RuntimeError("canned")
+        cap._fatal_event.set()
+        assert cap._fatal_error is not None
+
+    def test_health_check_cadence_uses_monotonic_clock(self):
+        from recap.daemon.recorder.audio import AudioCapture
+        import inspect
+        src = inspect.getsource(AudioCapture._drain_loop)
+        assert "next_health_check_at" in src
+        assert "monotonic" in src

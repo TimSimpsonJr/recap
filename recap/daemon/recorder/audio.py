@@ -450,6 +450,12 @@ class AudioDeviceError(Exception):
     """Raised when no suitable audio device is found."""
 
 
+class AudioCaptureBothSourcesFailedError(Exception):
+    """Both mic and loopback sources have degraded past their reopen
+    windows. The recording cannot continue; recorder should stop
+    cleanly and surface the error to the user."""
+
+
 def _require_audio_runtime() -> tuple[Any, Any]:
     global pyaudio, pyflac
     return _require_pyaudio(), _require_pyflac()
@@ -778,13 +784,48 @@ class AudioCapture:
         self._drain_thread.start()
 
     def _drain_loop(self) -> None:
-        # Transitional shim -- Task 8 replaces this with the full
-        # wall-clock version (fixed 48 kHz cadence, fatal-state detection).
-        chunk_frames = 1024
-        target_interval = chunk_frames / self._sample_rate  # ~21.33 ms at 48 kHz
+        """Wall-clock-driven drain loop. Produces stereo frames at a
+        fixed 48 kHz output cadence regardless of source health.
 
-        last_tick = time.monotonic()
+        Health checks fire when time.monotonic() passes
+        next_health_check_at -- NOT every N ticks -- so a back-logged
+        drain catching up in rapid ticks doesn't spam
+        attempt_reopen_if_due.
+        """
+        chunk_frames = 1024
+        target_interval = chunk_frames / self._sample_rate
+
+        start_time = time.monotonic()
+        next_health_check_at = start_time + 1.0
+        tick_index = 0
+
         while self._recording:
+            now = time.monotonic()
+
+            if now >= next_health_check_at:
+                # Check fatal state BEFORE reopen attempts: if both
+                # sources are already degraded past their reopen
+                # windows, the recording is game-over even if one
+                # could individually recover. Reopening here would
+                # mask the state transition before we observe it.
+                if (
+                    self._mic_source is not None
+                    and self._loopback_source is not None
+                    and self._mic_source.is_degraded()
+                    and self._loopback_source.is_degraded()
+                ):
+                    self._fatal_error = AudioCaptureBothSourcesFailedError(
+                        "Both mic and loopback sources degraded past "
+                        "their reopen windows; stopping recording.",
+                    )
+                    self._fatal_event.set()
+                    return
+                if self._mic_source is not None:
+                    self._mic_source.attempt_reopen_if_due()
+                if self._loopback_source is not None:
+                    self._loopback_source.attempt_reopen_if_due()
+                next_health_check_at = now + 1.0
+
             if self._mic_source is not None:
                 self._mic_source._pump_raw_to_resampled()
             if self._loopback_source is not None:
@@ -804,12 +845,41 @@ class AudioCapture:
                 self._loopback_buffer = lb_bytes
             self._interleave_and_encode(chunk_frames)
 
-            now = time.monotonic()
-            elapsed = now - last_tick
-            sleep_for = max(0.0, target_interval - elapsed)
-            last_tick = now + sleep_for
+            tick_index += 1
+            target = start_time + (tick_index * target_interval)
+            sleep_for = max(0.0, target - time.monotonic())
             if sleep_for > 0:
                 time.sleep(sleep_for)
+
+        self._drain_final_partial_tick()
+
+    def _drain_final_partial_tick(self) -> None:
+        """Pump any remaining raw bytes, drain up to the max frames
+        available across sources, silence-pad the shorter side so the
+        final stereo frame count stays aligned, feed the encoder."""
+        if self._mic_source is None or self._loopback_source is None:
+            return
+        self._mic_source._pump_raw_to_resampled()
+        self._loopback_source._pump_raw_to_resampled()
+
+        with self._mic_source._lock:
+            mic_remaining = self._mic_source._resampled_buffer
+            self._mic_source._resampled_buffer = b""
+        with self._loopback_source._lock:
+            lb_remaining = self._loopback_source._resampled_buffer
+            self._loopback_source._resampled_buffer = b""
+
+        mic_frames = len(mic_remaining) // 2
+        lb_frames = len(lb_remaining) // 2
+        if mic_frames == 0 and lb_frames == 0:
+            return
+        target = max(mic_frames, lb_frames)
+        mic_padded = mic_remaining + b"\x00" * ((target - mic_frames) * 2)
+        lb_padded = lb_remaining + b"\x00" * ((target - lb_frames) * 2)
+        with self._lock:
+            self._mic_buffer = mic_padded
+            self._loopback_buffer = lb_padded
+        self._interleave_and_encode(target)
 
     def stop(self) -> None:
         if not self._recording:
