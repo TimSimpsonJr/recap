@@ -86,13 +86,38 @@ npm run build
 
 Copy `obsidian-recap/main.js`, `obsidian-recap/manifest.json`, and `obsidian-recap/styles.css` into your vault's `.obsidian/plugins/recap/` directory. Restart Obsidian and enable the plugin.
 
-### Running tests
+## Running tests
+
+### Unit tests (default)
 
 ```bash
+uv sync --extra dev
 uv run pytest -q
 ```
 
-Pytest suite covers daemon, pipeline, recorder, streaming, calendar, and plugin integration.
+Fast (<1 min). The integration tier is excluded from default runs via `-m 'not integration'` in `pyproject.toml`.
+
+### Integration tests
+
+The integration tier loads real libraries (Parakeet, NeMo, pyflac, uiautomation, pywin32) and requires the `daemon` and `ml` extras in addition to `dev`:
+
+```bash
+uv sync --extra dev --extra daemon --extra ml
+```
+
+Then run:
+
+```bash
+# CPU-safe contract smoke — runs on any Windows dev box (no GPU required)
+uv run pytest -m integration --no-cov tests/integration/test_contract_smoke.py
+
+# Full integration tier (CPU + GPU model + end-to-end; requires CUDA)
+uv run pytest -m integration --no-cov
+```
+
+`--no-cov` is recommended because running only the integration subset would trip the 70% coverage floor pytest applies globally.
+
+GPU tests automatically skip when CUDA isn't available via the `cuda_guard` fixture. The `daemon` extra is Windows-specific (WASAPI + DPAPI); the integration tier only runs on Windows.
 
 ## Project Structure
 
