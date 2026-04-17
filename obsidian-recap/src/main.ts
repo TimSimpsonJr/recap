@@ -31,7 +31,11 @@ export default class RecapPlugin extends Plugin {
         // Register views
         this.registerView(
             VIEW_MEETING_LIST,
-            (leaf) => new MeetingListView(leaf, () => this.client),
+            (leaf) => new MeetingListView(leaf, {
+                getClient: () => this.client,
+                onStartRecording: () => this.startRecordingInteractive(),
+                onStopRecording: () => this.stopRecordingInteractive(),
+            }),
         );
         this.registerView(
             VIEW_LIVE_TRANSCRIPT,
@@ -88,48 +92,13 @@ export default class RecapPlugin extends Plugin {
         this.addCommand({
             id: "start-recording",
             name: "Start recording",
-            callback: async () => {
-                if (!this.client) {
-                    new Notice("Recap: Daemon not connected");
-                    return;
-                }
-                // Fetch org list from daemon config endpoint
-                let orgs: string[] = [];
-                try {
-                    const resp = await this.client!.get<{orgs: string[]}>("/api/config/orgs");
-                    orgs = resp.orgs;
-                } catch (e) {
-                    const msg = e instanceof Error ? e.message : String(e);
-                    new Notice(`Recap: org list fetch failed — using default. ${msg}`);
-                    console.error("Recap:", e);
-                    orgs = ["default"];
-                }
-                new OrgPickerModal(this.app, orgs, async (org) => {
-                    try {
-                        await this.client!.startRecording(org);
-                        new Notice(`Recording started (${org})`);
-                    } catch (e) {
-                        new Notice(`Failed to start recording: ${e}`);
-                    }
-                }).open();
-            },
+            callback: () => this.startRecordingInteractive(),
         });
 
         this.addCommand({
             id: "stop-recording",
             name: "Stop recording",
-            callback: async () => {
-                if (!this.client) {
-                    new Notice("Recap: Daemon not connected");
-                    return;
-                }
-                try {
-                    await this.client.stopRecording();
-                    new Notice("Recording stopped");
-                } catch (e) {
-                    new Notice(`Failed to stop recording: ${e}`);
-                }
-            },
+            callback: () => this.stopRecordingInteractive(),
         });
 
         this.addCommand({
@@ -209,6 +178,62 @@ export default class RecapPlugin extends Plugin {
     onunload() {
         this.notificationHistory.detach();
         this.client?.disconnectWebSocket();
+    }
+
+    /**
+     * Shared entry point for both the command palette "Recap: Start
+     * recording" command and the Meetings panel's Start button. Returns
+     * once the picker has been opened (the actual daemon call happens in
+     * the picker callback); the promise does NOT await the daemon.
+     */
+    async startRecordingInteractive(): Promise<void> {
+        if (!this.client) {
+            new Notice("Recap: Daemon not connected");
+            return;
+        }
+        let orgs: string[] = [];
+        try {
+            const resp = await this.client.get<{orgs: string[]}>("/api/config/orgs");
+            orgs = resp.orgs;
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            new Notice(`Recap: org list fetch failed — using default. ${msg}`);
+            console.error("Recap:", e);
+            orgs = ["default"];
+        }
+        new OrgPickerModal(this.app, orgs, async (org) => {
+            try {
+                await this.client!.startRecording(org);
+                new Notice(`Recording started (${org})`);
+            } catch (e) {
+                new Notice(`Failed to start recording: ${e}`);
+            }
+        }).open();
+    }
+
+    /** Shared stop path used by the command palette and the panel button. */
+    async stopRecordingInteractive(): Promise<void> {
+        if (!this.client) {
+            new Notice("Recap: Daemon not connected");
+            return;
+        }
+        try {
+            await this.client.stopRecording();
+            new Notice("Recording stopped");
+        } catch (e) {
+            new Notice(`Failed to stop recording: ${e}`);
+        }
+    }
+
+    /** Push a daemon state update to every open Meetings panel. */
+    private broadcastDaemonState(state: string | null, org?: string): void {
+        const leaves = this.app.workspace.getLeavesOfType(VIEW_MEETING_LIST);
+        for (const leaf of leaves) {
+            const view = leaf.view;
+            if (view instanceof MeetingListView) {
+                view.updateDaemonState(state, org);
+            }
+        }
     }
 
     async loadSettings() {
@@ -302,8 +327,10 @@ export default class RecapPlugin extends Plugin {
                 const status = await this.client!.getStatus();
                 this.lastKnownState = status.state;
                 this.statusBar?.updateState(status.state, status.recording?.org);
+                this.broadcastDaemonState(status.state, status.recording?.org);
             } catch {
                 this.statusBar?.setOffline();
+                this.broadcastDaemonState(null);
                 new Notice("Recap: Reconnected, but daemon status refresh failed");
             }
         });
@@ -313,9 +340,11 @@ export default class RecapPlugin extends Plugin {
         // to the plugin via WebSocket; see NotificationHistory.setClient.
         this.client.on("state_change", (event) => {
             const state = event.state as string;
+            const org = event.org as string | undefined;
             this.lastKnownState = state;
 
-            this.statusBar?.updateState(state, event.org as string | undefined);
+            this.statusBar?.updateState(state, org);
+            this.broadcastDaemonState(state, org);
 
             // Update live transcript view status
             const leaves = this.app.workspace.getLeavesOfType(VIEW_LIVE_TRANSCRIPT);
@@ -354,6 +383,7 @@ export default class RecapPlugin extends Plugin {
 
         this.client.connectWebSocket(() => {
             this.statusBar?.setOffline();
+            this.broadcastDaemonState(null);
         });
     }
 

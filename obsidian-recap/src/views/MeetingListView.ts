@@ -5,18 +5,28 @@ import { MeetingData, renderMeetingRow } from "../components/MeetingRow";
 
 export const VIEW_MEETING_LIST = "recap-meeting-list";
 
+export interface MeetingListViewDeps {
+    getClient: () => DaemonClient | null;
+    onStartRecording: () => Promise<void>;
+    onStopRecording: () => Promise<void>;
+}
+
 export class MeetingListView extends ItemView {
     private meetings: MeetingData[] = [];
     private filteredMeetings: MeetingData[] = [];
     private listContainer: HTMLElement | null = null;
-    private getClient: () => DaemonClient | null;
+    private deps: MeetingListViewDeps;
 
-    constructor(
-        leaf: WorkspaceLeaf,
-        getClient: () => DaemonClient | null = () => null,
-    ) {
+    // Status row elements (created in onOpen, updated via updateDaemonState).
+    private statusDotEl: HTMLElement | null = null;
+    private statusLabelEl: HTMLElement | null = null;
+    private actionBtnEl: HTMLButtonElement | null = null;
+    private currentState: string | null = null;
+    private currentOrg: string | undefined = undefined;
+
+    constructor(leaf: WorkspaceLeaf, deps: MeetingListViewDeps) {
         super(leaf);
-        this.getClient = getClient;
+        this.deps = deps;
     }
 
     getViewType(): string { return VIEW_MEETING_LIST; }
@@ -28,8 +38,12 @@ export class MeetingListView extends ItemView {
         container.empty();
         container.addClass("recap-meeting-list-container");
 
-        // Header
+        // Header + daemon status row with Start/Stop button.
         container.createEl("h4", { text: "Meetings" });
+        this.renderStatusRow(container);
+
+        // Seed initial state from the daemon (falls back to offline if unreachable).
+        await this.refreshDaemonStateFromClient();
 
         // Load meetings from vault
         await this.loadMeetings();
@@ -47,6 +61,116 @@ export class MeetingListView extends ItemView {
         this.renderMeetings();
     }
 
+    /**
+     * Render the status row at the top of the panel. Mirrors the pattern
+     * used by other Obsidian plugins: a coloured dot, a short state label,
+     * and a Start/Stop button whose affordance matches the current state.
+     */
+    private renderStatusRow(container: HTMLElement): void {
+        const row = container.createDiv({ cls: "recap-status-row" });
+        this.statusDotEl = row.createEl("span", { cls: "recap-status-dot recap-status-offline" });
+        this.statusLabelEl = row.createEl("span", { cls: "recap-status-label", text: "Connecting…" });
+
+        this.actionBtnEl = row.createEl("button", {
+            cls: "recap-action-btn",
+            text: "Start recording",
+        });
+        this.actionBtnEl.disabled = true;
+        this.actionBtnEl.addEventListener("click", async () => {
+            if (!this.actionBtnEl || this.actionBtnEl.disabled) return;
+            // Cache the label we clicked on -- currentState may change while
+            // the picker modal is up, but the user's intent was tied to the
+            // label they saw.
+            const wasRecording = this.currentState === "recording";
+            this.actionBtnEl.disabled = true;
+            try {
+                if (wasRecording) {
+                    await this.deps.onStopRecording();
+                } else {
+                    await this.deps.onStartRecording();
+                }
+            } finally {
+                // If state_change hasn't fired yet, re-enable conservatively so
+                // the user isn't stuck. The next state_change will overwrite.
+                if (this.actionBtnEl) this.actionBtnEl.disabled = false;
+            }
+        });
+    }
+
+    /** Pull daemon status once at open time so the header isn't stuck on "Connecting…". */
+    private async refreshDaemonStateFromClient(): Promise<void> {
+        const client = this.deps.getClient();
+        if (!client) {
+            this.updateDaemonState(null);
+            return;
+        }
+        try {
+            const status = await client.getStatus();
+            this.updateDaemonState(status.state, status.recording?.org);
+        } catch {
+            this.updateDaemonState(null);
+        }
+    }
+
+    /**
+     * Public entry point: update the status row in response to a state_change
+     * WebSocket event, an offline notification, or a successful reconnect.
+     * Passing ``null`` renders the offline look.
+     */
+    updateDaemonState(state: string | null, org?: string): void {
+        this.currentState = state;
+        this.currentOrg = org;
+
+        if (!this.statusDotEl || !this.statusLabelEl || !this.actionBtnEl) return;
+
+        this.statusDotEl.removeClass(
+            "recap-status-ok",
+            "recap-status-recording",
+            "recap-status-processing",
+            "recap-status-offline",
+        );
+
+        if (state === null) {
+            this.statusDotEl.addClass("recap-status-offline");
+            this.statusLabelEl.setText("Daemon offline");
+            this.actionBtnEl.setText("Start recording");
+            this.actionBtnEl.disabled = true;
+            return;
+        }
+
+        switch (state) {
+            case "recording":
+                this.statusDotEl.addClass("recap-status-recording");
+                this.statusLabelEl.setText(org ? `Recording (${org})` : "Recording");
+                this.actionBtnEl.setText("Stop recording");
+                this.actionBtnEl.disabled = false;
+                break;
+            case "processing":
+                this.statusDotEl.addClass("recap-status-processing");
+                this.statusLabelEl.setText("Processing…");
+                this.actionBtnEl.setText("Start recording");
+                this.actionBtnEl.disabled = true;
+                break;
+            case "armed":
+                this.statusDotEl.addClass("recap-status-ok");
+                this.statusLabelEl.setText(org ? `Armed (${org})` : "Armed");
+                this.actionBtnEl.setText("Start recording");
+                this.actionBtnEl.disabled = false;
+                break;
+            case "detected":
+                this.statusDotEl.addClass("recap-status-ok");
+                this.statusLabelEl.setText("Meeting detected");
+                this.actionBtnEl.setText("Start recording");
+                this.actionBtnEl.disabled = false;
+                break;
+            default: // "idle" and any unknown future state
+                this.statusDotEl.addClass("recap-status-ok");
+                this.statusLabelEl.setText("Idle");
+                this.actionBtnEl.setText("Start recording");
+                this.actionBtnEl.disabled = false;
+        }
+    }
+
     private async loadMeetings(): Promise<void> {
         this.meetings = [];
 
@@ -55,7 +179,7 @@ export class MeetingListView extends ItemView {
         // file in the vault. On failure, degrade to the whole-vault
         // walk with a Notice so the user knows why it's slow.
         let subfolders: string[] = [];
-        const client = this.getClient();
+        const client = this.deps.getClient();
         if (client) {
             try {
                 const cfg = await client.getConfig();

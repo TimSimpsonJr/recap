@@ -868,10 +868,16 @@ var MeetingListView = class extends import_obsidian4.ItemView {
   meetings = [];
   filteredMeetings = [];
   listContainer = null;
-  getClient;
-  constructor(leaf, getClient = () => null) {
+  deps;
+  // Status row elements (created in onOpen, updated via updateDaemonState).
+  statusDotEl = null;
+  statusLabelEl = null;
+  actionBtnEl = null;
+  currentState = null;
+  currentOrg = void 0;
+  constructor(leaf, deps) {
     super(leaf);
-    this.getClient = getClient;
+    this.deps = deps;
   }
   getViewType() {
     return VIEW_MEETING_LIST;
@@ -887,6 +893,8 @@ var MeetingListView = class extends import_obsidian4.ItemView {
     container.empty();
     container.addClass("recap-meeting-list-container");
     container.createEl("h4", { text: "Meetings" });
+    this.renderStatusRow(container);
+    await this.refreshDaemonStateFromClient();
     await this.loadMeetings();
     const orgs = [...new Set(this.meetings.map((m) => m.org).filter(Boolean))];
     new FilterBar(container, orgs, (state) => {
@@ -895,10 +903,110 @@ var MeetingListView = class extends import_obsidian4.ItemView {
     this.listContainer = container.createDiv({ cls: "recap-meeting-list" });
     this.renderMeetings();
   }
+  /**
+   * Render the status row at the top of the panel. Mirrors the pattern
+   * used by other Obsidian plugins: a coloured dot, a short state label,
+   * and a Start/Stop button whose affordance matches the current state.
+   */
+  renderStatusRow(container) {
+    const row = container.createDiv({ cls: "recap-status-row" });
+    this.statusDotEl = row.createEl("span", { cls: "recap-status-dot recap-status-offline" });
+    this.statusLabelEl = row.createEl("span", { cls: "recap-status-label", text: "Connecting\u2026" });
+    this.actionBtnEl = row.createEl("button", {
+      cls: "recap-action-btn",
+      text: "Start recording"
+    });
+    this.actionBtnEl.disabled = true;
+    this.actionBtnEl.addEventListener("click", async () => {
+      if (!this.actionBtnEl || this.actionBtnEl.disabled)
+        return;
+      const wasRecording = this.currentState === "recording";
+      this.actionBtnEl.disabled = true;
+      try {
+        if (wasRecording) {
+          await this.deps.onStopRecording();
+        } else {
+          await this.deps.onStartRecording();
+        }
+      } finally {
+        if (this.actionBtnEl)
+          this.actionBtnEl.disabled = false;
+      }
+    });
+  }
+  /** Pull daemon status once at open time so the header isn't stuck on "Connecting…". */
+  async refreshDaemonStateFromClient() {
+    const client = this.deps.getClient();
+    if (!client) {
+      this.updateDaemonState(null);
+      return;
+    }
+    try {
+      const status = await client.getStatus();
+      this.updateDaemonState(status.state, status.recording?.org);
+    } catch {
+      this.updateDaemonState(null);
+    }
+  }
+  /**
+   * Public entry point: update the status row in response to a state_change
+   * WebSocket event, an offline notification, or a successful reconnect.
+   * Passing ``null`` renders the offline look.
+   */
+  updateDaemonState(state, org) {
+    this.currentState = state;
+    this.currentOrg = org;
+    if (!this.statusDotEl || !this.statusLabelEl || !this.actionBtnEl)
+      return;
+    this.statusDotEl.removeClass(
+      "recap-status-ok",
+      "recap-status-recording",
+      "recap-status-processing",
+      "recap-status-offline"
+    );
+    if (state === null) {
+      this.statusDotEl.addClass("recap-status-offline");
+      this.statusLabelEl.setText("Daemon offline");
+      this.actionBtnEl.setText("Start recording");
+      this.actionBtnEl.disabled = true;
+      return;
+    }
+    switch (state) {
+      case "recording":
+        this.statusDotEl.addClass("recap-status-recording");
+        this.statusLabelEl.setText(org ? `Recording (${org})` : "Recording");
+        this.actionBtnEl.setText("Stop recording");
+        this.actionBtnEl.disabled = false;
+        break;
+      case "processing":
+        this.statusDotEl.addClass("recap-status-processing");
+        this.statusLabelEl.setText("Processing\u2026");
+        this.actionBtnEl.setText("Start recording");
+        this.actionBtnEl.disabled = true;
+        break;
+      case "armed":
+        this.statusDotEl.addClass("recap-status-ok");
+        this.statusLabelEl.setText(org ? `Armed (${org})` : "Armed");
+        this.actionBtnEl.setText("Start recording");
+        this.actionBtnEl.disabled = false;
+        break;
+      case "detected":
+        this.statusDotEl.addClass("recap-status-ok");
+        this.statusLabelEl.setText("Meeting detected");
+        this.actionBtnEl.setText("Start recording");
+        this.actionBtnEl.disabled = false;
+        break;
+      default:
+        this.statusDotEl.addClass("recap-status-ok");
+        this.statusLabelEl.setText("Idle");
+        this.actionBtnEl.setText("Start recording");
+        this.actionBtnEl.disabled = false;
+    }
+  }
   async loadMeetings() {
     this.meetings = [];
     let subfolders = [];
-    const client = this.getClient();
+    const client = this.deps.getClient();
     if (client) {
       try {
         const cfg = await client.getConfig();
@@ -1421,7 +1529,11 @@ var RecapPlugin = class extends import_obsidian9.Plugin {
     await this.loadSettings();
     this.registerView(
       VIEW_MEETING_LIST,
-      (leaf) => new MeetingListView(leaf, () => this.client)
+      (leaf) => new MeetingListView(leaf, {
+        getClient: () => this.client,
+        onStartRecording: () => this.startRecordingInteractive(),
+        onStopRecording: () => this.stopRecordingInteractive()
+      })
     );
     this.registerView(
       VIEW_LIVE_TRANSCRIPT,
@@ -1467,46 +1579,12 @@ var RecapPlugin = class extends import_obsidian9.Plugin {
     this.addCommand({
       id: "start-recording",
       name: "Start recording",
-      callback: async () => {
-        if (!this.client) {
-          new import_obsidian9.Notice("Recap: Daemon not connected");
-          return;
-        }
-        let orgs = [];
-        try {
-          const resp = await this.client.get("/api/config/orgs");
-          orgs = resp.orgs;
-        } catch (e) {
-          const msg = e instanceof Error ? e.message : String(e);
-          new import_obsidian9.Notice(`Recap: org list fetch failed \u2014 using default. ${msg}`);
-          console.error("Recap:", e);
-          orgs = ["default"];
-        }
-        new OrgPickerModal(this.app, orgs, async (org) => {
-          try {
-            await this.client.startRecording(org);
-            new import_obsidian9.Notice(`Recording started (${org})`);
-          } catch (e) {
-            new import_obsidian9.Notice(`Failed to start recording: ${e}`);
-          }
-        }).open();
-      }
+      callback: () => this.startRecordingInteractive()
     });
     this.addCommand({
       id: "stop-recording",
       name: "Stop recording",
-      callback: async () => {
-        if (!this.client) {
-          new import_obsidian9.Notice("Recap: Daemon not connected");
-          return;
-        }
-        try {
-          await this.client.stopRecording();
-          new import_obsidian9.Notice("Recording stopped");
-        } catch (e) {
-          new import_obsidian9.Notice(`Failed to stop recording: ${e}`);
-        }
-      }
+      callback: () => this.stopRecordingInteractive()
     });
     this.addCommand({
       id: "open-dashboard",
@@ -1575,6 +1653,59 @@ var RecapPlugin = class extends import_obsidian9.Plugin {
   onunload() {
     this.notificationHistory.detach();
     this.client?.disconnectWebSocket();
+  }
+  /**
+   * Shared entry point for both the command palette "Recap: Start
+   * recording" command and the Meetings panel's Start button. Returns
+   * once the picker has been opened (the actual daemon call happens in
+   * the picker callback); the promise does NOT await the daemon.
+   */
+  async startRecordingInteractive() {
+    if (!this.client) {
+      new import_obsidian9.Notice("Recap: Daemon not connected");
+      return;
+    }
+    let orgs = [];
+    try {
+      const resp = await this.client.get("/api/config/orgs");
+      orgs = resp.orgs;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      new import_obsidian9.Notice(`Recap: org list fetch failed \u2014 using default. ${msg}`);
+      console.error("Recap:", e);
+      orgs = ["default"];
+    }
+    new OrgPickerModal(this.app, orgs, async (org) => {
+      try {
+        await this.client.startRecording(org);
+        new import_obsidian9.Notice(`Recording started (${org})`);
+      } catch (e) {
+        new import_obsidian9.Notice(`Failed to start recording: ${e}`);
+      }
+    }).open();
+  }
+  /** Shared stop path used by the command palette and the panel button. */
+  async stopRecordingInteractive() {
+    if (!this.client) {
+      new import_obsidian9.Notice("Recap: Daemon not connected");
+      return;
+    }
+    try {
+      await this.client.stopRecording();
+      new import_obsidian9.Notice("Recording stopped");
+    } catch (e) {
+      new import_obsidian9.Notice(`Failed to stop recording: ${e}`);
+    }
+  }
+  /** Push a daemon state update to every open Meetings panel. */
+  broadcastDaemonState(state, org) {
+    const leaves = this.app.workspace.getLeavesOfType(VIEW_MEETING_LIST);
+    for (const leaf of leaves) {
+      const view = leaf.view;
+      if (view instanceof MeetingListView) {
+        view.updateDaemonState(state, org);
+      }
+    }
   }
   async loadSettings() {
     this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
@@ -1649,15 +1780,19 @@ var RecapPlugin = class extends import_obsidian9.Plugin {
         const status = await this.client.getStatus();
         this.lastKnownState = status.state;
         this.statusBar?.updateState(status.state, status.recording?.org);
+        this.broadcastDaemonState(status.state, status.recording?.org);
       } catch {
         this.statusBar?.setOffline();
+        this.broadcastDaemonState(null);
         new import_obsidian9.Notice("Recap: Reconnected, but daemon status refresh failed");
       }
     });
     this.client.on("state_change", (event) => {
       const state = event.state;
+      const org = event.org;
       this.lastKnownState = state;
-      this.statusBar?.updateState(state, event.org);
+      this.statusBar?.updateState(state, org);
+      this.broadcastDaemonState(state, org);
       const leaves = this.app.workspace.getLeavesOfType(VIEW_LIVE_TRANSCRIPT);
       for (const leaf of leaves) {
         leaf.view.updateStatus(state);
@@ -1685,6 +1820,7 @@ var RecapPlugin = class extends import_obsidian9.Plugin {
     });
     this.client.connectWebSocket(() => {
       this.statusBar?.setOffline();
+      this.broadcastDaemonState(null);
     });
   }
   // Bug 5: Reconnect when daemon URL changes in settings

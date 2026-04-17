@@ -1,3 +1,59 @@
+/* Meetings-panel status row: coloured dot, state label, Start/Stop button. */
+.recap-status-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 0;
+    margin-bottom: 8px;
+}
+.recap-status-dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+.recap-status-ok {
+    background-color: var(--color-green);
+    box-shadow: 0 0 6px var(--color-green);
+}
+.recap-status-recording {
+    background-color: var(--color-red);
+    box-shadow: 0 0 6px var(--color-red);
+    animation: recap-pulse 1.4s ease-in-out infinite;
+}
+.recap-status-processing {
+    background-color: var(--color-yellow);
+}
+.recap-status-offline {
+    background-color: var(--text-faint);
+}
+.recap-status-label {
+    flex: 1;
+    color: var(--text-normal);
+    font-size: var(--font-ui-small);
+}
+.recap-action-btn {
+    padding: 4px 10px;
+    border-radius: 4px;
+    border: 1px solid var(--background-modifier-border);
+    background: var(--interactive-normal);
+    color: var(--text-normal);
+    font-size: var(--font-ui-small);
+    cursor: pointer;
+}
+.recap-action-btn:hover:not(:disabled) {
+    background: var(--interactive-hover);
+}
+.recap-action-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+@keyframes recap-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.35; }
+}
+
 /* Status bar */
 .recap-status-bar {
     cursor: default;
