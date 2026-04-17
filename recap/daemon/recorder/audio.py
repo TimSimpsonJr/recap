@@ -312,7 +312,6 @@ class AudioCapture:
         self._encoder = runtime_pyflac.StreamEncoder(
             write_callback=self._write_callback,
             sample_rate=self._sample_rate,
-            channels=self._channels,
         )
 
         self._pa = runtime_pyaudio.PyAudio()

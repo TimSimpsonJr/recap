@@ -123,6 +123,30 @@ def test_audio_capture_on_chunk_default_is_none(tmp_path):
     cap._test_feed_mock_frames(mic_frame=b"\x00" * 320, system_frame=b"\x01" * 320)
 
 
+def test_audio_capture_does_not_pass_channels_to_encoder(tmp_path, monkeypatch):
+    """AudioCapture.start() must not pass channels= to pyflac.StreamEncoder."""
+    from unittest.mock import MagicMock
+    from recap.daemon.recorder.audio import AudioCapture
+    import recap.daemon.recorder.audio as audio_mod
+
+    mock_encoder_cls = MagicMock()
+    mock_pyflac = MagicMock()
+    mock_pyflac.StreamEncoder = mock_encoder_cls
+
+    monkeypatch.setattr(audio_mod, "_require_pyflac", lambda: mock_pyflac)
+    monkeypatch.setattr(audio_mod, "_require_pyaudio", lambda: MagicMock())
+
+    capture = AudioCapture(output_path=tmp_path / "x.flac", sample_rate=16000, channels=2)
+    try:
+        capture.start()
+    except Exception:
+        pass
+
+    assert mock_encoder_cls.called
+    _, kwargs = mock_encoder_cls.call_args
+    assert "channels" not in kwargs, f"StreamEncoder called with channels: {kwargs}"
+
+
 def test_audio_capture_on_chunk_swallows_exceptions(tmp_path, caplog):
     """A failing on_chunk must not crash capture or poison subsequent invocations."""
     pytest.importorskip("numpy")
