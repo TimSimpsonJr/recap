@@ -222,10 +222,11 @@ class TestWindowMonitoring:
         detector._recording_hwnd = 12345
         detector._tracked_meetings[12345] = MeetingWindow(hwnd=12345, title="Sprint | Microsoft Teams", platform="teams")
 
-        # Next poll: window is gone
+        # Next poll: window is gone (hard Windows signal confirms it).
         with patch("recap.daemon.recorder.detector.detect_meeting_windows", return_value=[]):
-            with patch("recap.daemon.recorder.detector.enrich_meeting_metadata"):
-                await detector._poll_once()
+            with patch("recap.daemon.recorder.detector.is_window_alive", return_value=False):
+                with patch("recap.daemon.recorder.detector.enrich_meeting_metadata"):
+                    await detector._poll_once()
 
         mock_recorder.stop.assert_called_once()
         assert detector._recording_hwnd is None
@@ -242,8 +243,9 @@ class TestWindowMonitoring:
 
         # Next poll: window still there
         with patch("recap.daemon.recorder.detector.detect_meeting_windows", return_value=[meeting]):
-            with patch("recap.daemon.recorder.detector.enrich_meeting_metadata"):
-                await detector._poll_once()
+            with patch("recap.daemon.recorder.detector.is_window_alive", return_value=True):
+                with patch("recap.daemon.recorder.detector.enrich_meeting_metadata"):
+                    await detector._poll_once()
 
         mock_recorder.stop.assert_not_called()
 
@@ -447,6 +449,188 @@ class TestAwaitableSignalCallback:
             ):
                 with pytest.raises(TypeError):
                     await detector._poll_once()
+
+
+class TestStopPathUIAResilience:
+    """Stop-path must not be triggered by UIA-confirmation flaps.
+
+    After Task 11 gated ``detect_meeting_windows`` behind UIA
+    confirmation, Teams screen-sharing can transiently hide its Leave
+    button and drop the hwnd from the detected set for a poll or two.
+    The recording hwnd must survive that flap: only ``is_window_alive``
+    (hard Windows signal) should tear down an active recording.
+    """
+
+    @pytest.mark.asyncio
+    async def test_tracked_meeting_pruned_when_dropped_from_detected(self, mock_config):
+        mock_recorder = _make_recorder_mock()
+        detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
+
+        meeting = MeetingWindow(hwnd=1, title="Sprint | Microsoft Teams", platform="teams")
+        # First poll: meeting visible, should be tracked.
+        with patch(
+            "recap.daemon.recorder.detector.detect_meeting_windows",
+            return_value=[meeting],
+        ):
+            with patch(
+                "recap.daemon.recorder.detector.enrich_meeting_metadata",
+                return_value={"title": "Sprint", "participants": [], "platform": "teams"},
+            ):
+                await detector._poll_once()
+        assert 1 in detector._tracked_meetings
+
+        # Second poll: meeting no longer detected. Since the detector
+        # is NOT recording this hwnd, the prune branch removes it.
+        mock_recorder.is_recording = True  # unrelated recording
+        detector._recording_hwnd = 99  # different, not 1
+        with patch(
+            "recap.daemon.recorder.detector.detect_meeting_windows",
+            return_value=[],
+        ):
+            await detector._poll_once()
+        assert 1 not in detector._tracked_meetings
+
+    @pytest.mark.asyncio
+    async def test_stop_path_ignores_uia_false_negative(self, mock_config):
+        """UIA flap (empty detect) with live hwnd must NOT stop recording."""
+        mock_recorder = _make_recorder_mock()
+        mock_recorder.is_recording = True
+        detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
+
+        detector._recording_hwnd = 12345
+        detector._tracked_meetings[12345] = MeetingWindow(
+            hwnd=12345, title="Sprint | Microsoft Teams", platform="teams",
+        )
+
+        with patch(
+            "recap.daemon.recorder.detector.detect_meeting_windows",
+            return_value=[],  # UIA flap: nothing confirmed this tick
+        ):
+            with patch(
+                "recap.daemon.recorder.detector.is_window_alive",
+                return_value=True,  # but the hwnd is still alive
+            ):
+                with patch(
+                    "recap.daemon.recorder.detector.enrich_meeting_metadata",
+                ):
+                    await detector._poll_once()
+
+        mock_recorder.stop.assert_not_called()
+        assert detector._recording_hwnd == 12345
+
+    @pytest.mark.asyncio
+    async def test_recording_hwnd_survives_uia_flap_during_recording(self, mock_config):
+        """``_recording_hwnd`` must remain in ``_tracked_meetings`` across a flap."""
+        mock_recorder = _make_recorder_mock()
+        mock_recorder.is_recording = True
+        detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
+
+        detector._recording_hwnd = 12345
+        detector._tracked_meetings[12345] = MeetingWindow(
+            hwnd=12345, title="Sprint | Microsoft Teams", platform="teams",
+        )
+
+        with patch(
+            "recap.daemon.recorder.detector.detect_meeting_windows",
+            return_value=[],
+        ):
+            with patch(
+                "recap.daemon.recorder.detector.is_window_alive",
+                return_value=True,
+            ):
+                with patch(
+                    "recap.daemon.recorder.detector.enrich_meeting_metadata",
+                ):
+                    await detector._poll_once()
+
+        assert 12345 in detector._tracked_meetings
+
+    @pytest.mark.asyncio
+    async def test_no_retrigger_after_recording_stops_if_hwnd_still_tracked(self, mock_config):
+        """A tracked hwnd should not retrigger ``start`` after a stop.
+
+        Scenario: recording has been stopped (is_recording=False), but the
+        hwnd is still in ``_tracked_meetings`` and still appears in
+        ``detect_meeting_windows``. The "already tracking" guard must
+        prevent a concurrent retrigger.
+        """
+        mock_recorder = _make_recorder_mock()
+        mock_recorder.is_recording = False
+        detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
+
+        meeting = MeetingWindow(hwnd=1, title="Sprint | Microsoft Teams", platform="teams")
+        detector._tracked_meetings[1] = meeting
+
+        with patch(
+            "recap.daemon.recorder.detector.detect_meeting_windows",
+            return_value=[meeting],
+        ):
+            with patch(
+                "recap.daemon.recorder.detector.enrich_meeting_metadata",
+                return_value={"title": "Sprint", "participants": [], "platform": "teams"},
+            ):
+                await detector._poll_once()
+
+        mock_recorder.start.assert_not_called()
+
+
+class TestStopSealsPollTaskUnwind:
+    """``stop()`` must await the cancelled poll task so any late
+    ``create_task`` inside its finally/except block lands in the
+    ``_pending_signal_tasks`` set before we drain it.
+    """
+
+    @pytest.mark.asyncio
+    async def test_stop_waits_for_poll_task_unwind(self):
+        mock_recorder = _make_recorder_mock()
+        config = MagicMock()
+        config.detection.teams.enabled = False
+        config.detection.zoom.enabled = False
+        config.detection.signal.enabled = False
+        config.known_contacts = []
+
+        detector = MeetingDetector(config=config, recorder=mock_recorder)
+
+        started = asyncio.Event()
+        late_task_seen = asyncio.Event()
+
+        async def _late_awaitable():
+            try:
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                late_task_seen.set()
+                raise
+
+        async def _poll_body():
+            """Simulate a poll body: awaits forever, and on cancellation
+            schedules a late signal-callback task the same way
+            ``_poll_once`` would if it raced with stop().
+            """
+            started.set()
+            try:
+                await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                # Register a late task inside the cancellation handler.
+                task = asyncio.create_task(
+                    _late_awaitable(), name="signal-callback",
+                )
+                detector._pending_signal_tasks.add(task)
+                task.add_done_callback(detector._on_signal_task_done)
+                raise
+
+        loop = asyncio.get_event_loop()
+        detector._poll_task = loop.create_task(_poll_body())
+        await started.wait()
+
+        # The late task does not exist yet.
+        assert len(detector._pending_signal_tasks) == 0
+
+        await detector.stop()
+
+        # After stop: the unwind ran, registered the late task, stop
+        # then snapshotted it and cancelled it.
+        assert late_task_seen.is_set()
+        assert len(detector._pending_signal_tasks) == 0
 
 
 class TestOrgSubfolderResolution:

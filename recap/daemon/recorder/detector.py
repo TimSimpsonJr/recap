@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Awaitable, Callable
 
 from recap.artifacts import RecordingMetadata, to_vault_relative
-from recap.daemon.recorder.detection import MeetingWindow, detect_meeting_windows
+from recap.daemon.recorder.detection import MeetingWindow, detect_meeting_windows, is_window_alive
 from recap.daemon.recorder.enrichment import enrich_meeting_metadata
 from recap.models import Participant
 
@@ -257,19 +257,16 @@ class MeetingDetector:
 
     async def _poll_once(self) -> None:
         """Execute a single detection cycle."""
-        # --- Window monitoring: stop recording if window closed ---
+        # --- Stop-monitoring path: hard Windows signal only ---
+        # We only stop the active recording when the OS confirms the
+        # window is gone. Using ``detect_meeting_windows`` here would
+        # conflate UIA-confirmation flaps (e.g. Teams hiding its Leave
+        # button during screen share) with real window closure.
         if self._recorder.is_recording and self._recording_hwnd is not None:
-            current_windows = detect_meeting_windows(self.enabled_platforms)
-            current_hwnds = {m.hwnd for m in current_windows}
-            if self._recording_hwnd not in current_hwnds:
+            if not is_window_alive(self._recording_hwnd):
                 logger.info("Meeting window closed, stopping recording")
                 await self._recorder.stop()
                 self._recording_hwnd = None
-                # Update tracked meetings
-                closed = set(self._tracked_meetings) - current_hwnds
-                for hwnd in closed:
-                    del self._tracked_meetings[hwnd]
-                return
 
         # --- Arm timeout check ---
         if self._armed_event is not None:
@@ -278,6 +275,7 @@ class MeetingDetector:
                 logger.info("Arm timeout reached, disarming")
                 self.disarm()
 
+        # --- Detection path ---
         detected = detect_meeting_windows(self.enabled_platforms)
         detected_hwnds: set[int] = set()
 
@@ -286,6 +284,9 @@ class MeetingDetector:
 
             if meeting.hwnd in self._tracked_meetings:
                 continue  # already tracking this window
+
+            if self._recorder.is_recording:
+                continue  # don't start concurrent recordings
 
             # New meeting — enrich and act
             self._tracked_meetings[meeting.hwnd] = meeting
@@ -332,9 +333,17 @@ class MeetingDetector:
                 self._pending_signal_tasks.add(task)
                 task.add_done_callback(self._on_signal_task_done)
 
-        # Clean up meetings whose windows have closed.
-        closed = set(self._tracked_meetings) - detected_hwnds
-        for hwnd in closed:
+        # --- End-of-poll prune with active-recording protection ---
+        # A UIA flap can make ``detect_meeting_windows`` briefly omit the
+        # currently-recording window. Protect ``_recording_hwnd`` from
+        # being pruned so the stop path stays the only way recording
+        # ends via window loss. Only protect while actually recording;
+        # a stale ``_recording_hwnd`` left over from a previous session
+        # should not keep a closed window in the tracked set.
+        stale = set(self._tracked_meetings) - detected_hwnds
+        if self._recorder.is_recording and self._recording_hwnd is not None:
+            stale.discard(self._recording_hwnd)
+        for hwnd in stale:
             logger.debug("Meeting window closed: hwnd=%s", hwnd)
             del self._tracked_meetings[hwnd]
 
@@ -384,6 +393,14 @@ class MeetingDetector:
         """
         if self._poll_task is not None:
             self._poll_task.cancel()
+            # Await the cancellation so any ``finally`` / exception
+            # handler inside the poll body gets to run (and register
+            # late tasks in ``_pending_signal_tasks``) before we
+            # snapshot the pending set below.
+            try:
+                await self._poll_task
+            except asyncio.CancelledError:
+                pass
             self._poll_task = None
 
         # Cancel any in-flight signal callbacks and wait for them to
