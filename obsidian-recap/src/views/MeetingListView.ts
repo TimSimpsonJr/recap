@@ -1,7 +1,12 @@
-import { ItemView, Notice, WorkspaceLeaf, TFile } from "obsidian";
+import { ItemView, Notice, WorkspaceLeaf, TAbstractFile, TFile } from "obsidian";
 import type { DaemonClient } from "../api";
 import { FilterBar, FilterState } from "../components/FilterBar";
 import { MeetingData, renderMeetingRow } from "../components/MeetingRow";
+
+/** Debounce window (ms) for coalescing bursts of vault events during a
+ * pipeline write -- transcript.json, meeting note, stub profiles, and
+ * recording metadata can all land within the same tick. */
+const RELOAD_DEBOUNCE_MS = 300;
 
 export const VIEW_MEETING_LIST = "recap-meeting-list";
 
@@ -23,6 +28,16 @@ export class MeetingListView extends ItemView {
     private actionBtnEl: HTMLButtonElement | null = null;
     private currentState: string | null = null;
     private currentOrg: string | undefined = undefined;
+
+    // Track current filter so reloads after vault events preserve what the
+    // user has selected (org dropdown, status dropdown, search box).
+    private filterState: FilterState | null = null;
+    // Pending reload timer for debouncing bursts of vault create/modify events.
+    private reloadTimer: number | null = null;
+    // Meeting-scope prefixes configured by the daemon (org subfolders).
+    // Cached from loadMeetings() so vault event handlers can cheaply decide
+    // whether a changed file is within the scope we care about.
+    private meetingPathPrefixes: string[] = [];
 
     constructor(leaf: WorkspaceLeaf, deps: MeetingListViewDeps) {
         super(leaf);
@@ -59,6 +74,63 @@ export class MeetingListView extends ItemView {
         // Meeting list
         this.listContainer = container.createDiv({ cls: "recap-meeting-list" });
         this.renderMeetings();
+
+        // Vault is the source of truth for the meeting list. Subscribe here
+        // rather than only reacting to daemon state_change: notes can arrive
+        // from pipeline writes, rename-queue processing in the plugin, and
+        // manual user edits -- all of which the daemon doesn't broadcast.
+        // ``registerEvent`` auto-unregisters on view close.
+        this.registerEvent(
+            this.app.vault.on("create", (f) => this.maybeScheduleReload(f.path)),
+        );
+        this.registerEvent(
+            this.app.vault.on("delete", (f) => this.maybeScheduleReload(f.path)),
+        );
+        this.registerEvent(
+            this.app.vault.on("rename", (f: TAbstractFile, oldPath: string) => {
+                this.maybeScheduleReload(f.path);
+                this.maybeScheduleReload(oldPath);
+            }),
+        );
+        // Frontmatter changes (e.g. pipeline-status: pending -> complete)
+        // flip how rows render without changing the file list.
+        this.registerEvent(
+            this.app.metadataCache.on("changed", (f) =>
+                this.maybeScheduleReload(f.path),
+            ),
+        );
+    }
+
+    private maybeScheduleReload(path: string): void {
+        if (!path.endsWith(".md") || !path.includes("/Meetings/")) return;
+        // Only reload if the changed file is inside a configured meeting
+        // subfolder. Without org config we trust the /Meetings/ path match
+        // alone (scope was already whole-vault).
+        if (this.meetingPathPrefixes.length > 0) {
+            const inScope = this.meetingPathPrefixes.some(
+                (sub) => path.startsWith(sub + "/") || path === sub,
+            );
+            if (!inScope) return;
+        }
+        this.scheduleReload();
+    }
+
+    private scheduleReload(): void {
+        if (this.reloadTimer !== null) window.clearTimeout(this.reloadTimer);
+        this.reloadTimer = window.setTimeout(() => {
+            this.reloadTimer = null;
+            void this.reloadMeetings();
+        }, RELOAD_DEBOUNCE_MS);
+    }
+
+    /** Reload the meeting list from the vault, preserving the active filter. */
+    private async reloadMeetings(): Promise<void> {
+        await this.loadMeetings();
+        if (this.filterState !== null) {
+            this.applyFilters(this.filterState);
+        } else {
+            this.renderMeetings();
+        }
     }
 
     /**
@@ -118,8 +190,18 @@ export class MeetingListView extends ItemView {
      * Passing ``null`` renders the offline look.
      */
     updateDaemonState(state: string | null, org?: string): void {
+        const wasProcessing = this.currentState === "processing";
+        const stillProcessing = state === "processing";
         this.currentState = state;
         this.currentOrg = org;
+
+        // Nudge a reload when the pipeline just finished: vault events
+        // usually catch the new meeting note, but Obsidian's filesystem
+        // watcher can lag on Windows. Belt-and-suspenders -- debounce
+        // coalesces this with the vault create event if both fire.
+        if (wasProcessing && !stillProcessing) {
+            this.scheduleReload();
+        }
 
         if (!this.statusDotEl || !this.statusLabelEl || !this.actionBtnEl) return;
 
@@ -195,6 +277,10 @@ export class MeetingListView extends ItemView {
             }
         }
 
+        // Cache the resolved prefixes so vault event handlers can cheaply
+        // filter out changes outside the meeting scope.
+        this.meetingPathPrefixes = subfolders;
+
         const allFiles = this.app.vault.getMarkdownFiles();
         const scopedFiles = subfolders.length === 0
             ? allFiles
@@ -242,6 +328,7 @@ export class MeetingListView extends ItemView {
     }
 
     private applyFilters(state: FilterState): void {
+        this.filterState = state;
         this.filteredMeetings = this.meetings.filter(m => {
             if (state.org !== "all" && m.org !== state.org) return false;
             if (state.status !== "all") {

@@ -863,6 +863,7 @@ function renderMeetingRow(container, meeting, onClick) {
 }
 
 // src/views/MeetingListView.ts
+var RELOAD_DEBOUNCE_MS = 300;
 var VIEW_MEETING_LIST = "recap-meeting-list";
 var MeetingListView = class extends import_obsidian4.ItemView {
   meetings = [];
@@ -875,6 +876,15 @@ var MeetingListView = class extends import_obsidian4.ItemView {
   actionBtnEl = null;
   currentState = null;
   currentOrg = void 0;
+  // Track current filter so reloads after vault events preserve what the
+  // user has selected (org dropdown, status dropdown, search box).
+  filterState = null;
+  // Pending reload timer for debouncing bursts of vault create/modify events.
+  reloadTimer = null;
+  // Meeting-scope prefixes configured by the daemon (org subfolders).
+  // Cached from loadMeetings() so vault event handlers can cheaply decide
+  // whether a changed file is within the scope we care about.
+  meetingPathPrefixes = [];
   constructor(leaf, deps) {
     super(leaf);
     this.deps = deps;
@@ -902,6 +912,53 @@ var MeetingListView = class extends import_obsidian4.ItemView {
     });
     this.listContainer = container.createDiv({ cls: "recap-meeting-list" });
     this.renderMeetings();
+    this.registerEvent(
+      this.app.vault.on("create", (f) => this.maybeScheduleReload(f.path))
+    );
+    this.registerEvent(
+      this.app.vault.on("delete", (f) => this.maybeScheduleReload(f.path))
+    );
+    this.registerEvent(
+      this.app.vault.on("rename", (f, oldPath) => {
+        this.maybeScheduleReload(f.path);
+        this.maybeScheduleReload(oldPath);
+      })
+    );
+    this.registerEvent(
+      this.app.metadataCache.on(
+        "changed",
+        (f) => this.maybeScheduleReload(f.path)
+      )
+    );
+  }
+  maybeScheduleReload(path) {
+    if (!path.endsWith(".md") || !path.includes("/Meetings/"))
+      return;
+    if (this.meetingPathPrefixes.length > 0) {
+      const inScope = this.meetingPathPrefixes.some(
+        (sub) => path.startsWith(sub + "/") || path === sub
+      );
+      if (!inScope)
+        return;
+    }
+    this.scheduleReload();
+  }
+  scheduleReload() {
+    if (this.reloadTimer !== null)
+      window.clearTimeout(this.reloadTimer);
+    this.reloadTimer = window.setTimeout(() => {
+      this.reloadTimer = null;
+      void this.reloadMeetings();
+    }, RELOAD_DEBOUNCE_MS);
+  }
+  /** Reload the meeting list from the vault, preserving the active filter. */
+  async reloadMeetings() {
+    await this.loadMeetings();
+    if (this.filterState !== null) {
+      this.applyFilters(this.filterState);
+    } else {
+      this.renderMeetings();
+    }
   }
   /**
    * Render the status row at the top of the panel. Mirrors the pattern
@@ -954,8 +1011,13 @@ var MeetingListView = class extends import_obsidian4.ItemView {
    * Passing ``null`` renders the offline look.
    */
   updateDaemonState(state, org) {
+    const wasProcessing = this.currentState === "processing";
+    const stillProcessing = state === "processing";
     this.currentState = state;
     this.currentOrg = org;
+    if (wasProcessing && !stillProcessing) {
+      this.scheduleReload();
+    }
     if (!this.statusDotEl || !this.statusLabelEl || !this.actionBtnEl)
       return;
     this.statusDotEl.removeClass(
@@ -1019,6 +1081,7 @@ var MeetingListView = class extends import_obsidian4.ItemView {
         console.error("Recap:", e);
       }
     }
+    this.meetingPathPrefixes = subfolders;
     const allFiles = this.app.vault.getMarkdownFiles();
     const scopedFiles = subfolders.length === 0 ? allFiles : allFiles.filter(
       (f) => subfolders.some(
@@ -1061,6 +1124,7 @@ var MeetingListView = class extends import_obsidian4.ItemView {
     return raw.map((p) => p.replace(/\[\[|\]\]/g, ""));
   }
   applyFilters(state) {
+    this.filterState = state;
     this.filteredMeetings = this.meetings.filter((m) => {
       if (state.org !== "all" && m.org !== state.org)
         return false;
