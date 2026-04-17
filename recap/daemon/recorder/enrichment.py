@@ -9,6 +9,13 @@ import logging
 import re
 
 from recap.daemon.config import KnownContact
+from recap.daemon.recorder.call_state import extract_teams_participants
+
+__all__ = [
+    "match_known_contacts",
+    "extract_teams_participants",
+    "enrich_meeting_metadata",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -46,80 +53,6 @@ def _parse_title(title: str, platform: str) -> str:
     for pattern in _TITLE_SUFFIXES:
         title = pattern.sub("", title)
     return title.strip()
-
-
-# ---------------------------------------------------------------------------
-# UIA extraction (best-effort, Teams-only)
-# ---------------------------------------------------------------------------
-
-
-def extract_teams_participants(hwnd: int) -> list[str] | None:
-    """Extract participant names from a Teams window via UI Automation.
-
-    Returns a list of display names, or None if extraction fails.
-    This function is intentionally defensive — it must never crash.
-    """
-    try:
-        # uiautomation is a Windows-only untyped library; imported lazily so tests
-        # without the package can still import this module.
-        import uiautomation as auto  # type: ignore[import-untyped]
-
-        control = auto.ControlFromHandle(hwnd)
-        if not control:
-            logger.debug("UIA: no control for hwnd %s", hwnd)
-            return None
-
-        names: list[str] = []
-        # Teams renders participants in list items within the roster pane.
-        # Walk the tree looking for ListItem controls with a Name property.
-        for attempt in range(2):  # retry once for WebView2 inconsistency
-            list_items = control.GetChildren()
-            _walk_for_participants(control, names)
-            if names:
-                break
-            if attempt == 0:
-                logger.debug("UIA: no participants on first pass, retrying")
-
-        if not names:
-            logger.debug("UIA: no participant names found for hwnd %s", hwnd)
-            return None
-
-        return names
-
-    except Exception:
-        logger.debug("UIA extraction failed for hwnd %s", hwnd, exc_info=True)
-        return None
-
-
-def _walk_for_participants(
-    control: object,
-    names: list[str],
-    depth: int = 0,
-    max_depth: int = 15,
-) -> None:
-    """Recursively walk the UIA tree looking for participant list items."""
-    if depth > max_depth:
-        return
-
-    try:
-        # uiautomation is Windows-only and untyped; lazy import keeps this module
-        # importable on platforms without the package.
-        import uiautomation as auto  # type: ignore[import-untyped]
-
-        # Look for ListItem controls — Teams roster uses these for participants
-        if getattr(control, "ControlTypeName", None) == "ListItemControl":
-            name = getattr(control, "Name", "")
-            if name and name.strip():
-                names.append(name.strip())
-                return  # don't recurse into the list item
-
-        # control is typed as `object` at the function boundary; uiautomation
-        # controls expose GetChildren() at runtime. Trust the runtime here.
-        for child in control.GetChildren():  # type: ignore[union-attr]
-            _walk_for_participants(child, names, depth + 1, max_depth)
-
-    except Exception:
-        logger.debug("UIA walk error at depth %d", depth, exc_info=True)
 
 
 # ---------------------------------------------------------------------------
