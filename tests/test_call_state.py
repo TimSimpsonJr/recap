@@ -126,3 +126,18 @@ def test_is_call_active_returns_true_on_uia_exception(monkeypatch):
     def raise_it(_): raise RuntimeError("uia broken")
     monkeypatch.setattr(uiautomation, "ControlFromHandle", raise_it)
     assert is_call_active(hwnd=1, platform="teams") is True
+
+
+def test_is_call_active_returns_false_when_control_is_none(monkeypatch):
+    """If UIA returns None for the hwnd, is_call_active must NOT pretend
+    the regex match is a confirmed call. Returning True here would reopen
+    the false-positive class Phase 7's UIA gate was introduced to close.
+
+    Distinct from test_is_call_active_returns_true_on_uia_exception, which
+    covers transient UIA runtime errors.
+    """
+    import uiautomation
+    from recap.daemon.recorder.call_state import is_call_active
+
+    monkeypatch.setattr(uiautomation, "ControlFromHandle", lambda hwnd: None)
+    assert is_call_active(hwnd=1, platform="teams") is False

@@ -162,7 +162,12 @@ def is_call_active(hwnd: int, platform: str) -> bool:
 
         control = auto.ControlFromHandle(hwnd)
         if control is None:
-            return True
+            # UIA could not resolve a control tree for this hwnd. Treat as
+            # unconfirmed — returning True here would re-open the regex-only
+            # false-positive class Phase 7 eliminated. The broader Exception
+            # path below remains a best-effort fallback for transient UIA
+            # runtime errors.
+            return False
         return checker(control)
     except Exception:
         logger.debug(
