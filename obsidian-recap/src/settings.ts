@@ -34,9 +34,9 @@ export class RecapSettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName("Daemon URL")
-            .setDesc("The URL of the Recap daemon (default: http://localhost:9847)")
+            .setDesc("The URL of the Recap daemon (default: http://127.0.0.1:9847)")
             .addText(text => text
-                .setPlaceholder("http://localhost:9847")
+                .setPlaceholder("http://127.0.0.1:9847")
                 .setValue(this.plugin.settings.daemonUrl)
                 .onChange(async (value) => {
                     this.plugin.settings.daemonUrl = value;

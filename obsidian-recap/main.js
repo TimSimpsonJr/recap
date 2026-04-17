@@ -326,8 +326,8 @@ var RecapSettingTab = class extends import_obsidian3.PluginSettingTab {
     containerEl.empty();
     containerEl.createEl("h2", { text: "Recap Settings" });
     containerEl.createEl("h3", { text: "Daemon Connection" });
-    new import_obsidian3.Setting(containerEl).setName("Daemon URL").setDesc("The URL of the Recap daemon (default: http://localhost:9847)").addText(
-      (text) => text.setPlaceholder("http://localhost:9847").setValue(this.plugin.settings.daemonUrl).onChange(async (value) => {
+    new import_obsidian3.Setting(containerEl).setName("Daemon URL").setDesc("The URL of the Recap daemon (default: http://127.0.0.1:9847)").addText(
+      (text) => text.setPlaceholder("http://127.0.0.1:9847").setValue(this.plugin.settings.daemonUrl).onChange(async (value) => {
         this.plugin.settings.daemonUrl = value;
         await this.plugin.saveSettings();
         await this.plugin.reconnect();
@@ -1399,7 +1399,7 @@ var NotificationHistoryModal = class extends import_obsidian8.Modal {
 
 // src/main.ts
 var DEFAULT_SETTINGS = {
-  daemonUrl: "http://localhost:9847"
+  daemonUrl: "http://127.0.0.1:9847"
 };
 var RecapPlugin = class extends import_obsidian9.Plugin {
   settings = DEFAULT_SETTINGS;

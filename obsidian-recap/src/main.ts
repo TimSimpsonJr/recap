@@ -14,7 +14,7 @@ interface RecapSettings {
 }
 
 const DEFAULT_SETTINGS: RecapSettings = {
-    daemonUrl: "http://localhost:9847",
+    daemonUrl: "http://127.0.0.1:9847",
 };
 
 export default class RecapPlugin extends Plugin {
