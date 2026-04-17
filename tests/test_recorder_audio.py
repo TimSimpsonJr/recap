@@ -413,3 +413,86 @@ class TestSourceStreamSkeleton:
         info_other["name"] = "Microphone (USB)"
         ident_c = _SourceStream._compute_identity(info_other)
         assert ident_c != ident_a
+
+
+class TestSourceStreamStart:
+    """_SourceStream.start() opens a WASAPI stream, builds a resampler
+    for the device's native rate, and transitions to HEALTHY."""
+
+    def _mock_pyaudio(self, *, native_rate: float, is_loopback: bool):
+        """Build a MagicMock pyaudio module that yields a stream whose
+        callback can be driven manually."""
+        from unittest.mock import MagicMock
+        pa_instance = MagicMock()
+        device_info = {
+            "name": "MockDevice-loopback" if is_loopback else "MockDevice-mic",
+            "index": 1,
+            "hostApi": 0,
+            "maxInputChannels": 2 if is_loopback else 1,
+            "defaultSampleRate": native_rate,
+        }
+        if is_loopback:
+            pa_instance.get_default_wasapi_loopback.return_value = device_info
+        else:
+            pa_instance.get_default_wasapi_device.return_value = device_info
+        pa_instance.open.return_value = MagicMock()
+        pa_module = MagicMock()
+        pa_module.PyAudio.return_value = pa_instance
+        pa_module.paInt16 = 8
+        pa_module.paContinue = 0
+        return pa_module, pa_instance
+
+    def test_start_opens_stream_at_device_native_rate(self, monkeypatch):
+        import recap.daemon.recorder.audio as audio_mod
+        from recap.daemon.recorder.audio import _SourceStream, _SourceHealth
+
+        pa_module, pa_instance = self._mock_pyaudio(native_rate=48000.0, is_loopback=False)
+        monkeypatch.setattr(audio_mod, "_require_pyaudio", lambda: pa_module)
+
+        src = _SourceStream(kind="mic", output_rate=48000)
+        src.start()
+
+        assert src.state == _SourceHealth.HEALTHY
+        open_call = pa_instance.open.call_args
+        assert open_call.kwargs["rate"] == 48000
+        assert open_call.kwargs["input"] is True
+
+    def test_start_builds_resampler_when_rates_match(self, monkeypatch):
+        import recap.daemon.recorder.audio as audio_mod
+        from recap.daemon.recorder.audio import _SourceStream
+
+        pa_module, _ = self._mock_pyaudio(native_rate=48000.0, is_loopback=False)
+        monkeypatch.setattr(audio_mod, "_require_pyaudio", lambda: pa_module)
+
+        src = _SourceStream(kind="mic", output_rate=48000)
+        src.start()
+
+        assert src._resampler is not None
+        assert src._resampler.input_rate == 48000
+        assert src._resampler.output_rate == 48000
+
+    def test_start_builds_resampler_for_mismatched_native_rate(self, monkeypatch):
+        import recap.daemon.recorder.audio as audio_mod
+        from recap.daemon.recorder.audio import _SourceStream
+
+        pa_module, _ = self._mock_pyaudio(native_rate=44100.0, is_loopback=True)
+        monkeypatch.setattr(audio_mod, "_require_pyaudio", lambda: pa_module)
+
+        src = _SourceStream(kind="loopback", output_rate=48000)
+        src.start()
+
+        assert src._resampler.input_rate == 44100
+        assert src._resampler.output_rate == 48000
+
+    def test_start_records_bound_identity(self, monkeypatch):
+        import recap.daemon.recorder.audio as audio_mod
+        from recap.daemon.recorder.audio import _SourceStream
+
+        pa_module, _ = self._mock_pyaudio(native_rate=48000.0, is_loopback=False)
+        monkeypatch.setattr(audio_mod, "_require_pyaudio", lambda: pa_module)
+
+        src = _SourceStream(kind="mic", output_rate=48000)
+        src.start()
+
+        assert src._bound_identity is not None
+        assert src._bound_identity[0] in ("endpoint", "composite")

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from pathlib import Path
 from typing import Any, Callable
 
@@ -142,6 +143,7 @@ class _SourceStream:
         self._lock = _threading.Lock()
 
         self._stream: Any = None
+        self._pa: Any = None
         self._resampler: _SoxrResamplerWrapper | None = None
         self._bound_identity: tuple | None = None
         self._latest_default_identity: tuple | None = None
@@ -196,15 +198,95 @@ class _SourceStream:
             self._resampled_buffer = b""
             return have + b"\x00" * (byte_count - len(have))
 
+    def start(self) -> None:
+        """Open the underlying PyAudio stream and build the resampler.
+
+        Transitions STOPPED -> HEALTHY on success. Raises on hard
+        failure (no device available at all); transient failures that
+        happen post-start are handled by attempt_reopen_if_due.
+        """
+        runtime_pyaudio = _require_pyaudio()
+        pa = runtime_pyaudio.PyAudio()
+
+        if self._kind == "loopback":
+            info = pa.get_default_wasapi_loopback()
+        else:
+            info = pa.get_default_wasapi_device(d_in=True)
+
+        native_rate = int(info["defaultSampleRate"])
+        self._bound_identity = self._compute_identity(info)
+        self._latest_default_identity = self._bound_identity
+
+        self._resampler = _SoxrResamplerWrapper(
+            input_rate=native_rate,
+            output_rate=self._output_rate,
+        )
+
+        chunk_size = 1024
+        self._stream = pa.open(
+            format=runtime_pyaudio.paInt16,
+            channels=1,
+            rate=native_rate,
+            input=True,
+            input_device_index=info["index"],
+            frames_per_buffer=chunk_size,
+            stream_callback=self._on_audio_callback,
+        )
+        self._pa = pa
+        with self._lock:
+            self._state = _SourceHealth.HEALTHY
+
+    def _on_audio_callback(
+        self,
+        in_data: bytes,
+        frame_count: int,
+        time_info: dict,
+        status: int,
+    ) -> tuple[None, int]:
+        """PyAudio callback. Minimal work: append raw bytes under the
+        source's lock. Resampling happens on the drain thread, not
+        here, to keep the callback thread fast (design §2 guardrail:
+        no device enumeration, no reopen, no logging from the callback
+        thread)."""
+        runtime_pyaudio = _require_pyaudio()
+        with self._lock:
+            self._raw_buffer += in_data
+            if status == 0:
+                self._last_status_ok_ts = time.monotonic()
+            else:
+                self._mark_unhealthy_locked()
+        return (None, runtime_pyaudio.paContinue)
+
+    def _mark_unhealthy_locked(self) -> None:
+        """Callback-thread entry point. Caller must hold self._lock."""
+        if self._state == _SourceHealth.HEALTHY:
+            self._state = _SourceHealth.RECONNECTING
+
     def stop(self) -> None:
         """Transition to STOPPED before tearing down internals so a
-        racing watchdog tick doesn't try to reopen a shutting-down source."""
+        racing watchdog tick doesn't try to reopen a shutting-down
+        source. PyAudio handles are released OUTSIDE the source lock
+        so a callback waiting on the same lock can't deadlock teardown."""
         with self._lock:
             self._state = _SourceHealth.STOPPED
+            stream = self._stream
+            pa = self._pa
             self._stream = None
+            self._pa = None
             self._resampler = None
             self._raw_buffer = b""
             self._resampled_buffer = b""
+        if stream is not None:
+            try:
+                stream.stop_stream()
+                stream.close()
+            except Exception:
+                logger.exception("Error closing %s stream", self._kind)
+        if pa is not None:
+            try:
+                pa.terminate()
+            except Exception:
+                logger.exception("Error terminating %s PyAudio", self._kind)
 
 
 class AudioDeviceError(Exception):
