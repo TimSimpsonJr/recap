@@ -100,6 +100,113 @@ class _SoxrResamplerWrapper:
         self._stream = self._build_stream(input_rate)
 
 
+import enum as _enum
+import threading as _threading
+
+
+class _SourceHealth(_enum.Enum):
+    """Health states of a capture source.
+
+    STOPPED: start() not yet called, or stop() has been called.
+    HEALTHY: stream open, delivering frames normally.
+    RECONNECTING: transient failure detected; reopen in progress or
+        awaiting backoff. Still silent-pads read_frames output.
+    DEGRADED: reopen window (~5s) elapsed without success. Non-terminal
+        -- subsequent attempt_reopen_if_due() calls can restore HEALTHY.
+        Emits a one-shot journal warning on entry; silent afterwards
+        until recovery or stop.
+    """
+
+    STOPPED = "stopped"
+    HEALTHY = "healthy"
+    RECONNECTING = "reconnecting"
+    DEGRADED = "degraded"
+
+
+class _SourceStream:
+    """One capture source: either the mic or the WASAPI loopback.
+
+    Owns a PyAudio stream, a stateful soxr resampler, a raw inbound
+    buffer, a resampled 48 kHz buffer, a stable device identity, and
+    health/reconnect state. See
+    ``docs/plans/2026-04-17-audio-hotswap-resampling-design.md`` §2
+    for the full contract.
+
+    Private to this module -- nothing imports it from elsewhere.
+    """
+
+    def __init__(self, *, kind: str, output_rate: int) -> None:
+        self._kind = kind
+        self._output_rate = output_rate
+        self._state = _SourceHealth.STOPPED
+        self._lock = _threading.Lock()
+
+        self._stream: Any = None
+        self._resampler: _SoxrResamplerWrapper | None = None
+        self._bound_identity: tuple | None = None
+        self._latest_default_identity: tuple | None = None
+
+        self._raw_buffer = b""
+        self._resampled_buffer = b""
+
+        self._last_status_ok_ts: float | None = None
+        self._reconnect_attempts = 0
+        self._next_reopen_at: float = 0.0
+
+    @property
+    def state(self) -> _SourceHealth:
+        with self._lock:
+            return self._state
+
+    @property
+    def kind(self) -> str:
+        return self._kind
+
+    def is_degraded(self) -> bool:
+        return self.state == _SourceHealth.DEGRADED
+
+    @staticmethod
+    def _compute_identity(info: dict) -> tuple:
+        """Stable device identity that survives hot-plug index reshuffles.
+        Prefer a native endpoint ID if the info dict has one; otherwise
+        fall back to (name, hostApi, maxInputChannels)."""
+        endpoint_id = info.get("endpointId") or info.get("guid")
+        if endpoint_id:
+            return ("endpoint", endpoint_id)
+        return (
+            "composite",
+            info.get("name", ""),
+            info.get("hostApi", -1),
+            info.get("maxInputChannels", 0),
+        )
+
+    def read_frames(self, target_frames: int) -> bytes:
+        """Return target_frames worth of mono int16 bytes at output_rate.
+        Silence-pads on underflow or when the source isn't HEALTHY.
+        Never blocks."""
+        byte_count = target_frames * 2
+        with self._lock:
+            if self._state != _SourceHealth.HEALTHY:
+                return b"\x00" * byte_count
+            if len(self._resampled_buffer) >= byte_count:
+                out = self._resampled_buffer[:byte_count]
+                self._resampled_buffer = self._resampled_buffer[byte_count:]
+                return out
+            have = self._resampled_buffer
+            self._resampled_buffer = b""
+            return have + b"\x00" * (byte_count - len(have))
+
+    def stop(self) -> None:
+        """Transition to STOPPED before tearing down internals so a
+        racing watchdog tick doesn't try to reopen a shutting-down source."""
+        with self._lock:
+            self._state = _SourceHealth.STOPPED
+            self._stream = None
+            self._resampler = None
+            self._raw_buffer = b""
+            self._resampled_buffer = b""
+
+
 class AudioDeviceError(Exception):
     """Raised when no suitable audio device is found."""
 

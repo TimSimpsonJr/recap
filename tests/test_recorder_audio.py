@@ -353,3 +353,63 @@ class TestSoxrResamplerWrapper:
         assert abs(peak_freq - 440) < 5, (
             f"dominant output frequency {peak_freq:.1f} Hz; expected ~440 Hz"
         )
+
+
+class TestSourceStreamSkeleton:
+    """_SourceStream's state machine, identity tracking, and read_frames
+    silence-padding contract -- verified without opening real PyAudio
+    streams. PyAudio integration lands in a later task."""
+
+    def test_initial_state_is_stopped(self):
+        from recap.daemon.recorder.audio import _SourceStream, _SourceHealth
+
+        src = _SourceStream(kind="mic", output_rate=48000)
+        assert src.state == _SourceHealth.STOPPED
+        assert src.is_degraded() is False
+
+    def test_read_frames_returns_silence_of_correct_length_when_stopped(self):
+        from recap.daemon.recorder.audio import _SourceStream
+
+        src = _SourceStream(kind="mic", output_rate=48000)
+        out = src.read_frames(1024)
+        assert out == b"\x00" * 2048
+
+    def test_read_frames_returns_silence_when_degraded(self):
+        from recap.daemon.recorder.audio import _SourceStream, _SourceHealth
+
+        src = _SourceStream(kind="mic", output_rate=48000)
+        src._state = _SourceHealth.DEGRADED
+        out = src.read_frames(512)
+        assert out == b"\x00" * 1024
+
+    def test_stop_transitions_to_stopped(self):
+        # Name-only test -- proves the final state is STOPPED, not the
+        # ordering of state change vs teardown. A real ordering test
+        # lands in Task 5 (start + reopen) where teardown has
+        # observable side effects to hook into.
+        from recap.daemon.recorder.audio import _SourceStream, _SourceHealth
+
+        src = _SourceStream(kind="mic", output_rate=48000)
+        src._state = _SourceHealth.HEALTHY
+        src.stop()
+        assert src.state == _SourceHealth.STOPPED
+
+    def test_device_identity_is_composite_not_bare_index(self):
+        from recap.daemon.recorder.audio import _SourceStream
+
+        info = {
+            "name": "Microphone (Realtek)",
+            "index": 5,
+            "hostApi": 3,
+            "maxInputChannels": 1,
+            "defaultSampleRate": 48000.0,
+        }
+        ident_a = _SourceStream._compute_identity(info)
+        info_after_hotplug = dict(info)
+        info_after_hotplug["index"] = 9
+        ident_b = _SourceStream._compute_identity(info_after_hotplug)
+        assert ident_a == ident_b
+        info_other = dict(info)
+        info_other["name"] = "Microphone (USB)"
+        ident_c = _SourceStream._compute_identity(info_other)
+        assert ident_c != ident_a
