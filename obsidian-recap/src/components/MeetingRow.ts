@@ -16,20 +16,26 @@ export function renderMeetingRow(container: HTMLElement, meeting: MeetingData, o
     const row = container.createDiv({ cls: "recap-meeting-row" });
     row.addEventListener("click", () => onClick(meeting.path));
 
-    // Left: pipeline status dot + date + title
-    const left = row.createDiv({ cls: "recap-meeting-left" });
-    renderPipelineStatus(left, meeting.pipelineStatus);
-    left.createSpan({ text: formatDate(meeting.date), cls: "recap-meeting-date" });
-    left.createSpan({ text: meeting.title, cls: "recap-meeting-title" });
+    // The Meetings panel lives in Obsidian's right sidebar, which is
+    // typically 250-350 px wide. A single-line row crushes the title to a
+    // one-letter ellipsis next to the org badge + duration. Stack instead:
+    // title gets its own full-width row, metadata sits below in a small
+    // dim row so the scan pattern is "title first, details if needed".
+    const titleRow = row.createDiv({ cls: "recap-meeting-title-row" });
+    titleRow.createSpan({ text: meeting.title, cls: "recap-meeting-title" });
 
-    // Right: org badge + duration + participant count
-    const right = row.createDiv({ cls: "recap-meeting-right" });
-    right.createSpan({ text: meeting.org, cls: "recap-org-badge" });
+    const metaRow = row.createDiv({ cls: "recap-meeting-meta-row" });
+    renderPipelineStatus(metaRow, meeting.pipelineStatus);
+    metaRow.createSpan({ text: formatDate(meeting.date), cls: "recap-meeting-date" });
+    metaRow.createSpan({ text: meeting.org, cls: "recap-org-badge" });
     if (meeting.duration) {
-        right.createSpan({ text: meeting.duration, cls: "recap-meeting-duration" });
+        metaRow.createSpan({ text: meeting.duration, cls: "recap-meeting-duration" });
     }
     if (meeting.participants.length > 0) {
-        right.createSpan({ text: `${meeting.participants.length} people`, cls: "recap-meeting-participants" });
+        metaRow.createSpan({
+            text: `${meeting.participants.length} people`,
+            cls: "recap-meeting-participants",
+        });
     }
 
     return row;

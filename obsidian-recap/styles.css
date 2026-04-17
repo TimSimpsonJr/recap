@@ -128,47 +128,50 @@
 }
 .recap-meeting-row {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
+    flex-direction: column;
+    gap: 2px;
     padding: 8px 12px;
     border-radius: 4px;
     cursor: pointer;
     transition: background-color 0.1s;
+    min-width: 0;
 }
 .recap-meeting-row:hover {
     background-color: var(--background-modifier-hover);
 }
-.recap-meeting-left {
+.recap-meeting-title-row {
     display: flex;
-    align-items: center;
-    gap: 8px;
-    flex: 1;
     min-width: 0;
-}
-.recap-meeting-right {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    flex-shrink: 0;
-}
-.recap-meeting-date {
-    color: var(--text-faint);
-    font-size: var(--font-ui-small);
-    white-space: nowrap;
 }
 .recap-meeting-title {
     font-weight: 500;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+    flex: 1;
+    min-width: 0;
+}
+.recap-meeting-meta-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    min-width: 0;
+}
+.recap-meeting-date {
+    color: var(--text-faint);
+    font-size: var(--font-ui-small);
+    white-space: nowrap;
 }
 .recap-meeting-duration {
     color: var(--text-faint);
     font-size: var(--font-ui-small);
+    white-space: nowrap;
 }
 .recap-meeting-participants {
     color: var(--text-faint);
     font-size: var(--font-ui-small);
+    white-space: nowrap;
 }
 
 /* Org badge */

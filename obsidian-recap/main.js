@@ -837,7 +837,14 @@ function renderPipelineStatus(container, status) {
 function formatDate(dateStr) {
   if (!dateStr)
     return "";
-  const d = new Date(dateStr);
+  const isoDateMatch = dateStr.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  let d;
+  if (isoDateMatch) {
+    const [, y, m, day] = isoDateMatch;
+    d = new Date(Number(y), Number(m) - 1, Number(day));
+  } else {
+    d = new Date(dateStr);
+  }
   if (isNaN(d.getTime()))
     return dateStr;
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
@@ -847,17 +854,20 @@ function formatDate(dateStr) {
 function renderMeetingRow(container, meeting, onClick) {
   const row = container.createDiv({ cls: "recap-meeting-row" });
   row.addEventListener("click", () => onClick(meeting.path));
-  const left = row.createDiv({ cls: "recap-meeting-left" });
-  renderPipelineStatus(left, meeting.pipelineStatus);
-  left.createSpan({ text: formatDate(meeting.date), cls: "recap-meeting-date" });
-  left.createSpan({ text: meeting.title, cls: "recap-meeting-title" });
-  const right = row.createDiv({ cls: "recap-meeting-right" });
-  right.createSpan({ text: meeting.org, cls: "recap-org-badge" });
+  const titleRow = row.createDiv({ cls: "recap-meeting-title-row" });
+  titleRow.createSpan({ text: meeting.title, cls: "recap-meeting-title" });
+  const metaRow = row.createDiv({ cls: "recap-meeting-meta-row" });
+  renderPipelineStatus(metaRow, meeting.pipelineStatus);
+  metaRow.createSpan({ text: formatDate(meeting.date), cls: "recap-meeting-date" });
+  metaRow.createSpan({ text: meeting.org, cls: "recap-org-badge" });
   if (meeting.duration) {
-    right.createSpan({ text: meeting.duration, cls: "recap-meeting-duration" });
+    metaRow.createSpan({ text: meeting.duration, cls: "recap-meeting-duration" });
   }
   if (meeting.participants.length > 0) {
-    right.createSpan({ text: `${meeting.participants.length} people`, cls: "recap-meeting-participants" });
+    metaRow.createSpan({
+      text: `${meeting.participants.length} people`,
+      cls: "recap-meeting-participants"
+    });
   }
   return row;
 }
