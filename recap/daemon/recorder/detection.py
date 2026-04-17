@@ -17,6 +17,21 @@ except Exception:  # pragma: no cover - depends on Windows runtime
 _EXCLUDED_HWNDS: set[int] = set()
 
 
+def exclude_hwnd(hwnd: int) -> None:
+    """Register an hwnd that MUST NOT be detected as a meeting window.
+
+    Used by the signal popup to exclude its own dialog hwnd so the
+    detector cannot race and see the popup as a Signal call. Task 14
+    will layer TTL semantics on top of this set-membership base.
+    """
+    _EXCLUDED_HWNDS.add(hwnd)
+
+
+def include_hwnd(hwnd: int) -> None:
+    """Remove ``hwnd`` from the exclusion set. Idempotent."""
+    _EXCLUDED_HWNDS.discard(hwnd)
+
+
 # Patterns for matching active meeting windows by platform.
 # Teams: match titles with text before "| Microsoft Teams" (active call/meeting).
 # The bare "Microsoft Teams" title (no prefix) is the idle main window.
