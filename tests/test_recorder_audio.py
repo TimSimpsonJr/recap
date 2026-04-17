@@ -147,6 +147,104 @@ def test_audio_capture_does_not_pass_channels_to_encoder(tmp_path, monkeypatch):
     assert "channels" not in kwargs, f"StreamEncoder called with channels: {kwargs}"
 
 
+def test_audio_capture_start_uses_matched_device_rate(tmp_path, monkeypatch):
+    """When loopback and mic both report the same native rate, start() uses that
+    rate for the pyFLAC encoder AND for both WASAPI stream opens, overriding the
+    ``sample_rate`` passed to ``__init__``.
+
+    This is the Phase 7 fix for the `-9997 Invalid sample rate` WASAPI crash:
+    WASAPI shared-mode refuses any rate that isn't the engine rate, so we must
+    capture at the device's native rate rather than hardcoding 16000.
+    """
+    from unittest.mock import MagicMock
+    import recap.daemon.recorder.audio as audio_mod
+
+    mock_encoder_cls = MagicMock()
+    mock_pyflac = MagicMock()
+    mock_pyflac.StreamEncoder = mock_encoder_cls
+
+    mock_pa_instance = MagicMock()
+    mock_pa_instance.get_default_wasapi_loopback.return_value = {
+        "index": 5, "defaultSampleRate": 48000.0,
+    }
+    mock_pa_instance.get_default_wasapi_device.return_value = {
+        "index": 2, "defaultSampleRate": 48000.0, "maxInputChannels": 1,
+    }
+    mock_pa_module = MagicMock()
+    mock_pa_module.PyAudio.return_value = mock_pa_instance
+
+    monkeypatch.setattr(audio_mod, "_require_pyflac", lambda: mock_pyflac)
+    monkeypatch.setattr(audio_mod, "_require_pyaudio", lambda: mock_pa_module)
+
+    capture = AudioCapture(output_path=tmp_path / "x.flac", sample_rate=16000, channels=2)
+    capture.start()
+
+    # Encoder was constructed with the resolved native rate (48000), not the
+    # __init__ default (16000).
+    assert mock_encoder_cls.called
+    _, enc_kwargs = mock_encoder_cls.call_args
+    assert enc_kwargs["sample_rate"] == 48000
+
+    # Both WASAPI streams opened at the resolved rate.
+    open_calls = mock_pa_instance.open.call_args_list
+    assert len(open_calls) == 2
+    for _, kwargs in open_calls:
+        assert kwargs["rate"] == 48000
+
+    # The public ``sample_rate`` property reflects the actual capture rate so
+    # downstream consumers (on_chunk subscribers, FLAC readers) see the truth.
+    assert capture.sample_rate == 48000
+
+
+def test_audio_capture_start_raises_on_device_rate_mismatch(tmp_path, monkeypatch):
+    """When mic and loopback report different native rates, start() raises
+    AudioDeviceError with both rates in the message and does NOT partially
+    initialise any of: pyFLAC encoder, output file, or WASAPI streams.
+
+    Resampling heterogeneous device clocks is explicitly out of scope for
+    Phase 7; fail fast with a clear error is the agreed-on behaviour.
+    """
+    from unittest.mock import MagicMock
+    import recap.daemon.recorder.audio as audio_mod
+
+    mock_encoder_cls = MagicMock()
+    mock_pyflac = MagicMock()
+    mock_pyflac.StreamEncoder = mock_encoder_cls
+
+    mock_pa_instance = MagicMock()
+    mock_pa_instance.get_default_wasapi_loopback.return_value = {
+        "index": 5, "defaultSampleRate": 48000.0,
+    }
+    mock_pa_instance.get_default_wasapi_device.return_value = {
+        "index": 2, "defaultSampleRate": 44100.0, "maxInputChannels": 1,
+    }
+    mock_pa_module = MagicMock()
+    mock_pa_module.PyAudio.return_value = mock_pa_instance
+
+    monkeypatch.setattr(audio_mod, "_require_pyflac", lambda: mock_pyflac)
+    monkeypatch.setattr(audio_mod, "_require_pyaudio", lambda: mock_pa_module)
+
+    output_path = tmp_path / "x.flac"
+    capture = AudioCapture(output_path=output_path)
+
+    with pytest.raises(AudioDeviceError) as exc_info:
+        capture.start()
+
+    # Message names both rates so the user can act on it.
+    msg = str(exc_info.value)
+    assert "48000" in msg
+    assert "44100" in msg
+
+    # Clean failure: encoder was never constructed and no WASAPI streams opened.
+    mock_encoder_cls.assert_not_called()
+    mock_pa_instance.open.assert_not_called()
+
+    # Capture did not transition into a half-started state.
+    assert capture.is_recording is False
+    # No output file was created on disk (encoder path never ran).
+    assert not output_path.exists()
+
+
 def test_audio_capture_on_chunk_swallows_exceptions(tmp_path, caplog):
     """A failing on_chunk must not crash capture or poison subsequent invocations."""
     pytest.importorskip("numpy")

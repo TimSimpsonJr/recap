@@ -307,18 +307,35 @@ class AudioCapture:
 
         runtime_pyaudio = _require_pyaudio()
         runtime_pyflac = _require_pyflac()
+
+        # Resolve the actual capture rate BEFORE creating the output file or
+        # pyFLAC encoder so a rate mismatch exits cleanly without partial init.
+        # WASAPI shared-mode refuses any rate that isn't the device's engine
+        # rate (see `-9997 Invalid sample rate` in PyAudioWPatch); we must
+        # therefore capture at the device-native rate rather than hardcoding
+        # 16000. In-process resampling across differing mic/loopback clocks is
+        # out of scope for Phase 7 -- we fail fast with a clear error instead.
+        self._pa = runtime_pyaudio.PyAudio()
+        loopback_info = self._pa.get_default_wasapi_loopback()
+        mic_info = self._pa.get_default_wasapi_device(d_in=True)
+
+        lb_rate = int(loopback_info["defaultSampleRate"])
+        mic_rate = int(mic_info["defaultSampleRate"])
+        if lb_rate != mic_rate:
+            raise AudioDeviceError(
+                f"Mic and loopback devices have different native sample rates "
+                f"(mic={mic_rate} Hz, loopback={lb_rate} Hz); in-process "
+                f"resampling is not yet implemented. Match device rates in "
+                f"Windows sound settings (typically both 48000 Hz)."
+            )
+        self._sample_rate = lb_rate
+
         self._output_file = open(self._output_path, "wb")
 
         self._encoder = runtime_pyflac.StreamEncoder(
             write_callback=self._write_callback,
             sample_rate=self._sample_rate,
         )
-
-        self._pa = runtime_pyaudio.PyAudio()
-
-        # Find devices
-        loopback_info = self._pa.get_default_wasapi_loopback()
-        mic_info = self._pa.get_default_wasapi_device(d_in=True)
 
         chunk_size = 1024
 
