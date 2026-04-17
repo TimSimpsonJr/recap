@@ -45,7 +45,8 @@ extra-index-url = ["https://download.pytorch.org/whl/cu126"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "--cov=recap --cov-fail-under=70 --cov-report=term-missing -m 'not integration'"
+addopts = "--cov=recap --cov-fail-under=70 --cov-report=term-missing -m 'not integration and not hardware'"
 markers = [
     "integration: tests that import real ML/system libraries; slow; opt-in via -m integration",
+    "hardware: tests that require real audio hardware; opt-in via -m hardware; used for manual device hot-swap verification",
 ]
