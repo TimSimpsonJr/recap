@@ -202,6 +202,17 @@ class MeetingDetector:
             self._armed_event = None
             self._recorder.state_machine.disarm()
 
+    def mark_active_recording(self, hwnd: int) -> None:
+        """Register a prompt-started recording's hwnd with the detector.
+
+        Called by the Signal popup acceptance path so prompt-started recordings
+        participate in the ``is_window_alive`` stop-monitoring contract the same
+        way auto-record and armed recordings do. Without this, a Signal
+        recording continues until silence/max-duration/manual stop even after
+        the user closes the Signal window.
+        """
+        self._recording_hwnd = hwnd
+
     async def handle_extension_meeting_detected(
         self,
         *,

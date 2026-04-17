@@ -301,6 +301,7 @@ def _build_subservices(daemon: Daemon, auth_token: str) -> dict[str, Any]:
             await recorder.start(
                 result["org"], metadata=metadata, detected=True,
             )
+            detector.mark_active_recording(meeting_window.hwnd)
         else:
             logger.info("Signal recording declined")
 

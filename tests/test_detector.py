@@ -451,6 +451,55 @@ class TestAwaitableSignalCallback:
                     await detector._poll_once()
 
 
+class TestPromptStartedRecordingWindowMonitoring:
+    """Prompt-started (Signal popup) recordings must participate in the
+    ``is_window_alive`` stop-monitoring contract the same way auto-record
+    and armed recordings do. Regression guard for the Signal-prompt path
+    previously bypassing hard window-close monitoring.
+    """
+
+    def test_mark_active_recording_sets_recording_hwnd(self, mock_config):
+        """mark_active_recording(hwnd) sets _recording_hwnd on the detector."""
+        recorder = MagicMock()
+        recorder.start = AsyncMock()
+        recorder.stop = AsyncMock()
+        recorder.is_recording = False
+
+        detector = MeetingDetector(
+            config=mock_config, recorder=recorder, on_signal_detected=None
+        )
+        assert detector._recording_hwnd is None
+
+        detector.mark_active_recording(42)
+
+        assert detector._recording_hwnd == 42
+
+    @pytest.mark.asyncio
+    async def test_stop_path_fires_for_prompt_started_recording(self, mock_config):
+        """After mark_active_recording(hwnd), _poll_once auto-stops when
+        is_window_alive(hwnd) returns False.
+
+        Regression guard for the Signal-prompt path previously bypassing
+        hard window-close monitoring (Codex P2 finding on Phase 7).
+        """
+        recorder = MagicMock()
+        recorder.start = AsyncMock()
+        recorder.stop = AsyncMock()
+        recorder.is_recording = True  # simulate ongoing recording
+
+        detector = MeetingDetector(
+            config=mock_config, recorder=recorder, on_signal_detected=None
+        )
+        detector.mark_active_recording(12345)
+
+        with patch("recap.daemon.recorder.detector.detect_meeting_windows", return_value=[]):
+            with patch("recap.daemon.recorder.detector.is_window_alive", return_value=False):
+                await detector._poll_once()
+
+        recorder.stop.assert_awaited()
+        assert detector._recording_hwnd is None
+
+
 class TestStopPathUIAResilience:
     """Stop-path must not be triggered by UIA-confirmation flaps.
 
