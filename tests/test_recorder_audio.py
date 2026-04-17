@@ -496,3 +496,61 @@ class TestSourceStreamStart:
 
         assert src._bound_identity is not None
         assert src._bound_identity[0] in ("endpoint", "composite")
+
+
+class TestSourceStreamPump:
+    """_SourceStream converts raw callback bytes into resampled 48 kHz
+    PCM in the drain thread via _pump_raw_to_resampled()."""
+
+    def test_pump_moves_raw_to_resampled_at_identity_rate(self):
+        pytest.importorskip("soxr")
+        pytest.importorskip("numpy")
+        from recap.daemon.recorder.audio import _SourceStream, _SourceHealth, _SoxrResamplerWrapper
+
+        src = _SourceStream(kind="mic", output_rate=48000)
+        src._resampler = _SoxrResamplerWrapper(input_rate=48000, output_rate=48000)
+        src._state = _SourceHealth.HEALTHY
+        src._raw_buffer = b"\x00\x00" * 4096  # 4096 frames mono int16
+
+        src._pump_raw_to_resampled()
+
+        assert src._raw_buffer == b""
+        assert len(src._resampled_buffer) > 0
+
+    def test_pump_handles_upsample_ratio(self):
+        pytest.importorskip("soxr")
+        pytest.importorskip("numpy")
+        from recap.daemon.recorder.audio import _SourceStream, _SourceHealth, _SoxrResamplerWrapper
+
+        src = _SourceStream(kind="loopback", output_rate=48000)
+        src._resampler = _SoxrResamplerWrapper(input_rate=44100, output_rate=48000)
+        src._state = _SourceHealth.HEALTHY
+        src._raw_buffer = b"\x00\x00" * 44100
+
+        src._pump_raw_to_resampled()
+
+        resampled_frames = len(src._resampled_buffer) // 2
+        expected = 48000
+        assert abs(resampled_frames - expected) / expected < 0.02
+
+    def test_pump_is_safe_when_raw_buffer_empty(self):
+        pytest.importorskip("soxr")
+        from recap.daemon.recorder.audio import _SourceStream, _SourceHealth, _SoxrResamplerWrapper
+
+        src = _SourceStream(kind="mic", output_rate=48000)
+        src._resampler = _SoxrResamplerWrapper(input_rate=48000, output_rate=48000)
+        src._state = _SourceHealth.HEALTHY
+        src._pump_raw_to_resampled()
+        assert src._resampled_buffer == b""
+
+    def test_pump_is_safe_when_not_healthy(self):
+        """Source in STOPPED/RECONNECTING/DEGRADED must not invoke the
+        resampler -- avoids touching a torn-down or unbuilt resampler."""
+        from recap.daemon.recorder.audio import _SourceStream, _SourceHealth
+
+        src = _SourceStream(kind="mic", output_rate=48000)
+        src._state = _SourceHealth.STOPPED
+        src._raw_buffer = b"\x00\x00" * 1024  # has data, but state is STOPPED
+        src._pump_raw_to_resampled()  # must not raise even with resampler=None
+        # Raw buffer untouched because the pump exited early.
+        assert len(src._raw_buffer) == 2048

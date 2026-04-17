@@ -262,6 +262,27 @@ class _SourceStream:
         if self._state == _SourceHealth.HEALTHY:
             self._state = _SourceHealth.RECONNECTING
 
+    def _pump_raw_to_resampled(self) -> None:
+        """Drain the raw inbound buffer through the resampler into the
+        resampled buffer. Called by the drain thread each tick; the
+        callback thread only appends to the raw buffer, never touches
+        the resampler directly. Safe no-op when the source isn't
+        HEALTHY or the raw buffer is empty."""
+        with self._lock:
+            if self._state != _SourceHealth.HEALTHY or self._resampler is None:
+                return
+            raw = self._raw_buffer
+            self._raw_buffer = b""
+        if not raw:
+            return
+        try:
+            resampled = self._resampler.process(raw)
+        except Exception:
+            logger.exception("%s resample failed", self._kind)
+            return
+        with self._lock:
+            self._resampled_buffer += resampled
+
     def stop(self) -> None:
         """Transition to STOPPED before tearing down internals so a
         racing watchdog tick doesn't try to reopen a shutting-down
