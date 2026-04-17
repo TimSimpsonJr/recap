@@ -570,6 +570,11 @@ class AudioCapture:
         self._output_file: Any = None
         self._mic_buffer: bytes = b""
         self._loopback_buffer: bytes = b""
+        self._mic_source: _SourceStream | None = None
+        self._loopback_source: _SourceStream | None = None
+        self._fatal_error: Exception | None = None
+        self._fatal_event: _threading.Event = _threading.Event()
+        self._drain_thread: threading.Thread | None = None
 
         # Public callback invoked with (mono_chunk_bytes, sample_rate) after
         # each interleave/encode cycle. Consumers (e.g. streaming ASR/diarization)
@@ -715,72 +720,56 @@ class AudioCapture:
     def start(self) -> None:
         """Open audio streams and begin recording to FLAC.
 
-        Opens PyAudioWPatch streams for both the default WASAPI loopback
-        (system audio) and default microphone, interleaving frames into
-        a pyFLAC encoder that continuously flushes to disk.
+        Owns two _SourceStream instances (mic + loopback), each capturing
+        at its device-native rate and resampling to a fixed 48 kHz output
+        timeline. The drain loop interleaves both sources into stereo
+        int16 FLAC frames at 48 kHz.
         """
         if self._recording:
             return
 
-        runtime_pyaudio = _require_pyaudio()
         runtime_pyflac = _require_pyflac()
-
-        # Resolve the actual capture rate BEFORE creating the output file or
-        # pyFLAC encoder so a rate mismatch exits cleanly without partial init.
-        # WASAPI shared-mode refuses any rate that isn't the device's engine
-        # rate (see `-9997 Invalid sample rate` in PyAudioWPatch); we must
-        # therefore capture at the device-native rate rather than hardcoding
-        # 16000. In-process resampling across differing mic/loopback clocks is
-        # out of scope for Phase 7 -- we fail fast with a clear error instead.
-        self._pa = runtime_pyaudio.PyAudio()
-        loopback_info = self._pa.get_default_wasapi_loopback()
-        mic_info = self._pa.get_default_wasapi_device(d_in=True)
-
-        lb_rate = int(loopback_info["defaultSampleRate"])
-        mic_rate = int(mic_info["defaultSampleRate"])
-        if lb_rate != mic_rate:
-            raise AudioDeviceError(
-                f"Mic and loopback devices have different native sample rates "
-                f"(mic={mic_rate} Hz, loopback={lb_rate} Hz); in-process "
-                f"resampling is not yet implemented. Match device rates in "
-                f"Windows sound settings (typically both 48000 Hz)."
+        # Production always uses 48 kHz; warn once if __init__ got something else.
+        if self._sample_rate != 48000:
+            logger.warning(
+                "AudioCapture.start() overriding sample_rate=%d to 48000 "
+                "(production capture is 48 kHz fixed; see design doc)",
+                self._sample_rate,
             )
-        self._sample_rate = lb_rate
+            self._sample_rate = 48000
 
+        # Spin up both source streams; any hard failure surfaces
+        # immediately (e.g., no mic at all, no loopback available).
+        self._mic_source = _SourceStream(kind="mic", output_rate=48000)
+        self._loopback_source = _SourceStream(kind="loopback", output_rate=48000)
+        try:
+            self._loopback_source.start()
+            self._mic_source.start()
+        except Exception:
+            # Partial startup -- tear down whichever succeeded.
+            try:
+                self._loopback_source.stop()
+            finally:
+                try:
+                    self._mic_source.stop()
+                finally:
+                    pass
+            raise
+
+        # Open output file + encoder now that both sources came up.
         self._output_file = open(self._output_path, "wb")
-
         self._encoder = runtime_pyflac.StreamEncoder(
             write_callback=self._write_callback,
             sample_rate=self._sample_rate,
         )
 
-        chunk_size = 1024
-
-        # Open loopback stream (system audio)
-        self._loopback_stream = self._pa.open(
-            format=runtime_pyaudio.paInt16,
-            channels=1,
-            rate=self._sample_rate,
-            input=True,
-            input_device_index=loopback_info["index"],
-            frames_per_buffer=chunk_size,
-            stream_callback=self._loopback_callback,
-        )
-
-        # Open microphone stream
-        self._mic_stream = self._pa.open(
-            format=runtime_pyaudio.paInt16,
-            channels=1,
-            rate=self._sample_rate,
-            input=True,
-            input_device_index=mic_info["index"],
-            frames_per_buffer=chunk_size,
-            stream_callback=self._mic_callback,
-        )
+        # Cross-thread fatal state wiring (Task 8 uses this).
+        self._fatal_error = None
+        self._fatal_event.clear()
 
         self._recording = True
 
-        # Start a background thread that periodically drains buffers
+        # Transitional drain loop (full wall-clock version lands in Task 8).
         self._drain_thread = threading.Thread(
             target=self._drain_loop,
             daemon=True,
@@ -789,68 +778,60 @@ class AudioCapture:
         self._drain_thread.start()
 
     def _drain_loop(self) -> None:
-        """Background thread that drains audio buffers and feeds the encoder."""
-        import time
-
+        # Transitional shim -- Task 8 replaces this with the full
+        # wall-clock version (fixed 48 kHz cadence, fatal-state detection).
         chunk_frames = 1024
-        bytes_per_chunk = chunk_frames * 2  # int16 = 2 bytes
+        target_interval = chunk_frames / self._sample_rate  # ~21.33 ms at 48 kHz
 
+        last_tick = time.monotonic()
         while self._recording:
-            with self._lock:
-                has_data = (
-                    len(self._mic_buffer) >= bytes_per_chunk
-                    or len(self._loopback_buffer) >= bytes_per_chunk
-                )
+            if self._mic_source is not None:
+                self._mic_source._pump_raw_to_resampled()
+            if self._loopback_source is not None:
+                self._loopback_source._pump_raw_to_resampled()
 
-            if has_data:
-                self._interleave_and_encode(chunk_frames)
-            else:
-                time.sleep(0.01)
-
-    def stop(self) -> Path:
-        """Stop recording, finalize FLAC, and return the output path.
-
-        Returns:
-            Path to the completed FLAC file.
-        """
-        self._recording = False
-
-        if hasattr(self, "_drain_thread"):
-            self._drain_thread.join(timeout=2.0)
-
-        # Drain any remaining buffered audio
-        with self._lock:
-            remaining = max(
-                len(self._mic_buffer) // 2,
-                len(self._loopback_buffer) // 2,
+            mic_bytes = (
+                self._mic_source.read_frames(chunk_frames)
+                if self._mic_source else b"\x00" * (chunk_frames * 2)
             )
-        if remaining > 0:
-            self._interleave_and_encode(remaining)
+            lb_bytes = (
+                self._loopback_source.read_frames(chunk_frames)
+                if self._loopback_source else b"\x00" * (chunk_frames * 2)
+            )
 
-        # Stop streams
-        if self._loopback_stream is not None:
-            self._loopback_stream.stop_stream()
-            self._loopback_stream.close()
-            self._loopback_stream = None
+            with self._lock:
+                self._mic_buffer = mic_bytes
+                self._loopback_buffer = lb_bytes
+            self._interleave_and_encode(chunk_frames)
 
-        if self._mic_stream is not None:
-            self._mic_stream.stop_stream()
-            self._mic_stream.close()
-            self._mic_stream = None
+            now = time.monotonic()
+            elapsed = now - last_tick
+            sleep_for = max(0.0, target_interval - elapsed)
+            last_tick = now + sleep_for
+            if sleep_for > 0:
+                time.sleep(sleep_for)
 
-        # Finalize encoder
+    def stop(self) -> None:
+        if not self._recording:
+            return
+        self._recording = False
+        if self._drain_thread is not None:
+            self._drain_thread.join(timeout=5.0)
+            self._drain_thread = None
+        for src in (self._mic_source, self._loopback_source):
+            if src is not None:
+                src.stop()
+        self._mic_source = None
+        self._loopback_source = None
         if self._encoder is not None:
-            self._encoder.finish()
+            try:
+                self._encoder.finish()
+            except Exception:
+                logger.exception("pyflac encoder finish() raised")
             self._encoder = None
-
-        # Close output file
         if self._output_file is not None:
-            self._output_file.close()
+            try:
+                self._output_file.close()
+            except Exception:
+                logger.exception("output file close() raised")
             self._output_file = None
-
-        # Terminate PyAudio
-        if self._pa is not None:
-            self._pa.terminate()
-            self._pa = None
-
-        return self._output_path
