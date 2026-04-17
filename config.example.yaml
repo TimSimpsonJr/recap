@@ -34,7 +34,7 @@ detection:
     enabled: true
     behavior: "auto-record"
   signal:
-    enabled: true
+    enabled: false                  # opt-in: title-only matching is noisy for Signal
     behavior: "prompt"
 
 # Recording settings

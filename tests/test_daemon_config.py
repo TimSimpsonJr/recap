@@ -115,6 +115,24 @@ class TestLoadDaemonConfig:
         config = load_daemon_config(config_file)
         assert config.detection.teams.enabled is True
         assert config.detection.teams.behavior == "auto-record"
+        assert config.detection.signal.enabled is False
+        assert config.detection.signal.behavior == "prompt"
+
+    def test_signal_detection_can_be_explicitly_enabled(self, tmp_path):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(yaml.dump({
+            "config-version": 1,
+            "vault-path": str(tmp_path),
+            "recordings-path": str(tmp_path),
+            "detection": {
+                "signal": {
+                    "enabled": True,
+                    "behavior": "prompt",
+                },
+            },
+        }))
+        config = load_daemon_config(config_file)
+        assert config.detection.signal.enabled is True
         assert config.detection.signal.behavior == "prompt"
 
     def test_recording_defaults(self, tmp_path):

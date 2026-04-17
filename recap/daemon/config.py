@@ -55,7 +55,7 @@ class DetectionConfig:
     )
     signal: DetectionAppConfig = field(
         default_factory=lambda: DetectionAppConfig(
-            enabled=True, behavior="prompt",
+            enabled=False, behavior="prompt",
         ),
     )
 
@@ -164,7 +164,15 @@ def _parse_detection(raw: dict) -> DetectionConfig:
     zoom_raw = raw.get("zoom", {})
     signal_raw = raw.get("signal", {})
 
-    # Signal defaults to "prompt" behavior
+    # Signal detection is regex-only in Phase 7 and will happily match the
+    # ordinary Signal desktop window title (for example "Signal (5)").
+    # Keep it opt-in by default so fresh configs don't immediately prompt
+    # users who simply have Signal open.
+    if "enabled" not in signal_raw:
+        signal_raw["enabled"] = False
+
+    # If users opt in to Signal detection, default it to "prompt" rather
+    # than "auto-record" because the detector is intentionally low-confidence.
     if "behavior" not in signal_raw:
         signal_raw["behavior"] = "prompt"
 
