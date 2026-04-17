@@ -4,8 +4,6 @@ Parent design: `docs/plans/2026-04-14-fix-everything-design.md` §Final Integrat
 
 All automated gates and Review Blockers are verified (see the bottom section). This checklist is the five live-system scenarios that can only be proved on real hardware with real accounts — it is the last gate before shipping Phases 1-6.
 
-> **⚠️ 2026-04-16 update:** Real-hardware walkthrough on 2026-04-16 surfaced library drift (`parakeet-stream`, `pyflac`, `pyarrow`) and daemon bugs (over-eager Teams/Signal detection, tkinter-wrong-thread popup) that the mocked test suite did not catch. Scenarios 1 + 2 are BLOCKED on `docs/plans/2026-04-16-phase7-ml-stack-refresh.md`. Scenarios 3, 4, 5 can still run after tightening `detection.*.enabled` in config.yaml. Do not merge to master until Phase 7 lands.
-
 **Prereqs on the machine you run this on:**
 - Windows 11 + NVIDIA RTX 4070 (or compatible CUDA 12.6-capable card) + SSD.
 - `ffmpeg` + `ffprobe` on PATH.
@@ -81,6 +79,7 @@ The golden path the whole system exists to deliver.
 | `uv run pytest -q` | 570 passed, 3 skipped. Coverage gate 70% → actual 71.39%. |
 | `cd obsidian-recap && npm run build` | clean; zero `tsc -noEmit` errors; esbuild production bundle builds. |
 | Extension build/lint | N/A — pure MV3 JavaScript, no build step. Manual verification via Chrome's unpacked-extension loader. |
+| Phase 7 library + detection + popup refresh | ALL LANDED (branch `phase-7-ml-stack-refresh`) |
 
 ## Review Blockers (parent design §442-453; all pass)
 

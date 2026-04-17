@@ -30,17 +30,18 @@ recap/                                        # Python package
     logging_setup.py / notifications.py       # Logging; notifications write to EventJournal
     recorder/                                 # Audio capture subsystem
       recorder.py                             # Recording orchestrator; uses `audio_capture.on_chunk`
-      audio.py                                # WASAPI loopback capture (PyAudioWPatch) with public `on_chunk` callback (no monkey-patching)
-      detector.py                             # Meeting window detector; awaitable signal callback; consumes EventIndex; uses `resolve_subfolder` (no hand-join)
-      detection.py / enrichment.py            # Browser extension signal receiver + calendar metadata enrichment
+      audio.py                                # WASAPI loopback capture (PyAudioWPatch) via pyflac 3.0 StreamEncoder (no `channels=` kwarg)
+      detector.py                             # Meeting window detector; two-path pruning (stop-monitoring via is_window_alive + end-of-poll prune protecting _recording_hwnd); stop() awaits cancelled poll task
+      detection.py / enrichment.py            # Extension signal receiver + calendar enrichment; _EXCLUDED_HWNDS set + exclude/include helpers + UIA gate in detect_meeting_windows + is_window_alive
+      call_state.py                           # UIA call-state helpers + per-platform checkers (Teams, Zoom) used by detection to confirm in-call vs. idle window
       state_machine.py / silence.py / recovery.py  # State transitions, silence auto-stop, crash recovery
-      signal_popup.py                         # Manual recording trigger popup; async via `loop.run_in_executor`
+      signal_popup.py                         # Manual recording popup; dedicated ThreadPoolExecutor, sticky shutdown flag, outstanding-futures tracking, ttk.Combobox
     calendar/                                 # Calendar integration
       index.py                                # EventIndex: persistent O(1) event-id -> vault-relative note_path map
       sync.py                                 # Sync orchestrator; write/update take OrgConfig; find_note_by_event_id consults EventIndex
       scheduler.py                            # Pre-meeting briefing scheduler; uses org_by_slug + resolve_subfolder
       google.py / zoho.py / oauth.py          # Google + Zoho API clients + OAuth 2.0 flow
-    streaming/transcriber.py / diarizer.py    # Live Parakeet ASR + NeMo diarization
+    streaming/transcriber.py / diarizer.py    # No-op stubs — live streaming deferred to Phase 8
   pipeline/                                   # Post-meeting processing
     __init__.py                               # Stage-tracked orchestrator; run_pipeline + _resolve_note_path accept vault_path + EventIndex
     transcribe.py / diarize.py / audio_convert.py  # Batch Parakeet + NeMo + WAV-to-AAC (ffmpeg)
@@ -52,7 +53,7 @@ extension/                                    # Chrome/Edge MV3 extension
   manifest.json / background.js               # Bearer-authed `/api/meeting-*` signaling; authReady promise closes MV3 wake-up race; badge states: connected / AUTH / offline
   options.html / options.js                   # Pairing UI (loopback validation + `/bootstrap/token` exchange) + meeting URL patterns
 prompts/                                      # Claude prompt templates (meeting_analysis.md, meeting_briefing.md)
-tests/                                        # Pytest suite
+tests/                                        # Pytest suite (unit tier; integration tier excluded by default via `-m 'not integration'`)
   conftest.py / fixtures/                     # Shared fixtures (make_daemon_config, build_daemon_callbacks, daemon_client, MINIMAL_API_CONFIG_YAML) + test data
   test_event_index.py                         # EventIndex unit tests (persistence, rebuild, idempotency)
   test_daemon_service.py / test_event_journal.py / test_pairing.py  # Phase 3 unit tests
@@ -60,17 +61,22 @@ tests/                                        # Pytest suite
   test_phase3_integration.py / test_phase4_integration.py  # End-to-end daemon lifecycle + Phase 4 contracts (pairing, Bearer, events, config, WS)
   test_phase2_integration.py                  # End-to-end: calendar sync -> detection -> pipeline backfill
   test_daemon_config.py                       # DaemonConfig + OrgConfig.resolve_subfolder + org_by_slug helpers
+  integration/                                # Phase 7 integration tier (marker `integration`)
+    conftest.py                               # Session-scoped Parakeet/NeMo model fixtures + cuda_guard skip
+    test_contract_smoke.py                    # 6 CPU-safe contract tests (pyflac, uiautomation, pywin32, parakeet/nemo import shape)
+    test_ml_pipeline.py                       # 3 GPU tests: model load + end-to-end silent-FLAC pipeline
 docs/plans/                                   # Design docs and phase plans
 docs/handoffs/                                # Per-phase handoff notes + manual acceptance checklists
 ```
 
 ## Key Relationships
 
-- `daemon/recorder/` orchestrates capture (`recorder.py` coordinates `audio.py`, `detector.py`, `state_machine.py`, `silence.py`); `enrichment.py` pulls calendar data from `daemon/calendar/sync.py` to tag recordings; `streaming/{transcriber,diarizer}.py` feed live results through WebSocket to the plugin's `LiveTranscriptView`.
+- `daemon/recorder/` orchestrates capture (`recorder.py` coordinates `audio.py`, `detector.py`, `state_machine.py`, `silence.py`); `enrichment.py` pulls calendar data from `daemon/calendar/sync.py` to tag recordings. Live streaming (`streaming/{transcriber,diarizer}.py`) is stubbed — deferred to Phase 8.
+- **Phase 7 detection + popup reliability:** `recorder/detection.py` tracks `_EXCLUDED_HWNDS` (daemon-owned popups) and gates window-title matches through `call_state.py` UIA checkers so Teams/Zoom only auto-record when a call is actually active. `signal_popup.py` owns a dedicated `ThreadPoolExecutor` (created in `service.py`) with a sticky shutdown flag so late futures from Signal polling can't hit a dead event loop. `pyproject.toml` adds an `integration` pytest marker (excluded from default runs) so `tests/integration/` can import real libraries and fail fast when pyflac/NeMo/parakeet/pyarrow bump.
 - `pipeline/` runs post-meeting: `transcribe.py` and `diarize.py` produce segments consumed by `analyze.py`, which writes via `vault.py`.
 - `daemon/calendar/oauth.py` handles OAuth flows for both Google and Zoho; tokens stored via `credentials.py` (Windows DPAPI).
 - `daemon/config.py` loads the daemon YAML into `DaemonConfig`; `daemon/runtime_config.py` projects those settings plus an `OrgConfig` and `RecordingMetadata` into the `PipelineRuntimeConfig` consumed by `pipeline/`.
-- **Daemon ownership:** `Daemon` (in `daemon/service.py`) owns `EventIndex` + `EventJournal` + `PairingWindow` + `config_path` + `config_lock`; subservices receive them via constructor or `request.app["daemon"]`. `__main__.py` is a thin entry that builds and starts the `Daemon`.
+- **Daemon ownership:** `Daemon` (in `daemon/service.py`) owns `EventIndex` + `EventJournal` + `PairingWindow` + `config_path` + `config_lock` + `_popup_executor`; subservices receive them via constructor or `request.app["daemon"]`. `__main__.py` is a thin entry that builds and starts the `Daemon`.
 - **EventIndex flow:** `Daemon` rebuilds the persistent event-id -> vault-relative `note_path` map on startup and threads `EventIndex` into `calendar/scheduler.py`, `calendar/sync.py`, `recorder/detector.py`, `pipeline/__init__.py`, and `vault.py` for O(1) note lookup across sync, detection, and backfill.
 - **EventJournal as single source of truth:** recent errors surfaced by `/api/status`, plugin notification history (backfill via `/api/events`, live via WS `journal_entry`), and the Phase 4 integration test all read from `EventJournal`. Plugin and extension never write to the journal.
 - **Extension pairing:** tray menu → `PairingWindow.open()` → `/bootstrap/token` (loopback-only, one-shot) → extension stores `{token, baseUrl, pairedAt}` in `chrome.storage.local`. All `/api/meeting-*` POSTs carry `Authorization: Bearer <token>`; a 401 response clears the stored token and flips the toolbar badge to "AUTH".

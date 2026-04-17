@@ -1,8 +1,10 @@
 # Phase 7 — ML Stack Refresh
 
-**Status:** proposed (unbranched)
+**Status:** landed (branch `phase-7-ml-stack-refresh`)
 **Parent:** `docs/plans/2026-04-14-fix-everything-design.md` (post Final Integration Pass)
 **Discovered during:** 2026-04-16 manual setup walkthrough on real hardware
+**Detailed design:** [docs/plans/2026-04-16-phase7-design.md](2026-04-16-phase7-design.md)
+**Implementation plan:** [docs/plans/2026-04-16-phase7-implementation.md](2026-04-16-phase7-implementation.md)
 
 ---
 
