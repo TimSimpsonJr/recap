@@ -1,7 +1,7 @@
 import { Plugin, Notice, TFile } from "obsidian";
 import { DaemonClient } from "./api";
 import { RecapStatusBar } from "./components/StatusBarItem";
-import { OrgPickerModal } from "./components/OrgPickerModal";
+import { StartRecordingModal, OrgChoice } from "./components/StartRecordingModal";
 import { RecapSettingTab } from "./settings";
 import { MeetingListView, VIEW_MEETING_LIST } from "./views/MeetingListView";
 import { LiveTranscriptView, VIEW_LIVE_TRANSCRIPT } from "./views/LiveTranscriptView";
@@ -191,20 +191,31 @@ export default class RecapPlugin extends Plugin {
             new Notice("Recap: Daemon not connected");
             return;
         }
-        let orgs: string[] = [];
+        // Pull org list AND available analysis backends from the daemon
+        // so the modal can offer both dropdowns. Each org carries its
+        // configured ``default_backend`` so the common case (org X ->
+        // backend Y) is one click; the user can override per-recording.
+        let orgs: OrgChoice[] = [];
+        let backends: string[] = ["claude", "ollama"];
         try {
-            const resp = await this.client.get<{orgs: string[]}>("/api/config/orgs");
+            const resp = await this.client.get<{
+                orgs: OrgChoice[];
+                backends: string[];
+            }>("/api/config/orgs");
             orgs = resp.orgs;
+            if (resp.backends && resp.backends.length > 0) {
+                backends = resp.backends;
+            }
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             new Notice(`Recap: org list fetch failed — using default. ${msg}`);
             console.error("Recap:", e);
-            orgs = ["default"];
+            orgs = [{ name: "default", default_backend: "claude" }];
         }
-        new OrgPickerModal(this.app, orgs, async (org) => {
+        new StartRecordingModal(this.app, orgs, backends, async ({ org, backend }) => {
             try {
-                await this.client!.startRecording(org);
-                new Notice(`Recording started (${org})`);
+                await this.client!.startRecording(org, backend);
+                new Notice(`Recording started (${org}, ${backend})`);
             } catch (e) {
                 new Notice(`Failed to start recording: ${e}`);
             }

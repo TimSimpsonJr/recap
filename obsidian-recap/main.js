@@ -145,8 +145,11 @@ var DaemonClient = class {
   async getStatus() {
     return this.get("/api/status");
   }
-  async startRecording(org) {
-    return this.post("/api/record/start", { org });
+  async startRecording(org, backend) {
+    const body = { org };
+    if (backend)
+      body.backend = backend;
+    return this.post("/api/record/start", body);
   }
   async stopRecording() {
     return this.post("/api/record/stop");
@@ -282,27 +285,75 @@ var RecapStatusBar = class {
   }
 };
 
-// src/components/OrgPickerModal.ts
+// src/components/StartRecordingModal.ts
 var import_obsidian2 = require("obsidian");
-var OrgPickerModal = class extends import_obsidian2.SuggestModal {
+var StartRecordingModal = class extends import_obsidian2.Modal {
   orgs;
-  onSelect;
-  constructor(app, orgs, onSelect) {
+  backends;
+  onSubmit;
+  selectedOrg;
+  selectedBackend;
+  backendDropdownEl = null;
+  constructor(app, orgs, backends, onSubmit) {
     super(app);
-    this.orgs = orgs;
-    this.onSelect = onSelect;
-    this.setPlaceholder("Select organization...");
+    this.orgs = orgs.length > 0 ? orgs : [{ name: "default", default_backend: "claude" }];
+    this.backends = backends.length > 0 ? backends : ["claude"];
+    this.onSubmit = onSubmit;
+    this.selectedOrg = this.orgs[0].name;
+    this.selectedBackend = this.orgs[0].default_backend;
   }
-  getSuggestions(query) {
-    return this.orgs.filter(
-      (org) => org.toLowerCase().includes(query.toLowerCase())
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h3", { text: "Start recording" });
+    new import_obsidian2.Setting(contentEl).setName("Organization").setDesc("Which org this meeting belongs to.").addDropdown((d) => {
+      for (const o of this.orgs)
+        d.addOption(o.name, o.name);
+      d.setValue(this.selectedOrg);
+      d.onChange((v) => {
+        this.selectedOrg = v;
+        const match = this.orgs.find((o) => o.name === v);
+        if (match) {
+          this.selectedBackend = match.default_backend;
+          if (this.backendDropdownEl) {
+            this.backendDropdownEl.value = this.selectedBackend;
+          }
+        }
+      });
+    });
+    new import_obsidian2.Setting(contentEl).setName("Analysis backend").setDesc("Which LLM processes the transcript after recording.").addDropdown((d) => {
+      for (const b of this.backends)
+        d.addOption(b, this._label(b));
+      d.setValue(this.selectedBackend);
+      d.onChange((v) => {
+        this.selectedBackend = v;
+      });
+      this.backendDropdownEl = d.selectEl;
+    });
+    new import_obsidian2.Setting(contentEl).addButton(
+      (b) => b.setButtonText("Start recording").setCta().onClick(() => {
+        this.close();
+        this.onSubmit({
+          org: this.selectedOrg,
+          backend: this.selectedBackend
+        });
+      })
+    ).addButton(
+      (b) => b.setButtonText("Cancel").onClick(() => this.close())
     );
   }
-  renderSuggestion(org, el) {
-    el.createEl("div", { text: org });
+  onClose() {
+    this.contentEl.empty();
   }
-  onChooseSuggestion(org) {
-    this.onSelect(org);
+  _label(backend) {
+    switch (backend) {
+      case "claude":
+        return "Claude";
+      case "ollama":
+        return "Ollama";
+      default:
+        return backend;
+    }
   }
 };
 
@@ -1740,19 +1791,23 @@ var RecapPlugin = class extends import_obsidian9.Plugin {
       return;
     }
     let orgs = [];
+    let backends = ["claude", "ollama"];
     try {
       const resp = await this.client.get("/api/config/orgs");
       orgs = resp.orgs;
+      if (resp.backends && resp.backends.length > 0) {
+        backends = resp.backends;
+      }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       new import_obsidian9.Notice(`Recap: org list fetch failed \u2014 using default. ${msg}`);
       console.error("Recap:", e);
-      orgs = ["default"];
+      orgs = [{ name: "default", default_backend: "claude" }];
     }
-    new OrgPickerModal(this.app, orgs, async (org) => {
+    new StartRecordingModal(this.app, orgs, backends, async ({ org, backend }) => {
       try {
-        await this.client.startRecording(org);
-        new import_obsidian9.Notice(`Recording started (${org})`);
+        await this.client.startRecording(org, backend);
+        new import_obsidian9.Notice(`Recording started (${org}, ${backend})`);
       } catch (e) {
         new import_obsidian9.Notice(`Failed to start recording: ${e}`);
       }

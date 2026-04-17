@@ -213,8 +213,17 @@ export class DaemonClient {
         return this.get<DaemonStatus>("/api/status");
     }
 
-    async startRecording(org: string): Promise<{ recording_path: string }> {
-        return this.post("/api/record/start", { org });
+    async startRecording(
+        org: string,
+        backend?: string,
+    ): Promise<{ recording_path: string }> {
+        // ``backend`` is optional so older callers still work; when
+        // supplied it's one of the strings returned by
+        // ``/api/config/orgs``'s ``backends`` list (e.g. "claude",
+        // "ollama") and flows into ``RecordingMetadata.llm_backend``.
+        const body: Record<string, string> = { org };
+        if (backend) body.backend = backend;
+        return this.post("/api/record/start", body);
     }
 
     async stopRecording(): Promise<{ recording_path: string }> {

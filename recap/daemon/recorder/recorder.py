@@ -141,12 +141,21 @@ class Recorder:
         metadata: RecordingMetadata | None = None,
         *,
         detected: bool = False,
+        backend: str | None = None,
     ) -> Path:
         """Start recording audio for the given org.
 
         Creates an AudioCapture instance, a SilenceDetector, transitions
         the state machine to RECORDING, and starts async monitoring tasks
         for silence and duration limits.
+
+        ``backend`` is the optional analysis-backend override (e.g.
+        ``"ollama"``) the plugin's Start Recording modal passes through.
+        When provided, it overwrites ``metadata.llm_backend`` so the
+        pipeline dispatches the chosen subprocess regardless of the org's
+        configured default. When ``metadata`` is already supplied (Signal
+        popup path) its ``llm_backend`` is preserved unless ``backend`` is
+        also set explicitly.
 
         Returns:
             Path to the FLAC file being recorded.
@@ -160,6 +169,10 @@ class Recorder:
         path = self._generate_recording_path(org)
         self._current_path = path
         self._current_metadata = metadata or self._default_recording_metadata(org, now)
+        if backend is not None:
+            # Manual override (e.g. plugin Start modal picks "ollama"):
+            # always wins over the auto-generated or Signal-popup default.
+            self._current_metadata.llm_backend = backend
 
         self._audio_capture = AudioCapture(
             output_path=path,

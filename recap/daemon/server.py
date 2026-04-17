@@ -39,6 +39,13 @@ logger = logging.getLogger("recap.daemon.server")
 
 _WS_CLIENTS_KEY = web.AppKey("ws_clients", set)
 _RECORDER_KEY = web.AppKey("recorder", object)
+
+# Analysis backends the daemon knows how to dispatch. Kept in sync with
+# ``recap.analyze._BACKEND_LABELS`` and the signal-popup's hardcoded list
+# in ``recap.daemon.__main__``. Exposed to the plugin via
+# ``/api/config/orgs`` so the Start Recording modal can render a dropdown
+# without hardcoding the set.
+_SUPPORTED_BACKENDS: tuple[str, ...] = ("claude", "ollama")
 _DETECTOR_KEY = web.AppKey("detector", object)
 _PIPELINE_TRIGGER_KEY = web.AppKey("pipeline_trigger", object)
 _CONFIG_KEY = web.AppKey("config", object)
@@ -423,13 +430,22 @@ async def _record_start(request: web.Request) -> web.Response:
             {"error": "missing 'org' field"}, status=400
         )
 
+    # Optional analysis-backend override. Lets the plugin's Start
+    # Recording modal pick Claude vs Ollama per-recording without going
+    # through the Signal popup path (design: Scenario 2 backend choice).
+    backend = body.get("backend")
+    if backend is not None and backend not in _SUPPORTED_BACKENDS:
+        return web.json_response(
+            {"error": f"unknown backend: {backend}"}, status=400
+        )
+
     if recorder.is_recording:
         return web.json_response(
             {"error": "already recording"}, status=409
         )
 
     try:
-        path = await recorder.start(org)
+        path = await recorder.start(org, backend=backend)
         return web.json_response({"recording_path": str(path)})
     except Exception as exc:
         logger.exception("Failed to start recording")
@@ -607,15 +623,30 @@ async def _disarm(request: web.Request) -> web.Response:
 
 
 async def _config_orgs(request: web.Request) -> web.Response:
-    """GET /api/config/orgs — return the configured org list."""
+    """GET /api/config/orgs — return orgs (with per-org default backend)
+    and the full list of supported analysis backends. The plugin's Start
+    Recording modal uses this to render an org dropdown + backend dropdown
+    where the backend defaults to the selected org's configured choice."""
     config: DaemonConfig | None = request.app.get(_CONFIG_KEY)
     if config is None:
-        return web.json_response({"orgs": ["default"]})
+        return web.json_response({
+            "orgs": [{"name": "default", "default_backend": "claude"}],
+            "backends": list(_SUPPORTED_BACKENDS),
+        })
 
-    org_names = [org.name for org in config.orgs]
-    if not org_names:
-        org_names = ["default"]
-    return web.json_response({"orgs": org_names})
+    orgs = [
+        {
+            "name": org.name,
+            "default_backend": org.llm_backend or "claude",
+        }
+        for org in config.orgs
+    ]
+    if not orgs:
+        orgs = [{"name": "default", "default_backend": "claude"}]
+    return web.json_response({
+        "orgs": orgs,
+        "backends": list(_SUPPORTED_BACKENDS),
+    })
 
 
 async def _oauth_status(request: web.Request) -> web.Response:

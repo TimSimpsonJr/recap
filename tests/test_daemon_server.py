@@ -745,3 +745,92 @@ class TestCorsMiddleware:
         )
         assert resp.status == 200
         assert resp.headers["Access-Control-Allow-Origin"] == "*"
+
+
+@pytest.mark.asyncio
+class TestApiRecordStartBackend:
+    """POST /api/record/start accepts an optional ``backend`` field that
+    flows end-to-end into ``RecordingMetadata.llm_backend``, so the user
+    can pick Claude vs Ollama from the Meetings panel's Start modal
+    without going through the Signal popup (Scenario 2).
+    """
+
+    def _make_client(self, aiohttp_client):
+        from recap.daemon.server import create_app
+        mock_recorder = MagicMock()
+        mock_recorder.is_recording = False
+        started: dict = {}
+        async def _start(org, metadata=None, *, detected=False, backend=None):
+            started["org"] = org
+            started["backend"] = backend
+            started["metadata"] = metadata
+            return pathlib.Path("/tmp/rec.flac")
+        mock_recorder.start = _start
+        app = create_app(auth_token=AUTH_TOKEN, recorder=mock_recorder)
+        return aiohttp_client(app), started
+
+    async def test_omitted_backend_passes_none_to_recorder(
+        self, aiohttp_client,
+    ):
+        client_coro, started = self._make_client(aiohttp_client)
+        client = await client_coro
+        resp = await client.post(
+            "/api/record/start",
+            json={"org": "acme"},
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 200
+        assert started["org"] == "acme"
+        assert started["backend"] is None
+
+    async def test_ollama_backend_flows_through(self, aiohttp_client):
+        client_coro, started = self._make_client(aiohttp_client)
+        client = await client_coro
+        resp = await client.post(
+            "/api/record/start",
+            json={"org": "acme", "backend": "ollama"},
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 200
+        assert started["backend"] == "ollama"
+
+    async def test_unknown_backend_returns_400(self, aiohttp_client):
+        client_coro, started = self._make_client(aiohttp_client)
+        client = await client_coro
+        resp = await client.post(
+            "/api/record/start",
+            json={"org": "acme", "backend": "gpt4"},
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 400
+        # Recorder must NOT have been invoked when the body is invalid.
+        assert "org" not in started
+
+
+@pytest.mark.asyncio
+class TestApiConfigOrgsShape:
+    """GET /api/config/orgs returns org names, each org's default backend,
+    and the full list of supported backends so the Start modal can pick
+    a sensible default and offer all options."""
+
+    async def test_returns_orgs_default_backends_and_backend_list(
+        self, aiohttp_client, tmp_path,
+    ):
+        from recap.daemon.server import create_app
+        cfg = make_daemon_config(tmp_path)
+        app = create_app(auth_token=AUTH_TOKEN, config=cfg)
+        client = await aiohttp_client(app)
+        resp = await client.get(
+            "/api/config/orgs",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        # Response must include: orgs (list of {name, default_backend})
+        # and a ``backends`` list naming the supported analysis backends.
+        assert "orgs" in data and isinstance(data["orgs"], list)
+        assert "backends" in data
+        assert set(data["backends"]) >= {"claude", "ollama"}
+        for org in data["orgs"]:
+            assert "name" in org
+            assert "default_backend" in org
