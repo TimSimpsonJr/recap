@@ -125,6 +125,34 @@ class TestParseClaude:
         result = _parse_claude_output(raw)
         assert result.meeting_type == "client-call"
 
+    def test_parse_tolerates_raw_newlines_inside_string_values(self, sample_claude_json):
+        """Small local models (Qwen 2.5 7B via Ollama ``--format json``)
+        sometimes emit JSON where long string values are line-wrapped
+        with literal newline characters instead of ``\\n`` escapes:
+
+            "summary": "This is a test meeting to evaluate\\nthe workflow."
+
+        (where the ``\\n`` shown above is an actual newline byte in the
+        output, not the two-character escape). Python's strict json
+        module rejects these as "Invalid control character". The parser
+        must pre-process the text to escape raw newlines that appear
+        inside string values, while leaving newlines between tokens
+        (which json tolerates) alone.
+        """
+        # Build a payload where a string spans two physical lines.
+        payload = dict(sample_claude_json)
+        payload["summary"] = "This is a multi-line summary\nthat wraps across two physical lines."
+        # Emit as JSON, then introduce the pathological form by
+        # replacing the escape with a raw newline inside the string.
+        raw = json.dumps(payload).replace(
+            "multi-line summary\\nthat",
+            "multi-line summary\nthat",
+        )
+        result = _parse_claude_output(raw)
+        # Newline survives the round-trip as an actual newline in the parsed value.
+        assert "\n" in result.summary
+        assert "multi-line summary" in result.summary
+
     def test_parse_preserves_direct_analysis_json_for_ollama(self, sample_claude_json):
         """Ollama (``ollama run --format json``) returns analysis JSON
         directly without the Claude CLI envelope. The unwrap logic must

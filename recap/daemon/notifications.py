@@ -48,9 +48,19 @@ def notify(
     try:
         from plyer import notification
 
+        # Windows ``NOTIFYICONDATAW.szInfo`` caps the balloon body at 256
+        # characters. plyer's background ``balloon_tip`` thread raises
+        # ``ValueError: string too long`` when handed more, which
+        # surfaces as noisy stderr tracebacks even though the daemon
+        # keeps running. Truncate defensively (the full message is
+        # preserved in the journal entry below so API consumers still
+        # get the complete text).
+        toast_message = message
+        if len(toast_message) > 250:
+            toast_message = toast_message[:247] + "..."
         notification.notify(
             title=title,
-            message=message,
+            message=toast_message,
             app_name="Recap",
             timeout=10,
         )

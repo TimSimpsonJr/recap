@@ -113,3 +113,21 @@ class TestNotifyOsToast:
         notify("Recap", "hello", journal=journal)
         # Journal still appended despite the toast failure.
         assert len(journal.tail(limit=10)) == 1
+
+    def test_notify_truncates_overlong_message_for_windows_toast(
+        self, tmp_path: pathlib.Path, _stub_plyer,
+    ) -> None:
+        """Windows' ``NOTIFYICONDATAW.szInfo`` caps the balloon body at
+        256 chars. plyer's background ``balloon_tip`` thread raises
+        ``ValueError: string too long`` when handed more, which surfaces
+        as exception spam on stderr even though the daemon keeps
+        running. Truncate pre-emptively so the toast succeeds cleanly.
+        The full message still goes into the journal entry."""
+        journal = EventJournal(tmp_path / "events.jsonl")
+        long_msg = "x" * 700
+        notify("Recap", long_msg, journal=journal, level="error")
+        toast_kwargs = _stub_plyer.notification.notify.call_args.kwargs
+        assert len(toast_kwargs["message"]) <= 256
+        # Journal retains the full message for /api/events consumers.
+        entries = journal.tail(limit=10)
+        assert entries[0]["message"] == long_msg

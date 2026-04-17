@@ -38,13 +38,68 @@ def _strip_markdown_fence(text: str) -> str:
     return match.group(1) if match else text
 
 
+def _escape_raw_control_chars_in_strings(text: str) -> str:
+    """Escape literal newline/tab/carriage-return bytes that appear inside
+    JSON string values.
+
+    Small local LLMs (notably Qwen 2.5 7B via Ollama ``--format json``)
+    emit JSON where long string values are line-wrapped with literal
+    newline bytes rather than the required ``\\n`` escape. Python's
+    strict ``json`` module rejects these as "Invalid control character
+    at: line N column M". This helper walks the text with a minimal
+    string-state machine and replaces raw ``\\n``/``\\r``/``\\t`` inside
+    strings with their escaped form while leaving whitespace between
+    tokens untouched (that whitespace is legal JSON).
+    """
+    out: list[str] = []
+    in_string = False
+    escape_next = False
+    for ch in text:
+        if escape_next:
+            out.append(ch)
+            escape_next = False
+            continue
+        if in_string:
+            if ch == "\\":
+                out.append(ch)
+                escape_next = True
+                continue
+            if ch == '"':
+                in_string = False
+                out.append(ch)
+                continue
+            if ch == "\n":
+                out.append("\\n")
+                continue
+            if ch == "\r":
+                out.append("\\r")
+                continue
+            if ch == "\t":
+                out.append("\\t")
+                continue
+            out.append(ch)
+        else:
+            if ch == '"':
+                in_string = True
+            out.append(ch)
+    return "".join(out)
+
+
 def _parse_claude_output(raw: str) -> AnalysisResult:
     text = _strip_markdown_fence(raw.strip())
 
     try:
         data = json.loads(text)
-    except json.JSONDecodeError as e:
-        raise ValueError(f"Failed to parse Claude output as JSON: {e}\nRaw: {text[:500]}")
+    except json.JSONDecodeError:
+        # Retry with raw-control-char escaping for Ollama small-model
+        # line-wrapping. Falls through to the original error if that
+        # preprocessing doesn't fix it.
+        try:
+            data = json.loads(_escape_raw_control_chars_in_strings(text))
+        except json.JSONDecodeError as e:
+            raise ValueError(
+                f"Failed to parse Claude output as JSON: {e}\nRaw: {text[:500]}"
+            )
 
     # ``claude --print --output-format json`` wraps the model response in an
     # envelope: {"type":"result","subtype":"success","result":"<string>",...}
@@ -123,6 +178,15 @@ def analyze(
                 input=prompt,
                 capture_output=True,
                 text=True,
+                # Force UTF-8 for stdin/stdout. Without this, Windows
+                # subprocesses default to the ANSI code page (cp1252),
+                # which raises UnicodeDecodeError on any non-Latin-1
+                # bytes Ollama/Claude emit (e.g. smart quotes, accented
+                # names). ``errors="replace"`` keeps a partial parse
+                # possible even if a single byte is malformed rather
+                # than losing the whole output.
+                encoding="utf-8",
+                errors="replace",
                 timeout=ANALYSIS_TIMEOUT_SECONDS,
             )
         except subprocess.TimeoutExpired:
