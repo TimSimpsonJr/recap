@@ -6,6 +6,7 @@ for real-time FLAC encoding with continuous flush to disk.
 
 from __future__ import annotations
 
+import enum
 import logging
 import threading
 import time
@@ -101,11 +102,7 @@ class _SoxrResamplerWrapper:
         self._stream = self._build_stream(input_rate)
 
 
-import enum as _enum
-import threading as _threading
-
-
-class _SourceHealth(_enum.Enum):
+class _SourceHealth(enum.Enum):
     """Health states of a capture source.
 
     STOPPED: start() not yet called, or stop() has been called.
@@ -140,7 +137,7 @@ class _SourceStream:
         self._kind = kind
         self._output_rate = output_rate
         self._state = _SourceHealth.STOPPED
-        self._lock = _threading.Lock()
+        self._lock = threading.Lock()
 
         self._stream: Any = None
         self._pa: Any = None
@@ -579,7 +576,7 @@ class AudioCapture:
         self._mic_source: _SourceStream | None = None
         self._loopback_source: _SourceStream | None = None
         self._fatal_error: Exception | None = None
-        self._fatal_event: _threading.Event = _threading.Event()
+        self._fatal_event: threading.Event = threading.Event()
         self._drain_thread: threading.Thread | None = None
 
         # Public callback invoked with (mono_chunk_bytes, sample_rate) after
