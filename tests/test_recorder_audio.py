@@ -650,3 +650,119 @@ class TestAudioCaptureDrain:
         src = inspect.getsource(AudioCapture._drain_loop)
         assert "next_health_check_at" in src
         assert "monotonic" in src
+
+    def test_one_degraded_one_healthy_does_not_fire_fatal(self, monkeypatch, tmp_path):
+        """Regression guard: fatal only fires when BOTH sources are
+        degraded. A review finding flagged that changing the ``and``
+        to ``or`` in the drain loop's fatal check would pass all
+        other tests silently; this test locks the semantics in."""
+        from recap.daemon.recorder.audio import AudioCapture, _SourceHealth
+        import recap.daemon.recorder.audio as audio_mod
+        from unittest.mock import MagicMock
+        import time as _time
+
+        monkeypatch.setattr(audio_mod, "_require_pyflac", lambda: MagicMock())
+        pa_instance = MagicMock()
+        info = {
+            "name": "Mock", "index": 1, "hostApi": 0,
+            "maxInputChannels": 1, "defaultSampleRate": 48000.0,
+        }
+        pa_instance.get_default_wasapi_device.return_value = info
+        pa_instance.get_default_wasapi_loopback.return_value = info
+        pa_instance.open.return_value = MagicMock()
+        pa_module = MagicMock()
+        pa_module.PyAudio.return_value = pa_instance
+        pa_module.paInt16 = 8
+        monkeypatch.setattr(audio_mod, "_require_pyaudio", lambda: pa_module)
+
+        cap = AudioCapture(output_path=tmp_path / "x.flac", sample_rate=48000)
+        cap.start()
+        try:
+            # Mic DEGRADED, loopback HEALTHY -- must NOT fire fatal.
+            with cap._mic_source._lock:
+                cap._mic_source._state = _SourceHealth.DEGRADED
+            # Give the drain loop at least one health tick (~1s).
+            _time.sleep(1.5)
+            assert cap._fatal_event.is_set() is False
+            assert cap._fatal_error is None
+        finally:
+            cap.stop()
+
+    def test_fatal_branch_runs_final_partial_tick(self, monkeypatch, tmp_path):
+        """Regression guard for reviewer finding I3: when the fatal
+        branch fires, any resampled audio still buffered on each
+        source must still be flushed to the encoder. Previously the
+        fatal branch returned early and dropped up to ~21ms of audio.
+
+        We assert via ``inspect`` that the fatal branch calls
+        ``_drain_final_partial_tick`` (behavioral assertion via
+        ``_interleave_and_encode`` call count under the MagicMock
+        encoder was flaky due to drain-thread scheduling)."""
+        from recap.daemon.recorder.audio import AudioCapture
+        import inspect
+        src = inspect.getsource(AudioCapture._drain_loop)
+        # The fatal branch must flush the partial tick before return.
+        # Find the "fatal" marker and check the subsequent lines.
+        fatal_idx = src.find("AudioCaptureBothSourcesFailedError")
+        assert fatal_idx > 0, "fatal branch marker not found"
+        # From the fatal marker to the next ``return``, the tick flush
+        # must appear.
+        return_idx = src.find("return", fatal_idx)
+        fatal_block = src[fatal_idx:return_idx]
+        assert "_drain_final_partial_tick" in fatal_block, (
+            "fatal branch must call _drain_final_partial_tick so the "
+            "last sub-second of audio isn't silently dropped"
+        )
+
+    def test_backoff_ladder_advances_through_all_steps(self, monkeypatch, tmp_path):
+        """Regression guard: the reconnect backoff ladder
+        (0.25/0.5/1.0/2.0s) must actually advance through each step
+        across successive failures, not re-use the first step. The
+        ``min(attempts, len(STEPS)-1)`` clamp in attempt_reopen_if_due
+        is easy to break with an off-by-one."""
+        from recap.daemon.recorder.audio import _SourceStream, _SourceHealth
+        from unittest.mock import MagicMock
+        import recap.daemon.recorder.audio as audio_mod
+        import time as _time
+
+        pa_instance = MagicMock()
+        info = {
+            "name": "Mock", "index": 1, "hostApi": 0,
+            "maxInputChannels": 1, "defaultSampleRate": 48000.0,
+        }
+        pa_instance.get_default_wasapi_device.return_value = info
+        pa_instance.open.return_value = MagicMock()
+        pa_module = MagicMock()
+        pa_module.PyAudio.return_value = pa_instance
+        pa_module.paInt16 = 8
+        pa_module.paContinue = 0
+        monkeypatch.setattr(audio_mod, "_require_pyaudio", lambda: pa_module)
+
+        src = _SourceStream(kind="mic", output_rate=48000)
+        src.start()
+
+        # Make every reopen fail.
+        pa_instance.open.side_effect = RuntimeError("device busy")
+        with src._lock:
+            src._state = _SourceHealth.RECONNECTING
+
+        # Drive four consecutive reopen attempts, advancing the
+        # monotonic clock past each backoff step. Record the step that
+        # got scheduled each time by reading ``_next_reopen_at - now``.
+        observed_steps = []
+        for _ in range(4):
+            before = _time.monotonic()
+            # Fast-forward past any pending backoff gate.
+            with src._lock:
+                src._next_reopen_at = 0.0
+            src.attempt_reopen_if_due()
+            with src._lock:
+                delta = src._next_reopen_at - before
+            observed_steps.append(delta)
+        # Expect the ladder to advance roughly through 0.25, 0.5, 1.0, 2.0
+        # (attempt n uses STEPS[min(n, 3)]). Tolerate small monotonic clock
+        # drift from the reopen work.
+        assert observed_steps[0] >= 0.24
+        assert observed_steps[1] >= 0.49
+        assert observed_steps[2] >= 0.99
+        assert observed_steps[3] >= 1.99

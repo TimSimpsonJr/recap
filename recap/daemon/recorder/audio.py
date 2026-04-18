@@ -368,7 +368,14 @@ class _SourceStream:
     def _do_reopen(self) -> None:
         """Tear down the current stream, open a new one on the current
         default device, rebuild the resampler if the native rate
-        changed. No journaling here -- caller owns state transitions."""
+        changed. No journaling here -- caller owns state transitions.
+
+        Ordering: close the old stream first, probe the new device,
+        open the new stream, and ONLY THEN rewrite bound state under
+        the lock. If ``pa.open`` raises mid-reopen, the source keeps
+        its old identity/resampler so the next reopen attempt starts
+        from a coherent baseline rather than a half-updated wedge.
+        """
         old_stream = self._stream
         old_pa = self._pa
         if old_stream is not None:
@@ -385,36 +392,61 @@ class _SourceStream:
 
         runtime_pyaudio = _require_pyaudio()
         pa = runtime_pyaudio.PyAudio()
-        if self._kind == "loopback":
-            info = pa.get_default_wasapi_loopback()
-        else:
-            info = pa.get_default_wasapi_device(d_in=True)
+        try:
+            if self._kind == "loopback":
+                info = pa.get_default_wasapi_loopback()
+            else:
+                info = pa.get_default_wasapi_device(d_in=True)
+            native_rate = int(info["defaultSampleRate"])
+            new_identity = self._compute_identity(info)
 
-        native_rate = int(info["defaultSampleRate"])
-        new_identity = self._compute_identity(info)
+            chunk_size = 1024
+            new_stream = pa.open(
+                format=runtime_pyaudio.paInt16,
+                channels=1,
+                rate=native_rate,
+                input=True,
+                input_device_index=info["index"],
+                frames_per_buffer=chunk_size,
+                stream_callback=self._on_audio_callback,
+            )
+        except Exception:
+            # Probe or open failed; release the PyAudio handle we grabbed
+            # and leave source state (identity, resampler) untouched so
+            # the next attempt retries from a clean baseline.
+            try:
+                pa.terminate()
+            except Exception:
+                pass
+            # Null _stream/_pa since the old ones were already closed at
+            # the top of this method -- leaving the stale references in
+            # place would trip double-close on the next reopen.
+            self._stream = None
+            self._pa = None
+            raise
 
+        # Reopen succeeded. Commit new state under the lock. Rebuild the
+        # resampler unconditionally if the rate changed; also rebuild
+        # when the rate matches but the device changed, so soxr's
+        # streaming filter state doesn't carry a previous device's
+        # sample tail across the reopen boundary.
         with self._lock:
-            self._bound_identity = new_identity
-            self._latest_default_identity = new_identity
-            if self._resampler is None or self._resampler.input_rate != native_rate:
+            identity_changed = self._bound_identity != new_identity
+            rate_changed = (
+                self._resampler is None
+                or self._resampler.input_rate != native_rate
+            )
+            if rate_changed or identity_changed:
                 self._resampler = _SoxrResamplerWrapper(
                     input_rate=native_rate,
                     output_rate=self._output_rate,
                 )
+            self._bound_identity = new_identity
+            self._latest_default_identity = new_identity
             self._raw_buffer = b""
             self._resampled_buffer = b""
-
-        chunk_size = 1024
-        self._stream = pa.open(
-            format=runtime_pyaudio.paInt16,
-            channels=1,
-            rate=native_rate,
-            input=True,
-            input_device_index=info["index"],
-            frames_per_buffer=chunk_size,
-            stream_callback=self._on_audio_callback,
-        )
-        self._pa = pa
+            self._stream = new_stream
+            self._pa = pa
 
     def stop(self) -> None:
         """Transition to STOPPED before tearing down internals so a
@@ -816,6 +848,12 @@ class AudioCapture:
                         "their reopen windows; stopping recording.",
                     )
                     self._fatal_event.set()
+                    # Flush any resampled audio that landed in the
+                    # per-source buffers before degradation so the user
+                    # doesn't lose the last second of meeting audio on
+                    # a hardware-induced fatal stop. Mirror the clean
+                    # exit path at the bottom of this method.
+                    self._drain_final_partial_tick()
                     return
                 if self._mic_source is not None:
                     self._mic_source.attempt_reopen_if_due()

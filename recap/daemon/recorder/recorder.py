@@ -367,7 +367,14 @@ class Recorder:
         """Watch AudioCapture._fatal_event for both-sources-dead
         condition. When tripped, stop the recording cleanly and log
         the error so the user knows why it stopped. ``threading.Event``
-        is not awaitable, so this polls at 500 ms."""
+        is not awaitable, so this polls at 500 ms.
+
+        Re-entry safety: a manual ``Recorder.stop()`` racing with a
+        fatal event can leave the state machine past RECORDING by the
+        time this monitor observes the event. Only call ``stop()`` if
+        the state machine still thinks we're recording; otherwise log
+        the fatal cause and exit quietly (the user-initiated stop
+        already did the teardown)."""
         try:
             while self._audio_capture is not None:
                 cap = self._audio_capture
@@ -375,12 +382,15 @@ class Recorder:
                 if fatal_event is not None and fatal_event.is_set():
                     err = getattr(cap, "_fatal_error", None)
                     logger.error("Capture fatal: %s", err)
-                    try:
-                        await self.stop()
-                    except Exception:
-                        logger.exception(
-                            "Recorder stop() during fatal capture handling raised",
-                        )
+                    if self.state_machine.state == RecorderState.RECORDING:
+                        try:
+                            await self.stop()
+                        except Exception:
+                            logger.exception(
+                                "Recorder stop() during fatal capture handling raised",
+                            )
+                    # else: a concurrent manual stop already tore down
+                    # the recorder; nothing left to do.
                     return
                 await asyncio.sleep(0.5)
         except asyncio.CancelledError:
