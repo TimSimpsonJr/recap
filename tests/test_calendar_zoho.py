@@ -78,3 +78,38 @@ class TestFetchZohoEvents:
         with patch("aiohttp.ClientSession", return_value=mock_session):
             events = await fetch_zoho_events(access_token="token", calendar_id="cal1")
         assert events == []
+
+    @pytest.mark.asyncio
+    async def test_converts_iso_date_range_to_zoho_compact_format(self):
+        """Scheduler passes ISO 8601 strings like ``2026-04-20T00:00:00Z``
+        but Zoho's Calendar API requires its compact datetime format
+        ``20260420T000000Z`` in the ``range`` query parameter. The
+        client must convert ISO -> compact before building the
+        request; otherwise Zoho returns 400 PATTERN_NOT_MATCHED.
+        Regression guard for the hardware diagnostic on 2026-04-20."""
+        import json as _json
+        mock_response = AsyncMock()
+        mock_response.status = 200
+        mock_response.json = AsyncMock(return_value={"events": []})
+
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(return_value=mock_response)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock()
+
+        with patch("aiohttp.ClientSession", return_value=mock_session):
+            await fetch_zoho_events(
+                access_token="token",
+                calendar_id="cal1",
+                start_date="2026-04-20T00:00:00Z",
+                end_date="2026-04-27T23:59:59Z",
+            )
+
+        call_kwargs = mock_session.get.call_args.kwargs
+        sent_params = call_kwargs.get("params", {})
+        range_json = sent_params.get("range")
+        assert range_json is not None, "range param missing from Zoho request"
+        parsed_range = _json.loads(range_json)
+        # No dashes, no colons -- Zoho compact format.
+        assert parsed_range["start"] == "20260420T000000Z"
+        assert parsed_range["end"] == "20260427T235959Z"

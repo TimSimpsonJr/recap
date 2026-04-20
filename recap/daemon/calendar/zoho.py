@@ -30,6 +30,18 @@ def _parse_zoho_datetime(raw: str) -> tuple[str, str]:
     return dt.strftime("%Y-%m-%d"), dt.strftime("%H:%M")
 
 
+def _to_zoho_compact(iso_datetime: str) -> str:
+    """Convert an ISO 8601 datetime (``2026-04-20T00:00:00Z``) to Zoho's
+    compact datetime format (``20260420T000000Z``).
+
+    The scheduler passes ISO 8601 strings for date ranges, but the Zoho
+    Calendar API's ``range`` query parameter rejects dashes and colons
+    with ``PATTERN_NOT_MATCHED``. This helper strips them (keeping the
+    ``T`` separator and any trailing ``Z``). Already-compact inputs
+    pass through unchanged so the helper is idempotent."""
+    return iso_datetime.replace("-", "").replace(":", "")
+
+
 def _extract_meeting_link(event: dict) -> str:
     """Try to find a meeting link from the event URL or description."""
     url = event.get("url", "")
@@ -86,9 +98,9 @@ async def fetch_zoho_events(
     if start_date or end_date:
         range_obj: dict[str, str] = {}
         if start_date:
-            range_obj["start"] = start_date
+            range_obj["start"] = _to_zoho_compact(start_date)
         if end_date:
-            range_obj["end"] = end_date
+            range_obj["end"] = _to_zoho_compact(end_date)
         params["range"] = json.dumps(range_obj)
 
     try:
