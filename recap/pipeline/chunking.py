@@ -66,3 +66,32 @@ def offset_utterances(
         )
         for u in utterances
     ]
+
+
+def merge_overlapping_windows(
+    prior: list[Utterance],
+    later: list[Utterance],
+    overlap_start_s: float,
+    overlap_end_s: float,
+) -> list[Utterance]:
+    """Concatenate two adjacent windows' utterance lists, deduping the overlap.
+
+    Center-timestamp rule: an utterance whose ``(start + end) / 2`` lies
+    inside ``[overlap_start_s, overlap_end_s]`` is kept in the ``prior``
+    window; its duplicate in ``later`` (same ``start``, ``end``, ``text``)
+    is dropped.
+
+    Both inputs are assumed to be individually sorted by ``start`` ascending
+    and already offset into the same absolute time base.
+    """
+    prior_overlap_keys: set[tuple[float, float, str]] = set()
+    for u in prior:
+        center = (u.start + u.end) / 2.0
+        if overlap_start_s <= center <= overlap_end_s:
+            prior_overlap_keys.add((u.start, u.end, u.text))
+
+    later_filtered = [
+        u for u in later
+        if (u.start, u.end, u.text) not in prior_overlap_keys
+    ]
+    return list(prior) + later_filtered

@@ -4,7 +4,11 @@ from __future__ import annotations
 import pytest
 
 from recap.models import Utterance
-from recap.pipeline.chunking import offset_utterances, plan_windows
+from recap.pipeline.chunking import (
+    merge_overlapping_windows,
+    offset_utterances,
+    plan_windows,
+)
 
 
 def test_plan_windows_single_window_shorter_than_size():
@@ -60,3 +64,58 @@ def test_offset_utterances_shifts_timestamps():
 
 def test_offset_utterances_empty_input():
     assert offset_utterances([], window_start_s=500.0) == []
+
+
+def test_merge_drops_duplicate_in_overlap_zone():
+    # Window 1 covers [0, 120], window 2 covers [110, 230]. Overlap: [110, 120].
+    # Utterance "overlap-a" has center at 115 -> belongs to window 1.
+    # Utterance "overlap-b" has center at 118 -> belongs to window 1.
+    # Window 2's duplicates of these two should be dropped.
+    w1 = [
+        Utterance(speaker="UNKNOWN", start=5.0, end=10.0, text="early"),
+        Utterance(speaker="UNKNOWN", start=113.0, end=117.0, text="overlap-a"),
+        Utterance(speaker="UNKNOWN", start=116.0, end=120.0, text="overlap-b"),
+    ]
+    w2 = [
+        Utterance(speaker="UNKNOWN", start=113.0, end=117.0, text="overlap-a"),
+        Utterance(speaker="UNKNOWN", start=116.0, end=120.0, text="overlap-b"),
+        Utterance(speaker="UNKNOWN", start=125.0, end=130.0, text="late"),
+    ]
+    merged = merge_overlapping_windows(
+        prior=w1,
+        later=w2,
+        overlap_start_s=110.0,
+        overlap_end_s=120.0,
+    )
+    texts = [u.text for u in merged]
+    assert texts == ["early", "overlap-a", "overlap-b", "late"]
+
+
+def test_merge_keeps_later_side_when_center_falls_in_later_window():
+    # For center-in-overlap-goes-to-prior behavior, verify prior keeps its own
+    # even when later is empty.
+    w1 = [Utterance("UNKNOWN", 115.0, 118.0, "only-in-prior")]
+    w2: list[Utterance] = []
+    merged = merge_overlapping_windows(
+        prior=w1, later=w2, overlap_start_s=110.0, overlap_end_s=120.0,
+    )
+    assert [u.text for u in merged] == ["only-in-prior"]
+
+
+def test_merge_empty_later_returns_prior():
+    w1 = [Utterance("UNKNOWN", 0.0, 5.0, "a")]
+    assert merge_overlapping_windows(w1, [], 0.0, 10.0) == w1
+
+
+def test_merge_result_is_monotonic():
+    w1 = [
+        Utterance("UNKNOWN", 0.0, 5.0, "a"),
+        Utterance("UNKNOWN", 113.0, 118.0, "b"),
+    ]
+    w2 = [
+        Utterance("UNKNOWN", 113.0, 118.0, "b"),
+        Utterance("UNKNOWN", 125.0, 130.0, "c"),
+    ]
+    merged = merge_overlapping_windows(w1, w2, 110.0, 120.0)
+    for i in range(1, len(merged)):
+        assert merged[i].start >= merged[i - 1].start
