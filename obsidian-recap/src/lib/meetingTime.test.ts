@@ -17,6 +17,24 @@ describe("parseMeetingTime", () => {
     expect(parseMeetingTime("garbage")).toEqual(sentinel);
     expect(parseMeetingTime("14:00")).toEqual(sentinel);
   });
+
+  it("returns the all-day sentinel when hour is out of range", () => {
+    const sentinel = { start: "00:00", end: "23:59", allDay: true };
+    expect(parseMeetingTime("25:00-26:00")).toEqual(sentinel);
+  });
+
+  it("returns the all-day sentinel when minute is out of range", () => {
+    const sentinel = { start: "00:00", end: "23:59", allDay: true };
+    expect(parseMeetingTime("14:60-15:70")).toEqual(sentinel);
+  });
+
+  it("parses a valid range with non-zero minutes", () => {
+    expect(parseMeetingTime("09:30-10:45")).toEqual({
+      start: "09:30",
+      end: "10:45",
+      allDay: false,
+    });
+  });
 });
 
 describe("todayIsoDate", () => {

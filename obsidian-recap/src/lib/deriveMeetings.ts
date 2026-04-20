@@ -83,9 +83,7 @@ export function deriveTodayMeetings(
     );
 
   const firstNonPast = rows.findIndex(r => !r.isPast);
-  const hasPast = rows.some(r => r.isPast);
-  const nowDividerIndex =
-    firstNonPast > 0 && hasPast ? firstNonPast : null;
+  const nowDividerIndex = firstNonPast > 0 ? firstNonPast : null;
 
   return { rows, nowDividerIndex };
 }

@@ -10,7 +10,7 @@ const ALL_DAY: ParsedMeetingTime = {
   allDay: true,
 };
 
-const TIME_RANGE = /^(\d{2}):(\d{2})-(\d{2}):(\d{2})$/;
+const TIME_RANGE = /^(([01]\d|2[0-3]):[0-5]\d)-(([01]\d|2[0-3]):[0-5]\d)$/;
 
 export function parseMeetingTime(
   raw: string | undefined | null,
@@ -24,8 +24,8 @@ export function parseMeetingTime(
     return ALL_DAY;
   }
   return {
-    start: `${match[1]}:${match[2]}`,
-    end: `${match[3]}:${match[4]}`,
+    start: match[1],
+    end: match[3],
     allDay: false,
   };
 }
