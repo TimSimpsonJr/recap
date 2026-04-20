@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import tempfile
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -222,3 +223,45 @@ def test_transcribe_cleans_temp_files_on_failure(monkeypatch, tmp_path):
     for p in created:
         assert not p.exists(), f"temp file leaked: {p}"
         assert not p.parent.exists(), f"temp dir leaked: {p.parent}"
+
+
+def test_transcribe_no_temp_dir_leak_when_model_load_fails(monkeypatch, tmp_path):
+    """If _load_model raises, no recap-chunks-* directory may be left behind.
+
+    The acquisition-and-release pair for the temp dir must be anchored
+    AFTER the model load succeeds; otherwise a model init failure (missing
+    NeMo, download/auth error, GPU init) leaves an orphan temp dir on disk.
+    """
+    audio = tmp_path / "long.wav"
+    audio.write_bytes(b"RIFF")
+
+    mkdtemp_calls: list[str] = []
+    original_mkdtemp = tempfile.mkdtemp
+
+    def tracking_mkdtemp(*args, **kwargs):
+        path = original_mkdtemp(*args, **kwargs)
+        mkdtemp_calls.append(path)
+        return path
+
+    monkeypatch.setattr("tempfile.mkdtemp", tracking_mkdtemp)
+
+    def failing_load(*_a, **_k):
+        raise RuntimeError("CUDA init failed")
+
+    monkeypatch.setattr("recap.pipeline.transcribe._load_model", failing_load)
+    monkeypatch.setattr("recap.pipeline.transcribe._unload_model", lambda _m: None)
+    monkeypatch.setattr(
+        "recap.pipeline.transcribe._probe_duration_s", lambda _p: 300.0,
+    )
+    monkeypatch.setattr(
+        "recap.pipeline.transcribe.slice_window_to_temp", _fake_slice,
+    )
+
+    with pytest.raises(RuntimeError, match="CUDA init"):
+        transcribe(audio_path=audio, device="cpu")
+
+    # Either mkdtemp was never called (deferred past model load) or it was
+    # called and the directory is gone. Either is acceptable; a surviving
+    # directory is the leak this test guards against.
+    for path in mkdtemp_calls:
+        assert not Path(path).exists(), f"temp dir leaked: {path}"

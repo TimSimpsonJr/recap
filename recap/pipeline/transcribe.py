@@ -140,44 +140,53 @@ def transcribe(
     duration_s = _probe_duration_s(audio_path)
     windows = plan_windows(duration_s, _WINDOW_SIZE_S, _OVERLAP_S)
 
-    temp_dir = Path(tempfile.mkdtemp(prefix="recap-chunks-"))
+    # Defer temp-dir creation until after the model loads: if _load_model
+    # raises (missing NeMo, download/auth, GPU init), there is no temp dir
+    # to leak. Each acquisition has its own try/finally so cleanup order
+    # matches acquisition order in reverse.
     model = _load_model(model_name, device)
-    stitched: list[Utterance] = []
     try:
-        for i, (start_s, end_s) in enumerate(windows):
-            chunk_path = slice_window_to_temp(
-                source=audio_path,
-                start_s=start_s,
-                duration_s=end_s - start_s,
-                temp_dir=temp_dir,
-            )
-            try:
-                # timestamps=True tells NeMo to populate hyp.timestamp with
-                # per-segment {segment, start, end, start_offset, end_offset}
-                # dicts. Without it the attribute is an empty list.
-                results = model.transcribe([str(chunk_path)], timestamps=True)
-                hyp = results[0]
-                window_utts = _hypothesis_to_utterances(hyp)
-                offset = offset_utterances(window_utts, start_s)
-                if i == 0:
-                    stitched = list(offset)
-                else:
-                    prior_window_end = windows[i - 1][1]
-                    overlap_start = start_s
-                    overlap_end = min(prior_window_end, end_s)
-                    stitched = merge_overlapping_windows(
-                        stitched, offset, overlap_start, overlap_end,
+        temp_dir = Path(tempfile.mkdtemp(prefix="recap-chunks-"))
+        try:
+            stitched: list[Utterance] = []
+            for i, (start_s, end_s) in enumerate(windows):
+                chunk_path = slice_window_to_temp(
+                    source=audio_path,
+                    start_s=start_s,
+                    duration_s=end_s - start_s,
+                    temp_dir=temp_dir,
+                )
+                try:
+                    # timestamps=True tells NeMo to populate hyp.timestamp
+                    # with per-segment {segment, start, end, start_offset,
+                    # end_offset} dicts. Without it the attribute is an
+                    # empty list.
+                    results = model.transcribe(
+                        [str(chunk_path)], timestamps=True,
                     )
-            finally:
-                chunk_path.unlink(missing_ok=True)
+                    hyp = results[0]
+                    window_utts = _hypothesis_to_utterances(hyp)
+                    offset = offset_utterances(window_utts, start_s)
+                    if i == 0:
+                        stitched = list(offset)
+                    else:
+                        prior_window_end = windows[i - 1][1]
+                        overlap_start = start_s
+                        overlap_end = min(prior_window_end, end_s)
+                        stitched = merge_overlapping_windows(
+                            stitched, offset, overlap_start, overlap_end,
+                        )
+                finally:
+                    chunk_path.unlink(missing_ok=True)
 
-        raw_text = " ".join(u.text for u in stitched)
-        result = TranscriptResult(
-            utterances=stitched, raw_text=raw_text, language="en",
-        )
-        if save_transcript is not None:
-            _save_transcript_json(save_transcript, result)
-        return result
+            raw_text = " ".join(u.text for u in stitched)
+            result = TranscriptResult(
+                utterances=stitched, raw_text=raw_text, language="en",
+            )
+            if save_transcript is not None:
+                _save_transcript_json(save_transcript, result)
+            return result
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
     finally:
         _unload_model(model)
-        shutil.rmtree(temp_dir, ignore_errors=True)
