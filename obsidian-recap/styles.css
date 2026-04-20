@@ -311,3 +311,57 @@
     color: var(--text-muted);
     font-size: var(--font-ui-small);
 }
+
+/* Tab strip (Upcoming / Now / Past) */
+.recap-tab-strip {
+    display: flex;
+    gap: 20px;
+    border-bottom: 1px solid var(--background-modifier-border);
+    margin-bottom: 12px;
+}
+.recap-tab-button {
+    padding: 8px 2px;
+    font-size: var(--font-ui-small);
+    color: var(--text-muted);
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    transition: color 0.15s, border-bottom-color 0.15s;
+}
+.recap-tab-button:hover {
+    color: var(--text-normal);
+}
+.recap-tab-button.is-active {
+    color: var(--text-normal);
+    border-bottom-color: var(--interactive-accent);
+}
+
+/* "Now" divider between upcoming and past meetings */
+.recap-now-divider {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 0;
+    color: var(--interactive-accent);
+    font-size: var(--font-ui-smaller);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+}
+.recap-now-divider::before,
+.recap-now-divider::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: var(--interactive-accent);
+    opacity: 0.5;
+}
+
+/* Past meeting row: dimmed, brighten on hover */
+.recap-meeting-row-past {
+    opacity: 0.55;
+    transition: opacity 0.15s;
+}
+.recap-meeting-row-past:hover {
+    opacity: 0.8;
+}
