@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import pytest
 
-from recap.pipeline.chunking import plan_windows
+from recap.models import Utterance
+from recap.pipeline.chunking import offset_utterances, plan_windows
 
 
 def test_plan_windows_single_window_shorter_than_size():
@@ -43,3 +44,19 @@ def test_plan_windows_rejects_invalid_params():
         plan_windows(duration_s=100.0, window_s=10.0, overlap_s=10.0)
     with pytest.raises(ValueError):
         plan_windows(duration_s=-5.0, window_s=120.0, overlap_s=10.0)
+
+
+def test_offset_utterances_shifts_timestamps():
+    window_utts = [
+        Utterance(speaker="UNKNOWN", start=0.5, end=2.0, text="hello"),
+        Utterance(speaker="UNKNOWN", start=5.0, end=7.5, text="world"),
+    ]
+    result = offset_utterances(window_utts, window_start_s=110.0)
+    assert result == [
+        Utterance(speaker="UNKNOWN", start=110.5, end=112.0, text="hello"),
+        Utterance(speaker="UNKNOWN", start=115.0, end=117.5, text="world"),
+    ]
+
+
+def test_offset_utterances_empty_input():
+    assert offset_utterances([], window_start_s=500.0) == []

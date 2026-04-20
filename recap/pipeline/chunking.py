@@ -5,6 +5,8 @@ scope, OOM policy, and overlap semantics.
 """
 from __future__ import annotations
 
+from recap.models import Utterance
+
 
 def plan_windows(
     duration_s: float,
@@ -44,3 +46,23 @@ def plan_windows(
             break
         start += step
     return windows
+
+
+def offset_utterances(
+    utterances: list[Utterance],
+    window_start_s: float,
+) -> list[Utterance]:
+    """Return a new list of utterances with timestamps shifted by ``window_start_s``.
+
+    Each returned utterance is a fresh instance so the caller's per-window
+    list is never mutated.
+    """
+    return [
+        Utterance(
+            speaker=u.speaker,
+            start=u.start + window_start_s,
+            end=u.end + window_start_s,
+            text=u.text,
+        )
+        for u in utterances
+    ]
