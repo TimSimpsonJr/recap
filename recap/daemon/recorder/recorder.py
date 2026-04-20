@@ -175,9 +175,14 @@ class Recorder:
             # always wins over the auto-generated or Signal-popup default.
             self._current_metadata.llm_backend = backend
 
+        # Always pass 48000 so AudioCapture doesn't log an override
+        # warning on every recording. Production capture is 48 kHz
+        # fixed per the audio hot-swap design doc; ``self._sample_rate``
+        # is retained for streaming-consumer (on_chunk) callers but
+        # doesn't control the recorder's output rate any more.
         self._audio_capture = AudioCapture(
             output_path=path,
-            sample_rate=self._sample_rate,
+            sample_rate=48000,
             channels=self._channels,
         )
         self._silence_detector = SilenceDetector(
