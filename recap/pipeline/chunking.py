@@ -82,13 +82,18 @@ def merge_overlapping_windows(
 ) -> list[Utterance]:
     """Concatenate two adjacent windows' utterance lists, deduping the overlap.
 
-    Center-timestamp ownership rule: ``prior`` owns the entire overlap zone.
-    Any utterance in ``later`` whose midpoint ``(start + end) / 2`` lies
-    inside ``[overlap_start_s, overlap_end_s]`` is dropped, because the
-    matching audio was already transcribed by ``prior``. The rule is
-    positional, not content-based, so it tolerates the timestamp jitter
-    that real ASR produces across overlapping windows (same phrase,
-    slightly different ``start`` / ``end`` on each pass).
+    Two-stage dedup:
+
+    1. Center-timestamp ownership: ``prior`` owns the overlap zone. Any
+       utterance in ``later`` whose midpoint ``(start + end) / 2`` lies
+       inside ``[overlap_start_s, overlap_end_s]`` is dropped. The rule is
+       positional, not content-based, so it tolerates the timestamp jitter
+       that real ASR produces across overlapping windows.
+    2. Adjacent same-start collapse: after sorting, any pair of adjacent
+       utterances sharing a ``start`` represents the same acoustic moment
+       split between two windows (prior's audio ran out mid-utterance and
+       later's view continued past the boundary). Keep whichever reaches
+       furthest — the longest ``end`` is the most complete version.
 
     The result is sorted by ``start`` ascending so that a long ``later``
     utterance whose audio straddles the boundary (center outside overlap,
@@ -106,7 +111,17 @@ def merge_overlapping_windows(
 
     merged = list(prior) + later_filtered
     merged.sort(key=lambda u: u.start)
-    return merged
+
+    if not merged:
+        return merged
+    collapsed: list[Utterance] = [merged[0]]
+    for u in merged[1:]:
+        if u.start == collapsed[-1].start:
+            if u.end > collapsed[-1].end:
+                collapsed[-1] = u
+        else:
+            collapsed.append(u)
+    return collapsed
 
 
 def slice_window_to_temp(

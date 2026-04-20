@@ -147,6 +147,36 @@ def test_merge_drops_later_overlap_despite_timestamp_jitter():
     assert merged[0].end == 117.0
 
 
+def test_merge_collapses_same_start_across_window_boundary():
+    """When prior's truncated boundary utterance and later's complete
+    version share a ``start`` (same acoustic moment, different truncations
+    because each window's audio ended differently), keep the longer one.
+
+    This case was observed on real Parakeet output: the same utterance
+    got a ``start`` of 1547.52s from both windows — one truncated by the
+    prior window's audio boundary, the other complete. The positional
+    rule alone leaves both because the long one's center lies past the
+    overlap zone; adjacent-same-start collapse catches it.
+    """
+    prior = [
+        # Center=1548.6, in overlap [1540, 1550]. KEPT by positional rule.
+        Utterance("UNKNOWN", 1547.52, 1549.68,
+                  "So now we need to, you know, that."),
+    ]
+    later = [
+        # Same start, longer end. Center=1551.32, PAST overlap → KEPT.
+        Utterance("UNKNOWN", 1547.52, 1555.12,
+                  "So now we need to, you know, that's something we're working on."),
+    ]
+    merged = merge_overlapping_windows(prior, later, 1540.0, 1550.0)
+    assert len(merged) == 1, (
+        "Same-start duplicates must collapse; kept "
+        f"{[(u.start, u.end, u.text) for u in merged]}"
+    )
+    assert merged[0].end == 1555.12
+    assert "something we're working on" in merged[0].text
+
+
 def test_merge_output_monotonic_when_later_utterance_straddles_boundary():
     """A long ``later`` utterance whose center is past the overlap zone but
     whose start falls inside it must not break the monotonicity invariant."""
