@@ -1080,3 +1080,13 @@ When all tasks complete:
 - The preserved 37-min `.flac` replays to completion.
 - Sortformer has an explicit data point: either fine at current audio lengths or a follow-up handoff exists.
 - OOM safety (commit `1aa86f7`) is still in place as belt-and-braces.
+
+---
+
+## Task 1 outcome
+
+**Decision:** Path B
+**Reason:** NeMo's only TDT-compatible buffered helpers (`BatchedFrameASRTDT`, `FrameBatchChunkedRNNT`) return text-only output from `greedy_merge` / `" ".join(all_preds)`. Neither preserves per-segment timestamps in its return path, so exit criterion #2 ({speaker, start, end, text} `Utterance` shape) fails at the API surface. The only timestamp utility in `streaming_utils` is `get_forced_aligned_timestamps_with_external_model`, which requires loading a second alignment model — extra VRAM and complexity, against the "smallest production diff" spirit of Path A.
+**Peak VRAM observed:** N/A (disqualified via API inspection before running inference; no VRAM burned)
+**Helper used (if A):** N/A
+**Spike duration:** ~8 minutes (well under 2-hour hard stop)
