@@ -407,6 +407,40 @@ class TestSourceStreamStart:
         assert src._bound_identity is not None
         assert src._bound_identity[0] in ("endpoint", "composite")
 
+    def test_start_opens_stream_at_device_max_input_channels(self, monkeypatch):
+        """Devices that report ``maxInputChannels=2`` (common for WASAPI
+        loopback endpoints like Realtek speakers and many USB mics) fail
+        with ``paInvalidDevice`` (-9996) when opened with ``channels=1``.
+        The source must match the device's channel count and downmix to
+        mono in the pump. See hardware diagnostic 2026-04-20 on Realtek
+        loopback."""
+        import recap.daemon.recorder.audio as audio_mod
+        from recap.daemon.recorder.audio import _SourceStream
+        from unittest.mock import MagicMock
+
+        pa_instance = MagicMock()
+        pa_instance.get_default_wasapi_loopback.return_value = {
+            "name": "Speakers (Realtek(R) Audio) [Loopback]",
+            "index": 25,
+            "hostApi": 2,
+            "maxInputChannels": 2,
+            "defaultSampleRate": 48000.0,
+            "isLoopbackDevice": True,
+        }
+        pa_instance.open.return_value = MagicMock()
+        pa_module = MagicMock()
+        pa_module.PyAudio.return_value = pa_instance
+        pa_module.paInt16 = 8
+        pa_module.paContinue = 0
+        monkeypatch.setattr(audio_mod, "_require_pyaudio", lambda: pa_module)
+
+        src = _SourceStream(kind="loopback", output_rate=48000)
+        src.start()
+
+        open_kwargs = pa_instance.open.call_args.kwargs
+        assert open_kwargs["channels"] == 2
+        assert src._input_channels == 2
+
 
 class TestSourceStreamPump:
     """_SourceStream converts raw callback bytes into resampled 48 kHz
@@ -464,6 +498,63 @@ class TestSourceStreamPump:
         src._pump_raw_to_resampled()  # must not raise even with resampler=None
         # Raw buffer untouched because the pump exited early.
         assert len(src._raw_buffer) == 2048
+
+    def test_pump_downmixes_stereo_raw_to_mono(self):
+        """When ``_input_channels > 1`` the raw buffer holds interleaved
+        multi-channel int16 frames. The pump must average channels into
+        mono BEFORE feeding soxr so the resampler and FLAC encoder both
+        stay mono. Needed for WASAPI loopback devices (and USB mics)
+        that report ``maxInputChannels=2``."""
+        pytest.importorskip("soxr")
+        pytest.importorskip("numpy")
+        import numpy as np
+        from recap.daemon.recorder.audio import (
+            _SourceStream, _SourceHealth, _SoxrResamplerWrapper,
+        )
+
+        src = _SourceStream(kind="loopback", output_rate=48000)
+        src._resampler = _SoxrResamplerWrapper(input_rate=48000, output_rate=48000)
+        src._state = _SourceHealth.HEALTHY
+        src._input_channels = 2
+
+        # Build 1024 stereo frames. Left channel = +1000, right = -1000
+        # so the mono mean is zero -- this way the resampled output is
+        # dominated by soxr's transient behaviour on an all-zero input
+        # (bounded, deterministic).
+        stereo = np.array([[1000, -1000]] * 1024, dtype=np.int16)
+        src._raw_buffer = stereo.flatten().tobytes()
+        pre_raw_frames = len(src._raw_buffer) // (2 * 2)  # bytes / (int16 * stereo)
+        assert pre_raw_frames == 1024
+
+        src._pump_raw_to_resampled()
+
+        assert src._raw_buffer == b""
+        # Resampled buffer is mono int16 at 48kHz. soxr may introduce a
+        # small startup delay but the mono frame count should be within
+        # a few hundred samples of 1024 (the input mono-equivalent).
+        mono_frames_out = len(src._resampled_buffer) // 2
+        assert abs(mono_frames_out - 1024) < 256
+
+    def test_pump_mono_input_skips_downmix(self):
+        """When ``_input_channels == 1`` (default), the pump feeds soxr
+        directly without downmix overhead."""
+        pytest.importorskip("soxr")
+        pytest.importorskip("numpy")
+        from recap.daemon.recorder.audio import (
+            _SourceStream, _SourceHealth, _SoxrResamplerWrapper,
+        )
+
+        src = _SourceStream(kind="mic", output_rate=48000)
+        src._resampler = _SoxrResamplerWrapper(input_rate=48000, output_rate=48000)
+        src._state = _SourceHealth.HEALTHY
+        # _input_channels defaults to 1.
+        assert src._input_channels == 1
+        src._raw_buffer = b"\x00\x00" * 1024  # 1024 mono frames
+
+        src._pump_raw_to_resampled()
+
+        assert src._raw_buffer == b""
+        assert len(src._resampled_buffer) > 0
 
 
 class TestSourceStreamReopen:

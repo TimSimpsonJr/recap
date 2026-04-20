@@ -144,6 +144,12 @@ class _SourceStream:
         self._resampler: _SoxrResamplerWrapper | None = None
         self._bound_identity: tuple | None = None
         self._latest_default_identity: tuple | None = None
+        # Channel count of the currently bound PyAudio stream. WASAPI
+        # loopback devices and many USB mics report ``maxInputChannels=2``
+        # and reject ``channels=1`` with ``paInvalidDevice`` (-9996), so
+        # we open at the device's native channel count and downmix to
+        # mono in the pump before feeding soxr.
+        self._input_channels: int = 1
 
         self._raw_buffer = b""
         self._resampled_buffer = b""
@@ -211,8 +217,10 @@ class _SourceStream:
             info = pa.get_default_wasapi_device(d_in=True)
 
         native_rate = int(info["defaultSampleRate"])
+        native_channels = int(info.get("maxInputChannels", 1) or 1)
         self._bound_identity = self._compute_identity(info)
         self._latest_default_identity = self._bound_identity
+        self._input_channels = native_channels
 
         self._resampler = _SoxrResamplerWrapper(
             input_rate=native_rate,
@@ -222,7 +230,7 @@ class _SourceStream:
         chunk_size = 1024
         self._stream = pa.open(
             format=runtime_pyaudio.paInt16,
-            channels=1,
+            channels=native_channels,
             rate=native_rate,
             input=True,
             input_device_index=info["index"],
@@ -264,14 +272,39 @@ class _SourceStream:
         resampled buffer. Called by the drain thread each tick; the
         callback thread only appends to the raw buffer, never touches
         the resampler directly. Safe no-op when the source isn't
-        HEALTHY or the raw buffer is empty."""
+        HEALTHY or the raw buffer is empty.
+
+        When the bound PyAudio stream was opened at >1 channel (common
+        for WASAPI loopback endpoints and some USB mics), the raw bytes
+        are interleaved multi-channel int16 frames. We average channels
+        to mono BEFORE feeding soxr so the resampler and FLAC encoder
+        both stay mono."""
         with self._lock:
             if self._state != _SourceHealth.HEALTHY or self._resampler is None:
                 return
             raw = self._raw_buffer
             self._raw_buffer = b""
+            input_channels = self._input_channels
         if not raw:
             return
+        if input_channels > 1:
+            try:
+                numpy = _require_numpy()
+                arr = numpy.frombuffer(raw, dtype=numpy.int16)
+                # Drop any trailing bytes that don't form a complete
+                # multi-channel frame (shouldn't happen in practice but
+                # defensive against mid-frame buffer splits).
+                usable = (len(arr) // input_channels) * input_channels
+                if usable == 0:
+                    return
+                frames = arr[:usable].reshape(-1, input_channels)
+                # Widen to int32 before averaging so large multi-channel
+                # sums don't wrap around; narrow back to int16.
+                mono = frames.astype(numpy.int32).mean(axis=1).astype(numpy.int16)
+                raw = mono.tobytes()
+            except Exception:
+                logger.exception("%s stereo->mono downmix failed", self._kind)
+                return
         try:
             resampled = self._resampler.process(raw)
         except Exception:
@@ -398,12 +431,13 @@ class _SourceStream:
             else:
                 info = pa.get_default_wasapi_device(d_in=True)
             native_rate = int(info["defaultSampleRate"])
+            native_channels = int(info.get("maxInputChannels", 1) or 1)
             new_identity = self._compute_identity(info)
 
             chunk_size = 1024
             new_stream = pa.open(
                 format=runtime_pyaudio.paInt16,
-                channels=1,
+                channels=native_channels,
                 rate=native_rate,
                 input=True,
                 input_device_index=info["index"],
@@ -443,6 +477,7 @@ class _SourceStream:
                 )
             self._bound_identity = new_identity
             self._latest_default_identity = new_identity
+            self._input_channels = native_channels
             self._raw_buffer = b""
             self._resampled_buffer = b""
             self._stream = new_stream
