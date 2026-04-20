@@ -76,22 +76,28 @@ def merge_overlapping_windows(
 ) -> list[Utterance]:
     """Concatenate two adjacent windows' utterance lists, deduping the overlap.
 
-    Center-timestamp rule: an utterance whose ``(start + end) / 2`` lies
-    inside ``[overlap_start_s, overlap_end_s]`` is kept in the ``prior``
-    window; its duplicate in ``later`` (same ``start``, ``end``, ``text``)
-    is dropped.
+    Center-timestamp ownership rule: ``prior`` owns the entire overlap zone.
+    Any utterance in ``later`` whose midpoint ``(start + end) / 2`` lies
+    inside ``[overlap_start_s, overlap_end_s]`` is dropped, because the
+    matching audio was already transcribed by ``prior``. The rule is
+    positional, not content-based, so it tolerates the timestamp jitter
+    that real ASR produces across overlapping windows (same phrase,
+    slightly different ``start`` / ``end`` on each pass).
 
-    Both inputs are assumed to be individually sorted by ``start`` ascending
-    and already offset into the same absolute time base.
+    The result is sorted by ``start`` ascending so that a long ``later``
+    utterance whose audio straddles the boundary (center outside overlap,
+    start inside overlap) cannot create a non-monotonic stitched output.
+
+    Both inputs are assumed to already be offset into the same absolute
+    time base.
     """
-    prior_overlap_keys: set[tuple[float, float, str]] = set()
-    for u in prior:
+    later_filtered: list[Utterance] = []
+    for u in later:
         center = (u.start + u.end) / 2.0
         if overlap_start_s <= center <= overlap_end_s:
-            prior_overlap_keys.add((u.start, u.end, u.text))
+            continue
+        later_filtered.append(u)
 
-    later_filtered = [
-        u for u in later
-        if (u.start, u.end, u.text) not in prior_overlap_keys
-    ]
-    return list(prior) + later_filtered
+    merged = list(prior) + later_filtered
+    merged.sort(key=lambda u: u.start)
+    return merged

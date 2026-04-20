@@ -119,3 +119,50 @@ def test_merge_result_is_monotonic():
     merged = merge_overlapping_windows(w1, w2, 110.0, 120.0)
     for i in range(1, len(merged)):
         assert merged[i].start >= merged[i - 1].start
+
+
+def test_merge_drops_later_overlap_despite_timestamp_jitter():
+    """Real Parakeet output jitters timestamps for the same phrase across
+    overlapping windows. The dedup rule must drop later's overlap utterance
+    based on center position alone, not exact (start, end, text) match."""
+    w1 = [
+        Utterance("UNKNOWN", 113.0, 117.0, "hello world"),
+    ]
+    w2 = [
+        # Same phrase, jittered endpoints — NOT an exact-key match of w1's.
+        Utterance("UNKNOWN", 113.4, 117.3, "hello world"),
+        Utterance("UNKNOWN", 125.0, 130.0, "late"),
+    ]
+    merged = merge_overlapping_windows(w1, w2, 110.0, 120.0)
+    # The jittered duplicate must be dropped; only prior's version survives.
+    texts = [u.text for u in merged]
+    assert texts == ["hello world", "late"]
+    # Prior's timestamps (not later's jittered ones) are the authoritative
+    # record for the overlap zone.
+    assert merged[0].start == 113.0
+    assert merged[0].end == 117.0
+
+
+def test_merge_output_monotonic_when_later_utterance_straddles_boundary():
+    """A long ``later`` utterance whose center is past the overlap zone but
+    whose start falls inside it must not break the monotonicity invariant."""
+    w1 = [
+        # Prior's last utterance — center in overlap, start near overlap end.
+        Utterance("UNKNOWN", 118.0, 120.5, "tail"),
+    ]
+    w2 = [
+        # Jittered duplicate of "tail" — center in overlap → dropped.
+        Utterance("UNKNOWN", 117.5, 120.8, "tail"),
+        # Long new utterance that starts inside the overlap zone but whose
+        # center (121.0) is past overlap_end_s=120.0 → kept in later.
+        Utterance("UNKNOWN", 117.0, 125.0, "new thing"),
+    ]
+    merged = merge_overlapping_windows(w1, w2, 110.0, 120.0)
+    starts = [u.start for u in merged]
+    assert starts == sorted(starts), f"Non-monotonic starts: {starts}"
+    # Both prior's "tail" and later's "new thing" survive; the jittered
+    # duplicate of "tail" does not.
+    texts = [u.text for u in merged]
+    assert "tail" in texts
+    assert "new thing" in texts
+    assert texts.count("tail") == 1
