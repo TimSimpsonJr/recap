@@ -5,15 +5,25 @@ export interface MeetingData {
     path: string;
     title: string;
     date: string;
+    time: string;
     org: string;
     duration: string;
     pipelineStatus: string;
     participants: string[];
+    companies: string[];
     platform: string;
 }
 
-export function renderMeetingRow(container: HTMLElement, meeting: MeetingData, onClick: (path: string) => void): HTMLElement {
+export function renderMeetingRow(
+    container: HTMLElement,
+    meeting: MeetingData,
+    onClick: (path: string) => void,
+    opts?: { isPast?: boolean },
+): HTMLElement {
     const row = container.createDiv({ cls: "recap-meeting-row" });
+    if (opts?.isPast) {
+        row.addClass("recap-meeting-row-past");
+    }
     row.addEventListener("click", () => onClick(meeting.path));
 
     // The Meetings panel lives in Obsidian's right sidebar, which is

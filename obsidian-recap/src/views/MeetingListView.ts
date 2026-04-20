@@ -303,10 +303,12 @@ export class MeetingListView extends ItemView {
                     path: file.path,
                     title: frontmatter.title || file.basename,
                     date: frontmatter.date || "",
+                    time: frontmatter.time || "",
                     org: frontmatter.org || "",
                     duration: frontmatter.duration || "",
                     pipelineStatus: frontmatter["pipeline-status"] || "pending",
                     participants: this.parseParticipants(frontmatter.participants || []),
+                    companies: this.parseParticipants(frontmatter.companies || []),
                     platform: frontmatter.platform || "",
                 });
             } catch (e) {
