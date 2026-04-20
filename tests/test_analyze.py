@@ -153,6 +153,25 @@ class TestParseClaude:
         assert "\n" in result.summary
         assert "multi-line summary" in result.summary
 
+    def test_parse_tolerates_non_newline_control_chars(self, sample_claude_json):
+        """Qwen 2.5 via Ollama has been observed emitting control
+        characters other than ``\\n`` inside string values (e.g. form
+        feed 0x0c). Python's json rejects anything in 0x00-0x1F with
+        ``Invalid control character``. The fix uses ``json.loads(text,
+        strict=False)`` which covers the entire control-char range, not
+        just a hand-rolled short list of newline/tab/CR. Regression
+        guard against re-introducing a partial escaper."""
+        payload = dict(sample_claude_json)
+        payload["summary"] = "Before\x0cAfter"  # 0x0c form feed
+        # Write the JSON as if the model emitted the raw form-feed byte
+        # inside the string value (replacing the ``\\u000c`` json.dumps
+        # would otherwise produce).
+        emitted = json.dumps(payload).replace("Before\\u000cAfter", "Before\x0cAfter")
+        result = _parse_claude_output(emitted)
+        assert "\x0c" in result.summary
+        assert result.summary.startswith("Before")
+        assert result.summary.endswith("After")
+
     def test_parse_preserves_direct_analysis_json_for_ollama(self, sample_claude_json):
         """Ollama (``ollama run --format json``) returns analysis JSON
         directly without the Claude CLI envelope. The unwrap logic must
