@@ -1,6 +1,9 @@
 """Unit tests for the chunking module (window planning + stitching)."""
 from __future__ import annotations
 
+import subprocess
+from pathlib import Path
+
 import pytest
 
 from recap.models import Utterance
@@ -8,6 +11,7 @@ from recap.pipeline.chunking import (
     merge_overlapping_windows,
     offset_utterances,
     plan_windows,
+    slice_window_to_temp,
 )
 
 
@@ -166,3 +170,45 @@ def test_merge_output_monotonic_when_later_utterance_straddles_boundary():
     assert "tail" in texts
     assert "new thing" in texts
     assert texts.count("tail") == 1
+
+
+def test_slice_window_invokes_ffmpeg_with_correct_args(monkeypatch, tmp_path):
+    captured: dict = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        # Pretend ffmpeg produced a file
+        Path(cmd[-1]).write_bytes(b"RIFF")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr("recap.pipeline.chunking.subprocess.run", fake_run)
+
+    source = tmp_path / "source.wav"
+    source.write_bytes(b"RIFF")
+    out = slice_window_to_temp(
+        source=source,
+        start_s=10.0,
+        duration_s=120.0,
+        temp_dir=tmp_path / "chunks",
+    )
+
+    assert out.exists()
+    assert out.parent == tmp_path / "chunks"
+    assert out.suffix == ".wav"
+    assert "-ss" in captured["cmd"]
+    assert "10.0" in captured["cmd"]
+    assert "-t" in captured["cmd"]
+    assert "120.0" in captured["cmd"]
+    assert "pcm_s16le" in captured["cmd"]
+
+
+def test_slice_window_raises_on_ffmpeg_failure(monkeypatch, tmp_path):
+    def fake_run(cmd, **kwargs):
+        return subprocess.CompletedProcess(cmd, 1, stdout="", stderr="bad input")
+
+    monkeypatch.setattr("recap.pipeline.chunking.subprocess.run", fake_run)
+
+    source = tmp_path / "source.wav"
+    source.write_bytes(b"RIFF")
+    with pytest.raises(RuntimeError, match="ffmpeg"):
+        slice_window_to_temp(source, 0.0, 10.0, tmp_path / "chunks")

@@ -5,7 +5,13 @@ scope, OOM policy, and overlap semantics.
 """
 from __future__ import annotations
 
+import subprocess
+import uuid
+from pathlib import Path
+
 from recap.models import Utterance
+
+_FFMPEG_SLICE_TIMEOUT_S = 60
 
 
 def plan_windows(
@@ -101,3 +107,49 @@ def merge_overlapping_windows(
     merged = list(prior) + later_filtered
     merged.sort(key=lambda u: u.start)
     return merged
+
+
+def slice_window_to_temp(
+    source: Path,
+    start_s: float,
+    duration_s: float,
+    temp_dir: Path,
+) -> Path:
+    """Extract ``[start_s, start_s + duration_s]`` of *source* into a temp .wav.
+
+    Uses ffmpeg with ``-c:a pcm_s16le`` (matches the mono sidecar format
+    Parakeet already consumes). Creates ``temp_dir`` if it doesn't exist.
+    Returns the temp path. The caller is responsible for deletion; a
+    stage-level ``finally`` should remove ``temp_dir`` in bulk.
+
+    Raises:
+        RuntimeError: ffmpeg exited non-zero or timed out.
+    """
+    temp_dir.mkdir(parents=True, exist_ok=True)
+    out_path = temp_dir / f"window-{uuid.uuid4().hex}.wav"
+
+    cmd = [
+        "ffmpeg",
+        "-v", "error",
+        "-y",
+        "-ss", f"{start_s}",
+        "-t", f"{duration_s}",
+        "-i", str(source),
+        "-c:a", "pcm_s16le",
+        "-ac", "1",
+        str(out_path),
+    ]
+    try:
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=_FFMPEG_SLICE_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"ffmpeg slice timed out after {_FFMPEG_SLICE_TIMEOUT_S}s"
+        ) from exc
+    if result.returncode != 0:
+        raise RuntimeError(f"ffmpeg slice failed: {result.stderr}")
+    return out_path
