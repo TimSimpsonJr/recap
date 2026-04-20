@@ -39,19 +39,6 @@ export class FilterBar {
         this.render();
     }
 
-    public setTabMode(
-        tab: Tab,
-        state: FilterState,
-        orgs: string[],
-        companies: string[],
-    ): void {
-        this.tabMode = tab;
-        this.state = { ...state };
-        this.orgs = orgs;
-        this.companies = companies;
-        this.render();
-    }
-
     private render(): void {
         this.container.empty();
 

@@ -46,8 +46,6 @@ export class MeetingListView extends ItemView {
         upcoming: { ...EMPTY_FILTER_STATE },
         past: { ...EMPTY_FILTER_STATE },
     };
-    private tabStrip: TabStrip | null = null;
-    private filterBar: FilterBar | null = null;
     private filterSlot: HTMLElement | null = null;
 
     // Pending reload timer for debouncing bursts of vault create/modify events.
@@ -84,7 +82,7 @@ export class MeetingListView extends ItemView {
         // Three-tab strip sits above the filter bar; switching tabs rebuilds
         // the filter bar (different tabs expose different controls) and
         // re-renders the list.
-        this.tabStrip = new TabStrip(container, this.activeTab, (tab) => {
+        new TabStrip(container, this.activeTab, (tab) => {
             this.activeTab = tab;
             this.refreshFilterBar();
             this.renderMeetings();
@@ -358,7 +356,7 @@ export class MeetingListView extends ItemView {
         const state = this.filterStates[this.activeTab];
         if (this.filterSlot === null) return;
         this.filterSlot.empty();
-        this.filterBar = new FilterBar(
+        new FilterBar(
             this.filterSlot, this.activeTab, orgs, companies, state,
             (next) => {
                 this.filterStates[this.activeTab] = next;
