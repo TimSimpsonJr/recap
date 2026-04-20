@@ -32,40 +32,19 @@ Full suite: 686 passed, 75% coverage.
 
 **What this does NOT fix:** the root capacity problem. `transcribe.py:52` still calls `model.transcribe([str(audio_path)], timestamps=True)` on the whole file. Long recordings still fail — they just fail once now instead of retrying into the same wall.
 
-## The real fix: chunked Parakeet inference
+## The real fix: chunked Parakeet inference — DONE
 
-### Scope
+Path B (ffmpeg slice + per-window `model.transcribe` + deterministic stitching) landed on `obsidian-pivot`. Design: `docs/plans/2026-04-20-parakeet-chunked-inference-design.md`. Implementation plan + per-task outcomes: `docs/plans/2026-04-20-parakeet-chunked-inference-implementation.md`.
 
-Replace the whole-file `model.transcribe([path])` call in `recap/pipeline/transcribe.py` with a chunked pass that:
+**Shipped:**
+- `recap/pipeline/chunking.py` — `plan_windows`, `offset_utterances`, `merge_overlapping_windows` (positional overlap dedup + adjacent-same-start collapse), `slice_window_to_temp`.
+- `recap/pipeline/transcribe.py` — chunked windowed loop at 120s / 10s overlap; ffprobe duration, per-window ffmpeg slice, stitched output. Two-layer try/finally guarantees temp dir + model are each cleaned up even if the other acquisition fails.
 
-1. Splits the audio into windows small enough to fit in VRAM on a 12 GiB GPU.
-2. Runs Parakeet per window.
-3. Stitches per-window utterances into a single `TranscriptResult` with timestamps in the original audio's time base.
+**Replay against preserved `.flac`:** exit code 0, peak VRAM 7.12 GiB on a 12 GiB GPU (down from the 46 GiB demand that crashed the host), 400 utterances, monotonic timestamps, zero detectable boundary duplicates after the same-start collapse fix. Full pipeline wall time 3m 10s.
 
-### Open design questions (brainstorm these first)
+**Sortformer audit (the "diarize parity" open question):** whole-file `model.diarize(mono.wav)` peaks at **2.17 GiB** on the same 37-min recording. Well under threshold; no chunking follow-up needed at current audio lengths.
 
-- **Window size.** Parakeet-TDT-0.6b-v2 allocation scaled with audio length. Target a window that fits comfortably in ~3 GiB to leave headroom for the diarization model. Probably 60–120 s per window — needs empirical sizing.
-- **Overlap / boundary handling.** How much overlap between windows to avoid clipping utterances at chunk boundaries? Simple approach: overlap N seconds, dedupe by timestamp. More sophisticated: voice-activity-based splitting.
-- **Timestamp offsetting.** Parakeet emits chunk-local timestamps. Adder per window before concatenation.
-- **Streaming vs. batch.** We already have `recap/daemon/streaming/transcriber.py` marked "Live streaming transcription deferred". Decide: fold chunked offline inference into the existing streaming module, or keep the pipeline `transcribe.py` as batch-but-chunked? The handoff's architectural answer affects file layout.
-- **Diarize parity.** Sortformer has the same whole-file risk — audit `recap/pipeline/diarize.py` while we're in there. If chunking applies to both, share the windowing logic.
-- **Memory-pressure fallback.** If a window still OOMs (corrupted audio, odd sample rate), halve and retry that window only, or surface a single actionable error?
-
-### Key files / code paths
-
-- `recap/pipeline/transcribe.py` — `transcribe()` around line 52 (`model.transcribe([...])`) is the surgical target.
-- `recap/pipeline/diarize.py` — likely the same pattern; audit for parallel fix.
-- `recap/pipeline/audio_convert.py` — `ensure_mono_for_ml` already produces the `.mono.wav` the chunker would slice.
-- `recap/models.py` — `TranscriptResult` / `Utterance` hold the stitched output.
-- `recap/pipeline/__init__.py:399` — transcribe stage entry; `do_transcribe()` closes over `ml_audio_path`.
-
-### Artifact still on disk (for replay)
-
-- `C:/Users/tim/recap-test-data/recordings/2026-04-20-155927-disbursecloud.flac` — 82 MB, 37 min, stereo.
-- `C:/Users/tim/recap-test-data/recordings/2026-04-20-155927-disbursecloud.mono.wav` — already downmixed by the pre-crash pipeline run.
-- `C:/Users/tim/recap-test-data/recordings/2026-04-20-155927-disbursecloud.metadata.json`.
-
-Once chunking lands, re-run the pipeline against this .flac via `--from transcribe` to validate end-to-end on a real 37-min meeting without needing to record another one.
+**OOM safety patch (commit `1aa86f7`) stays in place** as belt-and-braces: the chunked path should never OOM in practice, and if it does (corrupted audio, hardware anomaly), `_run_with_retry` will fail fast rather than retry-storm.
 
 ## Independent cleanup items (surfaced but not fixed)
 

@@ -1090,3 +1090,18 @@ When all tasks complete:
 **Peak VRAM observed:** N/A (disqualified via API inspection before running inference; no VRAM burned)
 **Helper used (if A):** N/A
 **Spike duration:** ~8 minutes (well under 2-hour hard stop)
+
+## Task 3 outcome
+
+**Sortformer peak VRAM:** 2.17 GiB on the preserved 37-min `.mono.wav` (`nvidia/diar_streaming_sortformer_4spk-v2.1`), diarize wall time 12.1s. Well under the 6 GiB threshold; no follow-up chunking handoff needed.
+
+## Task 4 outcome
+
+**Pipeline wall time:** 3m 10s end-to-end (`--from transcribe --device cuda`: transcribe → diarize 9.4s → Claude analyze 1m48s → vault write → FLAC→AAC convert 41s). Transcribe stage alone re-ran in ~28s on the regenerated `.mono.wav` once the Parakeet model was warm in cache.
+
+**Peak VRAM:** 7.12 GiB (7,282 MiB) across the full pipeline, measured via 1 Hz `nvidia-smi` logger. Comfortably below the 12 GiB card capacity; no CUDA OOM, no retry-storm, exit code 0.
+
+**Transcript quality:** 400 utterances spanning 5.60s → 2208.72s (36.8 min). All starts monotonic, `end >= start` everywhere, 400 unique `start` values, zero adjacent same-start pairs. Spot-checks at start / middle / end all produced readable English matching the meeting content.
+
+**Anomalies found + fixed mid-task:**
+- Initial run returned 402 utterances; spot-check at 1547.52s and 1878.00s found two boundary duplicates where prior's truncated view and later's complete view both survived merge (same `start`, different `end`, prior's version cut short by the window's audio boundary). Added an adjacent-same-start collapse pass to `merge_overlapping_windows` (commit `842b8b8`); re-run on regenerated `.mono.wav` reduced utterances to 400 with zero detectable boundary duplicates.
