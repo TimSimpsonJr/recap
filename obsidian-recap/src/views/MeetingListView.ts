@@ -1,7 +1,16 @@
 import { ItemView, Notice, WorkspaceLeaf, TAbstractFile, TFile } from "obsidian";
 import type { DaemonClient } from "../api";
-import { FilterBar, FilterState } from "../components/FilterBar";
+import { TabStrip } from "../components/TabStrip";
+import { renderNowDivider } from "../components/NowDivider";
+import { FilterBar, FilterState, EMPTY_FILTER_STATE } from "../components/FilterBar";
 import { MeetingData, renderMeetingRow } from "../components/MeetingRow";
+import {
+    Tab,
+    deriveTodayMeetings,
+    deriveUpcomingMeetings,
+    derivePastMeetings,
+    DecoratedRow,
+} from "../lib/deriveMeetings";
 
 /** Debounce window (ms) for coalescing bursts of vault events during a
  * pipeline write -- transcript.json, meeting note, stub profiles, and
@@ -18,7 +27,6 @@ export interface MeetingListViewDeps {
 
 export class MeetingListView extends ItemView {
     private meetings: MeetingData[] = [];
-    private filteredMeetings: MeetingData[] = [];
     private listContainer: HTMLElement | null = null;
     private deps: MeetingListViewDeps;
 
@@ -29,9 +37,19 @@ export class MeetingListView extends ItemView {
     private currentState: string | null = null;
     private currentOrg: string | undefined = undefined;
 
-    // Track current filter so reloads after vault events preserve what the
-    // user has selected (org dropdown, status dropdown, search box).
-    private filterState: FilterState | null = null;
+    // Three-tab layout state: which tab is active, and a per-tab filter state
+    // so switching between tabs doesn't blow away what the user typed into
+    // the search box on another tab.
+    private activeTab: Tab = "today";
+    private filterStates: Record<Tab, FilterState> = {
+        today: { ...EMPTY_FILTER_STATE },
+        upcoming: { ...EMPTY_FILTER_STATE },
+        past: { ...EMPTY_FILTER_STATE },
+    };
+    private tabStrip: TabStrip | null = null;
+    private filterBar: FilterBar | null = null;
+    private filterSlot: HTMLElement | null = null;
+
     // Pending reload timer for debouncing bursts of vault create/modify events.
     private reloadTimer: number | null = null;
     // Meeting-scope prefixes configured by the daemon (org subfolders).
@@ -63,13 +81,16 @@ export class MeetingListView extends ItemView {
         // Load meetings from vault
         await this.loadMeetings();
 
-        // Get unique org names from meetings
-        const orgs = [...new Set(this.meetings.map(m => m.org).filter(Boolean))];
-
-        // Filter bar
-        new FilterBar(container, orgs, (state) => {
-            this.applyFilters(state);
+        // Three-tab strip sits above the filter bar; switching tabs rebuilds
+        // the filter bar (different tabs expose different controls) and
+        // re-renders the list.
+        this.tabStrip = new TabStrip(container, this.activeTab, (tab) => {
+            this.activeTab = tab;
+            this.refreshFilterBar();
+            this.renderMeetings();
         });
+        this.filterSlot = container.createDiv({ cls: "recap-filter-slot" });
+        this.refreshFilterBar();
 
         // Meeting list
         this.listContainer = container.createDiv({ cls: "recap-meeting-list" });
@@ -126,11 +147,11 @@ export class MeetingListView extends ItemView {
     /** Reload the meeting list from the vault, preserving the active filter. */
     private async reloadMeetings(): Promise<void> {
         await this.loadMeetings();
-        if (this.filterState !== null) {
-            this.applyFilters(this.filterState);
-        } else {
-            this.renderMeetings();
-        }
+        // Rebuild the filter bar so org/company dropdowns reflect any new
+        // values that arrived with the reload; per-tab FilterState is kept
+        // on the view, so the user's current selections survive.
+        this.refreshFilterBar();
+        this.renderMeetings();
     }
 
     /**
@@ -319,9 +340,9 @@ export class MeetingListView extends ItemView {
             }
         }
 
-        // Sort by date, newest first
-        this.meetings.sort((a, b) => b.date.localeCompare(a.date));
-        this.filteredMeetings = [...this.meetings];
+        // Sorting is now the responsibility of each derive* function in
+        // deriveMeetings.ts -- different tabs need different orderings
+        // (today chronological, upcoming ascending, past descending).
     }
 
     private parseParticipants(raw: unknown): string[] {
@@ -329,45 +350,90 @@ export class MeetingListView extends ItemView {
         return raw.map((p: string) => p.replace(/\[\[|\]\]/g, ""));
     }
 
-    private applyFilters(state: FilterState): void {
-        this.filterState = state;
-        this.filteredMeetings = this.meetings.filter(m => {
-            if (state.org !== "all" && m.org !== state.org) return false;
-            if (state.status !== "all") {
-                if (state.status === "failed" && !m.pipelineStatus.startsWith("failed")) return false;
-                if (state.status !== "failed" && m.pipelineStatus !== state.status) return false;
-            }
-            if (state.search) {
-                const q = state.search.toLowerCase();
-                const searchable = `${m.title} ${m.participants.join(" ")}`.toLowerCase();
-                if (!searchable.includes(q)) return false;
-            }
-            return true;
-        });
-        this.renderMeetings();
+    private refreshFilterBar(): void {
+        const orgs = [...new Set(this.meetings.map(m => m.org).filter(Boolean))];
+        const companies = [...new Set(
+            this.meetings.flatMap(m => m.companies).filter(Boolean),
+        )].sort();
+        const state = this.filterStates[this.activeTab];
+        if (this.filterSlot === null) return;
+        this.filterSlot.empty();
+        this.filterBar = new FilterBar(
+            this.filterSlot, this.activeTab, orgs, companies, state,
+            (next) => {
+                this.filterStates[this.activeTab] = next;
+                this.renderMeetings();
+            },
+        );
+    }
+
+    private openMeeting(path: string): void {
+        const file = this.app.vault.getAbstractFileByPath(path);
+        if (file instanceof TFile) {
+            this.app.workspace.getLeaf(false).openFile(file);
+        }
     }
 
     private renderMeetings(): void {
         if (!this.listContainer) return;
         this.listContainer.empty();
+        const now = new Date();
+        const state = this.filterStates[this.activeTab];
 
-        if (this.filteredMeetings.length === 0) {
+        if (this.activeTab === "today") {
+            const { rows, nowDividerIndex } = deriveTodayMeetings(
+                this.meetings, now, state,
+            );
+            this.renderRowsWithDivider(rows, nowDividerIndex, now);
+            return;
+        }
+        const rows = this.activeTab === "upcoming"
+            ? deriveUpcomingMeetings(this.meetings, now, state)
+            : derivePastMeetings(this.meetings, now, state);
+        this.renderRows(rows);
+    }
+
+    private renderRows(rows: DecoratedRow[]): void {
+        if (!this.listContainer) return;
+        if (rows.length === 0) {
             this.listContainer.createDiv({
                 text: "No meetings found",
                 cls: "recap-empty-state",
             });
             return;
         }
-
-        for (const meeting of this.filteredMeetings) {
-            renderMeetingRow(this.listContainer, meeting, (path) => {
-                // Open the meeting note
-                const file = this.app.vault.getAbstractFileByPath(path);
-                if (file instanceof TFile) {
-                    this.app.workspace.getLeaf(false).openFile(file);
-                }
-            });
+        for (const row of rows) {
+            renderMeetingRow(
+                this.listContainer, row,
+                (path) => this.openMeeting(path),
+                { isPast: row.isPast },
+            );
         }
+    }
+
+    private renderRowsWithDivider(
+        rows: DecoratedRow[],
+        nowDividerIndex: number | null,
+        now: Date,
+    ): void {
+        if (!this.listContainer) return;
+        if (rows.length === 0) {
+            this.listContainer.createDiv({
+                text: "No meetings today",
+                cls: "recap-empty-state",
+            });
+            return;
+        }
+        rows.forEach((row, i) => {
+            if (nowDividerIndex !== null && i === nowDividerIndex) {
+                renderNowDivider(this.listContainer!, now);
+            }
+            renderMeetingRow(
+                this.listContainer!, row,
+                (path) => this.openMeeting(path),
+                { isPast: row.isPast },
+            );
+        });
     }
 
     async onClose(): Promise<void> {
