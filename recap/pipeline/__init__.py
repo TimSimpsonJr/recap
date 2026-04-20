@@ -22,7 +22,7 @@ from recap.artifacts import (
     transcript_path,
     write_recording_metadata,
 )
-from recap.errors import map_error
+from recap.errors import is_oom_error, map_error
 from recap.models import AnalysisResult, MeetingMetadata, TranscriptResult
 
 if TYPE_CHECKING:
@@ -267,6 +267,17 @@ def _run_with_retry(
             should_retry = True
         elif config.auto_retry and config.max_retries > 0:
             should_retry = True
+
+        # GPU/host OOM is never retryable: re-running the same
+        # allocation path just adds stress without changing the
+        # outcome, and has caused hard host crashes on long recordings.
+        # See ``docs/handoffs/2026-04-20-meeting-detection-test.md``.
+        if should_retry and is_oom_error(first_error):
+            logger.warning(
+                "Stage '%s' hit OOM; skipping retry to avoid host stress: %s",
+                stage, first_error,
+            )
+            should_retry = False
 
         if should_retry:
             logger.warning("Stage '%s' failed, retrying in 30s: %s", stage, first_error)

@@ -4,6 +4,24 @@ from __future__ import annotations
 import errno
 
 
+def is_oom_error(error: Exception) -> bool:
+    """Return True if *error* is a GPU/CPU out-of-memory failure.
+
+    OOM must be treated as non-retryable by the pipeline retry wrapper:
+    retrying the same whole-file allocation path a few seconds later
+    only adds host stress without changing the outcome, and has been
+    observed to contribute to full system crashes on 12 GB GPUs when
+    Parakeet tries to allocate tens of GiB for long recordings.
+
+    Matches "cuda out of memory" (PyTorch), bare "out of memory"
+    (generic allocator), and ``MemoryError`` (CPU/host allocator).
+    """
+    if isinstance(error, MemoryError):
+        return True
+    msg = str(error).lower()
+    return "out of memory" in msg
+
+
 def map_error(stage: str, error: Exception, **context: str) -> str:
     """Convert a pipeline exception to an actionable message.
 
