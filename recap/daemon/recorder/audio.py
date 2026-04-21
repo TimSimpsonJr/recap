@@ -10,8 +10,9 @@ import enum
 import logging
 import threading
 import time
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 logger = logging.getLogger(__name__)
 
@@ -750,6 +751,33 @@ def find_microphone_device() -> dict[str, Any]:
         raise AudioDeviceError(f"No WASAPI microphone device found: {exc}") from exc
     finally:
         p.terminate()
+
+
+# --- Multi-output loopback lifecycle constants ---
+_LOOPBACK_PROBATION_S = 60.0
+_LOOPBACK_MEMBERSHIP_TICK_S = 3.0
+_LOOPBACK_DEVICE_GRACE_S = 6.0
+_LOOPBACK_ACTIVE_RMS_DBFS = -40.0
+# Derived once at module load:
+#   10 ** (-40/20) = 0.01; 0.01 * 32768 ≈ 327.68
+_LOOPBACK_ACTIVE_RMS_LINEAR = 10.0 ** (_LOOPBACK_ACTIVE_RMS_DBFS / 20.0) * 32768.0
+
+
+@dataclass
+class _LoopbackEntry:
+    """Recorder-side policy wrapper around a loopback _SourceStream.
+
+    Tracks PROBATION/ACTIVE lifecycle, wall-clock opened_at for probation
+    expiry, last_active_at for telemetry, and missing_since for debounced
+    device-disappearance. Does NOT introspect _SourceStream's private state;
+    the only coupling is the public is_terminal property.
+    """
+    stream: "_SourceStream"
+    state: Literal["probation", "active"]
+    opened_at: float
+    last_active_at: float | None
+    device_name: str
+    missing_since: float | None
 
 
 class AudioCapture:
