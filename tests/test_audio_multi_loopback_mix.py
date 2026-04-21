@@ -220,3 +220,31 @@ class TestInterleaveUsesDrainAndMix:
         assert frames.shape == (chunk_frames, 2)
         np.testing.assert_array_equal(frames[:, 0], mic)
         np.testing.assert_array_equal(frames[:, 1], system)
+
+
+class TestFeedMockFramesMulti:
+    def test_multiple_streams_contribute_to_channel_1(self, tmp_path):
+        """The new multi-stream test helper must drive the full
+        drain -> mix -> interleave -> encode path with per-stream control."""
+        import numpy as np
+        cap = AudioCapture(output_path=tmp_path / "out.flac")
+        captured: list = []
+        cap.on_chunk = lambda c, sr: captured.append((c, sr))
+
+        chunk_frames = 480
+        mic_frame = np.full(chunk_frames, 1000, dtype=np.int16).tobytes()
+        airpods_frame = np.full(chunk_frames, 8000, dtype=np.int16).tobytes()  # above threshold
+        speakers_frame = b"\x00" * (chunk_frames * 2)  # silent
+
+        cap._test_feed_mock_frames_multi(
+            mic_frame=mic_frame,
+            loopback_frames_by_key={
+                ("airpods",): ("AirPods", airpods_frame),
+                ("speakers",): ("Laptop Speakers", speakers_frame),
+            },
+        )
+
+        assert len(captured) == 1
+        assert ("airpods",) in cap._loopback_sources
+        airpods_entry = cap._loopback_sources[("airpods",)]
+        assert airpods_entry.state == "active"

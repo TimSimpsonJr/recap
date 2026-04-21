@@ -1300,6 +1300,58 @@ class AudioCapture:
         finally:
             self._loopback_sources = prior
 
+    def _test_feed_mock_frames_multi(
+        self,
+        mic_frame: bytes,
+        loopback_frames_by_key: dict[tuple, tuple[str, bytes]],
+    ) -> None:  # pragma: no cover - test-only helper
+        """Multi-stream test helper. Accepts a mapping of
+        stable_key -> (device_name, frame_bytes). Installs a synthetic
+        _LoopbackEntry for each key (all starting in PROBATION) and drives
+        one _drain_and_mix + _interleave_and_encode cycle. Leaves the
+        synthetic entries in _loopback_sources so tests can inspect
+        post-call state.
+
+        Unlike _test_feed_mock_frames (which starts synthetic streams as
+        ACTIVE for legacy compat and restores prior state), this helper
+        starts them as PROBATION so tests can exercise the RMS-threshold
+        promotion path end to end.
+        """
+        chunk_frames = len(mic_frame) // 2
+        for key, (_, frame) in loopback_frames_by_key.items():
+            if len(frame) != len(mic_frame):
+                raise ValueError(
+                    f"loopback frame for {key} has different length than mic_frame",
+                )
+
+        class _StubStream:
+            def __init__(self, frame: bytes) -> None:
+                self._buf = frame
+                self.is_terminal = False
+
+            def drain_resampled(self, max_bytes: int) -> bytes:
+                out = self._buf[:max_bytes]
+                self._buf = self._buf[max_bytes:]
+                return out
+
+            def stop(self) -> None:
+                pass
+
+        with self._lock:
+            self._mic_buffer += mic_frame
+        self._loopback_sources = {
+            key: _LoopbackEntry(
+                stream=_StubStream(frame),
+                state="probation",
+                opened_at=0.0,
+                last_active_at=None,
+                device_name=name,
+                missing_since=None,
+            )
+            for key, (name, frame) in loopback_frames_by_key.items()
+        }
+        self._interleave_and_encode(chunk_frames)
+
     def _mic_callback(self, in_data: bytes, frame_count: int, time_info: dict, status: int) -> tuple[None, int]:
         """PyAudioWPatch callback for microphone stream."""
         runtime_pyaudio = _require_pyaudio()
