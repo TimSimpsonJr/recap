@@ -86,6 +86,8 @@ def build_canonical_frontmatter(
             fm["event-id"] = recording_metadata.event_id
         if recording_metadata.meeting_link:
             fm["meeting-link"] = recording_metadata.meeting_link
+        if recording_metadata.audio_warnings:
+            fm["audio-warnings"] = list(recording_metadata.audio_warnings)
 
     return fm
 
