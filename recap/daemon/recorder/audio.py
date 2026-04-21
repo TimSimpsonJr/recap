@@ -942,6 +942,130 @@ class AudioCapture:
 
         return mic_samples, system_mix, mono_bytes
 
+    def _enumerate_loopback_endpoints(self):
+        """Yield (stable_identity, device_info_dict) pairs for every WASAPI
+        render loopback endpoint currently available.
+
+        Uses PyAudioWPatch's loopback-device generator. The stable identity
+        is the same tuple that _SourceStream._compute_identity uses for
+        hot-plug tracking.
+        """
+        pa = _require_pyaudio().PyAudio()
+        try:
+            for info in pa.get_loopback_device_info_generator():
+                key = _SourceStream._compute_identity(info)
+                yield key, info
+        finally:
+            pa.terminate()
+
+    def _open_loopback_stream(self, bind_to: tuple, device_name: str) -> "_SourceStream":
+        """Open a new _SourceStream bound to the given endpoint identity.
+
+        Factored out so _tick_membership tests can override it without
+        mocking PyAudio.
+        """
+        s = _SourceStream(
+            kind="loopback", output_rate=self._sample_rate, bind_to=bind_to,
+        )
+        s.start()
+        return s
+
+    def _tick_membership(self, now: float) -> None:
+        """Reconcile _loopback_sources against the current WASAPI enumeration.
+
+        Runs from the drain thread with a wall-clock gate; owns the entire
+        dict lifecycle outside of PROBATION->ACTIVE promotion (which lives
+        in _drain_and_mix). Enumeration failures are logged and swallowed --
+        a missed tick never tears streams down.
+        """
+        try:
+            enumerated = dict(self._enumerate_loopback_endpoints())
+        except Exception:
+            logger.debug(
+                "_tick_membership: enumeration failed, skipping this tick",
+                exc_info=True,
+            )
+            return
+
+        enumerated_keys = set(enumerated.keys())
+        current_keys = set(self._loopback_sources.keys())
+
+        # Adds: open new streams for newly-appeared endpoints.
+        for key in enumerated_keys - current_keys:
+            info = enumerated[key]
+            try:
+                stream = self._open_loopback_stream(
+                    bind_to=key, device_name=info["name"],
+                )
+            except Exception:
+                logger.warning(
+                    "failed to open loopback %s; will retry next tick",
+                    info.get("name", key), exc_info=True,
+                )
+                continue
+            self._loopback_sources[key] = _LoopbackEntry(
+                stream=stream, state="probation", opened_at=now,
+                last_active_at=None, device_name=info["name"],
+                missing_since=None,
+            )
+            native_rate = int(info.get("defaultSampleRate", 0))
+            logger.info(
+                "loopback opened: %s (identity=%s, native_rate=%d)",
+                info["name"], key, native_rate,
+            )
+
+        # Debounced disappearance: a single missed enumeration must not evict.
+        for key in list(current_keys):
+            entry = self._loopback_sources.get(key)
+            if entry is None:
+                continue
+            if key in enumerated_keys:
+                # Present this tick -- clear any prior disappearance mark.
+                if entry.missing_since is not None:
+                    entry.missing_since = None
+                continue
+            # Absent this tick.
+            if entry.missing_since is None:
+                entry.missing_since = now
+                continue
+            if now - entry.missing_since > _LOOPBACK_DEVICE_GRACE_S:
+                self._evict_entry(key, reason="device disappeared")
+
+        # Terminal-stream evictions (_SourceStream exhausted its reconnect
+        # budget or its bound identity permanently vanished).
+        for key in list(self._loopback_sources.keys()):
+            entry = self._loopback_sources[key]
+            if entry.stream.is_terminal:
+                self._evict_entry(
+                    key, reason="stream terminal (reconnect exhausted)",
+                )
+
+        # Probation expiry: PROBATION entries past _LOOPBACK_PROBATION_S
+        # with no signal ever seen are expected to evict (not a fault).
+        for key in list(self._loopback_sources.keys()):
+            entry = self._loopback_sources[key]
+            if entry.state == "probation" and now - entry.opened_at > _LOOPBACK_PROBATION_S:
+                self._evict_entry(
+                    key, reason=(
+                        f"probation expired after {now - entry.opened_at:.0f}s "
+                        "without signal"
+                    ),
+                )
+
+    def _evict_entry(self, key: tuple, reason: str) -> None:
+        """Stop and drop a loopback entry, emitting one info line."""
+        entry = self._loopback_sources.pop(key, None)
+        if entry is None:
+            return
+        try:
+            entry.stream.stop()
+        except Exception:
+            logger.debug(
+                "stream.stop() raised during evict for %s",
+                entry.device_name, exc_info=True,
+            )
+        logger.info("loopback removed: %s (%s)", entry.device_name, reason)
+
     def _interleave_and_encode(self, chunk_frames: int) -> None:
         """Take buffered mic and loopback data, interleave, and feed to encoder.
 
