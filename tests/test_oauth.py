@@ -48,12 +48,48 @@ class TestOAuthManagerConfig:
         url = manager.get_authorization_url()
         assert "ZohoCalendar" in url
 
+    def test_zoho_scope_includes_event_access(self):
+        """Zoho requires ``ZohoCalendar.event.ALL`` for ``GET
+        /calendars/{id}/events``. The calendar-level scope alone
+        returns ``INVALID_OAUTHSCOPE`` from that endpoint -- regression
+        guard for the 2026-04-20 integration run where the daemon
+        authed successfully but then 401'd on every event fetch."""
+        manager = OAuthManager(
+            provider="zoho", client_id="test-id", client_secret="secret",
+        )
+        url = manager.get_authorization_url()
+        # urlencoded -- the dot stays literal, but the comma between
+        # scopes becomes %2C.
+        assert "ZohoCalendar.calendar.ALL" in url
+        assert "ZohoCalendar.event.ALL" in url
+
     def test_google_authorization_url_contains_scopes(self):
         manager = OAuthManager(
             provider="google", client_id="test-id", client_secret="secret"
         )
         url = manager.get_authorization_url()
         assert "calendar.readonly" in url
+
+    def test_authorization_url_requests_offline_access(self):
+        """Both providers must request offline access + forced consent.
+
+        Without ``access_type=offline`` (and typically ``prompt=consent``
+        to force re-consent when scopes haven't changed) the provider
+        returns only a short-lived access_token. The scheduler then
+        silently 401s every 15 minutes because there's no refresh_token
+        to recover with -- regression guard for the Zoho outage on
+        2026-04-20."""
+        for provider in ("zoho", "google"):
+            manager = OAuthManager(
+                provider=provider, client_id="test-id", client_secret="secret",
+            )
+            url = manager.get_authorization_url()
+            assert "access_type=offline" in url, (
+                f"{provider} authorize URL missing access_type=offline: {url}"
+            )
+            assert "prompt=consent" in url, (
+                f"{provider} authorize URL missing prompt=consent: {url}"
+            )
 
 
 class TestTokenExchange:

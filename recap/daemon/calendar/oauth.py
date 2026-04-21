@@ -50,7 +50,13 @@ class OAuthManager:
         "zoho": {
             "authorize_url": "https://accounts.zoho.com/oauth/v2/auth",
             "token_url": "https://accounts.zoho.com/oauth/v2/token",
-            "scopes": "ZohoCalendar.calendar.ALL",
+            # Zoho splits calendar-metadata and event-level permissions
+            # into separate scopes. ``ZohoCalendar.calendar.ALL`` alone
+            # returned ``INVALID_OAUTHSCOPE`` from the events endpoint;
+            # ``ZohoCalendar.event.ALL`` is what grants access to
+            # ``GET /calendars/{id}/events``. Listing both keeps
+            # discovery (``/calendars``) and event fetch both working.
+            "scopes": "ZohoCalendar.calendar.ALL,ZohoCalendar.event.ALL",
         },
         "google": {
             "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
@@ -94,12 +100,21 @@ class OAuthManager:
         return f"http://localhost:{self._redirect_port}/callback"
 
     def get_authorization_url(self) -> str:
-        """Build the full OAuth authorization URL with all required parameters."""
+        """Build the full OAuth authorization URL with all required parameters.
+
+        ``access_type=offline`` and ``prompt=consent`` are mandatory for
+        both Zoho and Google to issue a refresh_token. Without them the
+        provider returns only a short-lived access_token, and every
+        subsequent sync silently fails with 401 / INVALID_OAUTHTOKEN
+        because the scheduler has nothing to refresh with.
+        """
         params = {
             "client_id": self._client_id,
             "redirect_uri": self.redirect_uri,
             "scope": self._config["scopes"],
             "response_type": "code",
+            "access_type": "offline",
+            "prompt": "consent",
         }
         return f"{self.authorize_url}?{urlencode(params)}"
 

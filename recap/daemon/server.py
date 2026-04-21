@@ -685,8 +685,17 @@ async def _oauth_start(request: web.Request) -> web.Response:
 
     oauth_manager = OAuthManager(provider, client_id, client_secret, redirect_port=8399)
     authorize_url = oauth_manager.get_authorization_url()
+    # Log the scope(s) being requested so integration runs can prove
+    # the running daemon picked up scope changes without having to
+    # inspect the browser URL.
+    logger.info(
+        "OAuth authorize URL for %s requests scopes=%r",
+        provider, OAuthManager.PROVIDERS[provider]["scopes"],
+    )
 
-    # Start callback server in background — exchanges code and stores tokens
+    # Start callback server in background -- exchanges code and stores tokens,
+    # then logs the scope the provider actually granted (may differ from
+    # what we requested if the consent screen was narrowed).
     async def _run_callback() -> None:
         try:
             code = await oauth_manager.start_callback_server()
@@ -694,7 +703,11 @@ async def _oauth_start(request: web.Request) -> web.Response:
             store_credential(provider, "access_token", tokens["access_token"])
             if "refresh_token" in tokens:
                 store_credential(provider, "refresh_token", tokens["refresh_token"])
-            logger.info("OAuth flow complete for %s", provider)
+            granted_scope = tokens.get("scope", "<not returned>")
+            logger.info(
+                "OAuth flow complete for %s; granted scope=%r",
+                provider, granted_scope,
+            )
         except Exception:
             logger.exception("OAuth callback failed for %s", provider)
 
