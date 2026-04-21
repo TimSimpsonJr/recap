@@ -16,6 +16,11 @@ export interface DaemonStatus {
     last_calendar_sync: string | null;
     uptime_seconds: number;
     recent_errors: DaemonEvent[];
+    // Launcher-wrapper mode: true when the daemon was spawned by
+    // ``recap.launcher`` (env ``RECAP_MANAGED=1``). Older daemon
+    // versions don't send these fields, so treat absent as false.
+    managed?: boolean;
+    can_restart?: boolean;
 }
 
 export interface JournalEntry {
@@ -264,6 +269,17 @@ export class DaemonClient {
 
     async disarm(): Promise<void> {
         await this.post("/api/disarm");
+    }
+
+    /**
+     * Ask the daemon to shut down. ``restart: true`` is only honored
+     * when the daemon was launched via ``recap.launcher`` (returns 409
+     * otherwise). The daemon sends the 200 before tearing down, so the
+     * caller should poll ``/api/status`` to observe the replacement
+     * process coming online.
+     */
+    async requestShutdown(restart: boolean): Promise<void> {
+        await this.post("/api/admin/shutdown", { restart });
     }
 
     async tailEvents(since?: string, limit?: number): Promise<JournalEntry[]> {

@@ -505,13 +505,19 @@ export class RecapSettingTab extends PluginSettingTab {
         }
 
         let stateLine = "State: unknown";
+        // The daemon only advertises ``can_restart: true`` when launched
+        // via ``recap.launcher`` (env ``RECAP_MANAGED=1``). Standalone
+        // daemons can shut down but cannot self-restart -- button is
+        // disabled with an explanation below.
+        let canRestart = false;
         try {
             const status = await this.plugin.client.getStatus();
             const uptime = Math.floor(status.uptime_seconds || 0);
             stateLine = `State: ${status.state}, uptime: ${uptime}s`;
+            canRestart = Boolean(status.can_restart);
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
-            stateLine = `State: unreachable — ${msg}`;
+            stateLine = `State: unreachable \u2014 ${msg}`;
             console.error("Recap:", e);
         }
 
@@ -520,22 +526,40 @@ export class RecapSettingTab extends PluginSettingTab {
             cls: "setting-item-description",
         });
 
-        new Setting(container)
+        const restartSetting = new Setting(container)
             .setName("Restart daemon")
             .setDesc(
-                "Config changes require a daemon restart. Right-click the "
-                + "Recap tray icon \u2192 Quit, then relaunch.",
-            )
-            .addButton(btn => btn
-                .setButtonText("How to restart")
-                .onClick(() => {
-                    new Notice(
-                        "Recap: right-click the tray icon \u2192 Quit, "
-                        + "then relaunch the daemon.",
-                        8000,
-                    );
-                })
+                canRestart
+                    ? "Ask the daemon to shut down; the launcher wrapper "
+                      + "will spawn a fresh child automatically."
+                    : "Daemon is running standalone. Relaunch via "
+                      + "'uv run python -m recap.launcher <config-path>' "
+                      + "to enable one-click restarts from here.",
             );
+        restartSetting.addButton(btn => {
+            btn.setButtonText("Restart daemon");
+            if (!canRestart) {
+                btn.setDisabled(true);
+                return;
+            }
+            btn.setCta().onClick(async () => {
+                btn.setDisabled(true);
+                btn.setButtonText("Restarting\u2026");
+                try {
+                    await this.plugin.client!.requestShutdown(true);
+                    new Notice(
+                        "Recap: restart requested. The daemon will be back "
+                        + "in a few seconds.",
+                        6000,
+                    );
+                } catch (e) {
+                    const msg = e instanceof Error ? e.message : String(e);
+                    new Notice(`Recap: restart failed \u2014 ${msg}`, 8000);
+                    btn.setDisabled(false);
+                    btn.setButtonText("Restart daemon");
+                }
+            });
+        });
     }
 
     private async renderDaemonStatus(container: HTMLElement): Promise<void> {

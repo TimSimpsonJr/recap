@@ -183,6 +183,16 @@ var DaemonClient = class {
   async disarm() {
     await this.post("/api/disarm");
   }
+  /**
+   * Ask the daemon to shut down. ``restart: true`` is only honored
+   * when the daemon was launched via ``recap.launcher`` (returns 409
+   * otherwise). The daemon sends the 200 before tearing down, so the
+   * caller should poll ``/api/status`` to observe the replacement
+   * process coming online.
+   */
+  async requestShutdown(restart) {
+    await this.post("/api/admin/shutdown", { restart });
+  }
   async tailEvents(since, limit) {
     const params = new URLSearchParams();
     if (since !== void 0)
@@ -739,10 +749,12 @@ var RecapSettingTab = class extends import_obsidian3.PluginSettingTab {
       return;
     }
     let stateLine = "State: unknown";
+    let canRestart = false;
     try {
       const status = await this.plugin.client.getStatus();
       const uptime = Math.floor(status.uptime_seconds || 0);
       stateLine = `State: ${status.state}, uptime: ${uptime}s`;
+      canRestart = Boolean(status.can_restart);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       stateLine = `State: unreachable \u2014 ${msg}`;
@@ -752,16 +764,32 @@ var RecapSettingTab = class extends import_obsidian3.PluginSettingTab {
       text: stateLine,
       cls: "setting-item-description"
     });
-    new import_obsidian3.Setting(container).setName("Restart daemon").setDesc(
-      "Config changes require a daemon restart. Right-click the Recap tray icon \u2192 Quit, then relaunch."
-    ).addButton(
-      (btn) => btn.setButtonText("How to restart").onClick(() => {
-        new import_obsidian3.Notice(
-          "Recap: right-click the tray icon \u2192 Quit, then relaunch the daemon.",
-          8e3
-        );
-      })
+    const restartSetting = new import_obsidian3.Setting(container).setName("Restart daemon").setDesc(
+      canRestart ? "Ask the daemon to shut down; the launcher wrapper will spawn a fresh child automatically." : "Daemon is running standalone. Relaunch via 'uv run python -m recap.launcher <config-path>' to enable one-click restarts from here."
     );
+    restartSetting.addButton((btn) => {
+      btn.setButtonText("Restart daemon");
+      if (!canRestart) {
+        btn.setDisabled(true);
+        return;
+      }
+      btn.setCta().onClick(async () => {
+        btn.setDisabled(true);
+        btn.setButtonText("Restarting\u2026");
+        try {
+          await this.plugin.client.requestShutdown(true);
+          new import_obsidian3.Notice(
+            "Recap: restart requested. The daemon will be back in a few seconds.",
+            6e3
+          );
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          new import_obsidian3.Notice(`Recap: restart failed \u2014 ${msg}`, 8e3);
+          btn.setDisabled(false);
+          btn.setButtonText("Restart daemon");
+        }
+      });
+    });
   }
   async renderDaemonStatus(container) {
     container.empty();
@@ -826,39 +854,132 @@ var RecapSettingTab = class extends import_obsidian3.PluginSettingTab {
 // src/views/MeetingListView.ts
 var import_obsidian4 = require("obsidian");
 
+// src/components/TabStrip.ts
+var LABELS = {
+  today: "Today",
+  upcoming: "Upcoming",
+  past: "Past"
+};
+var ORDER = ["today", "upcoming", "past"];
+var TabStrip = class {
+  active;
+  onChange;
+  buttons = /* @__PURE__ */ new Map();
+  constructor(parent, initial, onChange) {
+    this.active = initial;
+    this.onChange = onChange;
+    const strip = parent.createDiv({ cls: "recap-tab-strip" });
+    for (const tab of ORDER) {
+      const btn = strip.createDiv({ cls: "recap-tab-button", text: LABELS[tab] });
+      if (tab === initial)
+        btn.addClass("is-active");
+      btn.addEventListener("click", () => this.setActive(tab));
+      this.buttons.set(tab, btn);
+    }
+  }
+  setActive(tab) {
+    if (tab === this.active)
+      return;
+    this.buttons.get(this.active)?.removeClass("is-active");
+    this.buttons.get(tab)?.addClass("is-active");
+    this.active = tab;
+    this.onChange(tab);
+  }
+};
+
+// src/components/NowDivider.ts
+function renderNowDivider(container, now = /* @__PURE__ */ new Date()) {
+  const hh = String(now.getHours()).padStart(2, "0");
+  const mm = String(now.getMinutes()).padStart(2, "0");
+  return container.createDiv({
+    cls: "recap-now-divider",
+    text: `Now \xB7 ${hh}:${mm}`
+  });
+}
+
 // src/components/FilterBar.ts
+var EMPTY_FILTER_STATE = {
+  org: "all",
+  status: "all",
+  company: "all",
+  search: ""
+};
 var FilterBar = class {
   container;
-  state = { org: "all", status: "all", search: "" };
+  tabMode;
+  orgs;
+  companies;
+  state;
   onChange;
-  constructor(parent, orgs, onChange) {
-    this.onChange = onChange;
+  constructor(parent, tabMode, orgs, companies, initialState, onChange) {
     this.container = parent.createDiv({ cls: "recap-filter-bar" });
-    this.render(orgs);
+    this.tabMode = tabMode;
+    this.orgs = orgs;
+    this.companies = companies;
+    this.state = { ...initialState };
+    this.onChange = onChange;
+    this.render();
   }
-  render(orgs) {
+  render() {
+    this.container.empty();
+    if (this.tabMode === "upcoming" || this.tabMode === "past") {
+      this.renderOrgSelect();
+    }
+    if (this.tabMode === "past") {
+      this.renderCompanySelect();
+      this.renderStatusSelect();
+    }
+    this.renderSearchInput();
+  }
+  renderOrgSelect() {
     const orgSelect = this.container.createEl("select", { cls: "recap-filter-select" });
     orgSelect.createEl("option", { value: "all", text: "All orgs" });
-    for (const org of orgs) {
+    for (const org of this.orgs) {
       orgSelect.createEl("option", { value: org, text: org });
     }
+    orgSelect.value = this.state.org;
     orgSelect.addEventListener("change", () => {
       this.state.org = orgSelect.value;
       this.onChange(this.state);
     });
+  }
+  renderCompanySelect() {
+    const companySelect = this.container.createEl("select", { cls: "recap-filter-select" });
+    companySelect.createEl("option", { value: "all", text: "All companies" });
+    for (const company of this.companies) {
+      companySelect.createEl("option", { value: company, text: company });
+    }
+    companySelect.value = this.state.company;
+    companySelect.addEventListener("change", () => {
+      this.state.company = companySelect.value;
+      this.onChange(this.state);
+    });
+  }
+  renderStatusSelect() {
     const statusSelect = this.container.createEl("select", { cls: "recap-filter-select" });
-    for (const [value, label] of [["all", "All status"], ["complete", "Complete"], ["failed", "Failed"], ["pending", "Pending"], ["processing", "Processing"]]) {
+    const options = [
+      ["all", "All status"],
+      ["complete", "Complete"],
+      ["failed", "Failed"],
+      ["pending", "Pending"],
+      ["processing", "Processing"]
+    ];
+    for (const [value, label] of options) {
       statusSelect.createEl("option", { value, text: label });
     }
+    statusSelect.value = this.state.status;
     statusSelect.addEventListener("change", () => {
       this.state.status = statusSelect.value;
       this.onChange(this.state);
     });
+  }
+  renderSearchInput() {
     const searchInput = this.container.createEl("input", {
       type: "text",
       placeholder: "Search meetings...",
       cls: "recap-filter-search"
     });
+    searchInput.value = this.state.search;
     searchInput.addEventListener("input", () => {
       this.state.search = searchInput.value;
       this.onChange(this.state);
@@ -902,8 +1023,11 @@ function formatDate(dateStr) {
 }
 
 // src/components/MeetingRow.ts
-function renderMeetingRow(container, meeting, onClick) {
+function renderMeetingRow(container, meeting, onClick, opts) {
   const row = container.createDiv({ cls: "recap-meeting-row" });
+  if (opts?.isPast) {
+    row.addClass("recap-meeting-row-past");
+  }
   row.addEventListener("click", () => onClick(meeting.path));
   const titleRow = row.createDiv({ cls: "recap-meeting-title-row" });
   titleRow.createSpan({ text: meeting.title, cls: "recap-meeting-title" });
@@ -923,12 +1047,107 @@ function renderMeetingRow(container, meeting, onClick) {
   return row;
 }
 
+// src/lib/meetingTime.ts
+var ALL_DAY = {
+  start: "00:00",
+  end: "23:59",
+  allDay: true
+};
+var TIME_RANGE = /^(([01]\d|2[0-3]):[0-5]\d)-(([01]\d|2[0-3]):[0-5]\d)$/;
+function parseMeetingTime(raw) {
+  if (raw == null) {
+    return ALL_DAY;
+  }
+  const trimmed = raw.trim();
+  const match = TIME_RANGE.exec(trimmed);
+  if (!match) {
+    return ALL_DAY;
+  }
+  return {
+    start: match[1],
+    end: match[3],
+    allDay: false
+  };
+}
+function todayIsoDate(now = /* @__PURE__ */ new Date()) {
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+// src/lib/deriveMeetings.ts
+function minutesSinceMidnight(hhmm) {
+  const [h, m] = hhmm.split(":").map(Number);
+  return h * 60 + m;
+}
+function isRowPast(m, now) {
+  const parsed = parseMeetingTime(m.time);
+  if (parsed.allDay)
+    return false;
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  return minutesSinceMidnight(parsed.end) < nowMin;
+}
+function matchesOrg(m, filter) {
+  return filter.org === "all" || m.org === filter.org;
+}
+function matchesCompany(m, filter) {
+  if (filter.company === "all")
+    return true;
+  return m.companies.includes(filter.company);
+}
+function matchesStatus(m, filter) {
+  if (filter.status === "all")
+    return true;
+  if (filter.status === "failed")
+    return m.pipelineStatus.startsWith("failed");
+  return m.pipelineStatus === filter.status;
+}
+function matchesSearch(m, filter) {
+  if (!filter.search)
+    return true;
+  const q = filter.search.toLowerCase();
+  if (m.title.toLowerCase().includes(q))
+    return true;
+  return m.participants.some((p) => p.toLowerCase().includes(q));
+}
+function passesAllFilters(m, filter) {
+  return matchesOrg(m, filter) && matchesCompany(m, filter) && matchesStatus(m, filter) && matchesSearch(m, filter);
+}
+function decorate(m, now) {
+  return { ...m, isPast: isRowPast(m, now) };
+}
+function deriveTodayMeetings(meetings, now, filter) {
+  const today = todayIsoDate(now);
+  const rows = meetings.filter((m) => m.date === today).filter((m) => passesAllFilters(m, filter)).map((m) => decorate(m, now)).sort(
+    (a, b) => minutesSinceMidnight(parseMeetingTime(a.time).start) - minutesSinceMidnight(parseMeetingTime(b.time).start)
+  );
+  const firstNonPast = rows.findIndex((r) => !r.isPast);
+  const nowDividerIndex = firstNonPast > 0 ? firstNonPast : null;
+  return { rows, nowDividerIndex };
+}
+function deriveUpcomingMeetings(meetings, now, filter) {
+  const today = todayIsoDate(now);
+  return meetings.filter((m) => m.date > today).filter((m) => passesAllFilters(m, filter)).map((m) => decorate(m, now)).sort((a, b) => {
+    if (a.date !== b.date)
+      return a.date.localeCompare(b.date);
+    return minutesSinceMidnight(parseMeetingTime(a.time).start) - minutesSinceMidnight(parseMeetingTime(b.time).start);
+  });
+}
+function derivePastMeetings(meetings, now, filter) {
+  const today = todayIsoDate(now);
+  return meetings.filter((m) => m.date < today).filter((m) => passesAllFilters(m, filter)).map((m) => decorate(m, now)).sort((a, b) => {
+    if (a.date !== b.date)
+      return b.date.localeCompare(a.date);
+    return minutesSinceMidnight(parseMeetingTime(b.time).start) - minutesSinceMidnight(parseMeetingTime(a.time).start);
+  });
+}
+
 // src/views/MeetingListView.ts
 var RELOAD_DEBOUNCE_MS = 300;
 var VIEW_MEETING_LIST = "recap-meeting-list";
 var MeetingListView = class extends import_obsidian4.ItemView {
   meetings = [];
-  filteredMeetings = [];
   listContainer = null;
   deps;
   // Status row elements (created in onOpen, updated via updateDaemonState).
@@ -937,9 +1156,16 @@ var MeetingListView = class extends import_obsidian4.ItemView {
   actionBtnEl = null;
   currentState = null;
   currentOrg = void 0;
-  // Track current filter so reloads after vault events preserve what the
-  // user has selected (org dropdown, status dropdown, search box).
-  filterState = null;
+  // Three-tab layout state: which tab is active, and a per-tab filter state
+  // so switching between tabs doesn't blow away what the user typed into
+  // the search box on another tab.
+  activeTab = "today";
+  filterStates = {
+    today: { ...EMPTY_FILTER_STATE },
+    upcoming: { ...EMPTY_FILTER_STATE },
+    past: { ...EMPTY_FILTER_STATE }
+  };
+  filterSlot = null;
   // Pending reload timer for debouncing bursts of vault create/modify events.
   reloadTimer = null;
   // Meeting-scope prefixes configured by the daemon (org subfolders).
@@ -967,10 +1193,13 @@ var MeetingListView = class extends import_obsidian4.ItemView {
     this.renderStatusRow(container);
     await this.refreshDaemonStateFromClient();
     await this.loadMeetings();
-    const orgs = [...new Set(this.meetings.map((m) => m.org).filter(Boolean))];
-    new FilterBar(container, orgs, (state) => {
-      this.applyFilters(state);
+    new TabStrip(container, this.activeTab, (tab) => {
+      this.activeTab = tab;
+      this.refreshFilterBar();
+      this.renderMeetings();
     });
+    this.filterSlot = container.createDiv({ cls: "recap-filter-slot" });
+    this.refreshFilterBar();
     this.listContainer = container.createDiv({ cls: "recap-meeting-list" });
     this.renderMeetings();
     this.registerEvent(
@@ -1015,11 +1244,8 @@ var MeetingListView = class extends import_obsidian4.ItemView {
   /** Reload the meeting list from the vault, preserving the active filter. */
   async reloadMeetings() {
     await this.loadMeetings();
-    if (this.filterState !== null) {
-      this.applyFilters(this.filterState);
-    } else {
-      this.renderMeetings();
-    }
+    this.refreshFilterBar();
+    this.renderMeetings();
   }
   /**
    * Render the status row at the top of the panel. Mirrors the pattern
@@ -1161,10 +1387,12 @@ var MeetingListView = class extends import_obsidian4.ItemView {
           path: file.path,
           title: frontmatter.title || file.basename,
           date: frontmatter.date || "",
+          time: frontmatter.time || "",
           org: frontmatter.org || "",
           duration: frontmatter.duration || "",
           pipelineStatus: frontmatter["pipeline-status"] || "pending",
           participants: this.parseParticipants(frontmatter.participants || []),
+          companies: this.parseParticipants(frontmatter.companies || []),
           platform: frontmatter.platform || ""
         });
       } catch (e) {
@@ -1176,54 +1404,97 @@ var MeetingListView = class extends import_obsidian4.ItemView {
         );
       }
     }
-    this.meetings.sort((a, b) => b.date.localeCompare(a.date));
-    this.filteredMeetings = [...this.meetings];
   }
   parseParticipants(raw) {
     if (!Array.isArray(raw))
       return [];
     return raw.map((p) => p.replace(/\[\[|\]\]/g, ""));
   }
-  applyFilters(state) {
-    this.filterState = state;
-    this.filteredMeetings = this.meetings.filter((m) => {
-      if (state.org !== "all" && m.org !== state.org)
-        return false;
-      if (state.status !== "all") {
-        if (state.status === "failed" && !m.pipelineStatus.startsWith("failed"))
-          return false;
-        if (state.status !== "failed" && m.pipelineStatus !== state.status)
-          return false;
+  refreshFilterBar() {
+    const orgs = [...new Set(this.meetings.map((m) => m.org).filter(Boolean))];
+    const companies = [...new Set(
+      this.meetings.flatMap((m) => m.companies).filter(Boolean)
+    )].sort();
+    const state = this.filterStates[this.activeTab];
+    if (this.filterSlot === null)
+      return;
+    this.filterSlot.empty();
+    new FilterBar(
+      this.filterSlot,
+      this.activeTab,
+      orgs,
+      companies,
+      state,
+      (next) => {
+        this.filterStates[this.activeTab] = next;
+        this.renderMeetings();
       }
-      if (state.search) {
-        const q = state.search.toLowerCase();
-        const searchable = `${m.title} ${m.participants.join(" ")}`.toLowerCase();
-        if (!searchable.includes(q))
-          return false;
-      }
-      return true;
-    });
-    this.renderMeetings();
+    );
+  }
+  openMeeting(path) {
+    const file = this.app.vault.getAbstractFileByPath(path);
+    if (file instanceof import_obsidian4.TFile) {
+      this.app.workspace.getLeaf(false).openFile(file);
+    }
   }
   renderMeetings() {
     if (!this.listContainer)
       return;
     this.listContainer.empty();
-    if (this.filteredMeetings.length === 0) {
+    const now = /* @__PURE__ */ new Date();
+    const state = this.filterStates[this.activeTab];
+    if (this.activeTab === "today") {
+      const { rows: rows2, nowDividerIndex } = deriveTodayMeetings(
+        this.meetings,
+        now,
+        state
+      );
+      this.renderRowsWithDivider(rows2, nowDividerIndex, now);
+      return;
+    }
+    const rows = this.activeTab === "upcoming" ? deriveUpcomingMeetings(this.meetings, now, state) : derivePastMeetings(this.meetings, now, state);
+    this.renderRows(rows);
+  }
+  renderRows(rows) {
+    if (!this.listContainer)
+      return;
+    if (rows.length === 0) {
       this.listContainer.createDiv({
         text: "No meetings found",
         cls: "recap-empty-state"
       });
       return;
     }
-    for (const meeting of this.filteredMeetings) {
-      renderMeetingRow(this.listContainer, meeting, (path) => {
-        const file = this.app.vault.getAbstractFileByPath(path);
-        if (file instanceof import_obsidian4.TFile) {
-          this.app.workspace.getLeaf(false).openFile(file);
-        }
-      });
+    for (const row of rows) {
+      renderMeetingRow(
+        this.listContainer,
+        row,
+        (path) => this.openMeeting(path),
+        { isPast: row.isPast }
+      );
     }
+  }
+  renderRowsWithDivider(rows, nowDividerIndex, now) {
+    if (!this.listContainer)
+      return;
+    if (rows.length === 0) {
+      this.listContainer.createDiv({
+        text: "No meetings today",
+        cls: "recap-empty-state"
+      });
+      return;
+    }
+    rows.forEach((row, i) => {
+      if (nowDividerIndex !== null && i === nowDividerIndex) {
+        renderNowDivider(this.listContainer, now);
+      }
+      renderMeetingRow(
+        this.listContainer,
+        row,
+        (path) => this.openMeeting(path),
+        { isPast: row.isPast }
+      );
+    });
   }
   async onClose() {
     this.listContainer = null;
