@@ -235,3 +235,37 @@ class TestTickMembershipEnumerationFailure:
 
         assert ("dev1",) in capture._loopback_sources
         stream.stop.assert_not_called()
+
+
+class TestStartInitialPopulation:
+    def test_start_populates_loopback_sources_from_enumeration(
+        self, tmp_path, monkeypatch,
+    ):
+        """AudioCapture.start() should call _tick_membership once before
+        entering the drain loop, populating _loopback_sources."""
+        cap = AudioCapture(output_path=tmp_path / "out.flac")
+
+        # Stub the mic source and other start()-internals so we don't touch
+        # real PyAudio/pyflac.
+        monkeypatch.setattr(cap, "_spawn_mic_source", lambda: MagicMock())
+        monkeypatch.setattr(cap, "_start_encoder", lambda: None)
+        monkeypatch.setattr(cap, "_spawn_drain_thread", lambda: None)
+
+        monkeypatch.setattr(
+            cap, "_enumerate_loopback_endpoints",
+            _fake_enumerator([
+                (("dev-a",), {"name": "A", "index": 1, "defaultSampleRate": 48000.0}),
+                (("dev-b",), {"name": "B", "index": 2, "defaultSampleRate": 48000.0}),
+            ]),
+        )
+        monkeypatch.setattr(
+            cap, "_open_loopback_stream",
+            lambda bind_to, device_name: MagicMock(is_terminal=False),
+        )
+
+        cap.start()
+
+        assert set(cap._loopback_sources.keys()) == {("dev-a",), ("dev-b",)}
+        assert all(
+            e.state == "probation" for e in cap._loopback_sources.values()
+        )

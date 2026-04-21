@@ -687,11 +687,16 @@ class TestSourceStreamReopen:
 class TestAudioCaptureDrain:
     """Wall-clock drain loop: health-check cadence driven by monotonic
     time, final partial tick on stop, cross-thread fatal state on
-    both-sources-degraded."""
+    mic degradation.
 
-    def test_fatal_event_fires_when_both_sources_degraded(self, monkeypatch, tmp_path):
-        """Both sources DEGRADED -> _fatal_error set, _fatal_event
-        tripped, drain loop exits cleanly (no raise)."""
+    Multi-output loopback semantics: system audio absence or degradation
+    is not fatal -- it surfaces as audio_warnings metadata in downstream
+    tasks. Only the mic (a single critical source) can fire fatal state."""
+
+    def test_fatal_event_fires_when_mic_degraded(self, monkeypatch, tmp_path):
+        """Mic DEGRADED -> _fatal_error set, _fatal_event tripped, drain
+        loop exits cleanly (no raise). Loopback state is irrelevant to
+        fatal firing in the multi-output design."""
         from recap.daemon.recorder.audio import (
             AudioCapture,
             AudioCaptureBothSourcesFailedError,
@@ -719,8 +724,6 @@ class TestAudioCaptureDrain:
 
         with cap._mic_source._lock:
             cap._mic_source._state = _SourceHealth.DEGRADED
-        with cap._loopback_source._lock:
-            cap._loopback_source._state = _SourceHealth.DEGRADED
 
         assert cap._fatal_event.wait(timeout=2.0) is True
         assert isinstance(cap._fatal_error, AudioCaptureBothSourcesFailedError)
@@ -742,12 +745,12 @@ class TestAudioCaptureDrain:
         assert "next_health_check_at" in src
         assert "monotonic" in src
 
-    def test_one_degraded_one_healthy_does_not_fire_fatal(self, monkeypatch, tmp_path):
-        """Regression guard: fatal only fires when BOTH sources are
-        degraded. A review finding flagged that changing the ``and``
-        to ``or`` in the drain loop's fatal check would pass all
-        other tests silently; this test locks the semantics in."""
-        from recap.daemon.recorder.audio import AudioCapture, _SourceHealth
+    def test_healthy_mic_does_not_fire_fatal(self, monkeypatch, tmp_path):
+        """Regression guard: when the mic is HEALTHY, fatal must not
+        fire regardless of loopback state. In the multi-output design,
+        loopback absence/degradation is handled via audio_warnings, not
+        fatal state -- a user can validly record a mic-only meeting."""
+        from recap.daemon.recorder.audio import AudioCapture
         import recap.daemon.recorder.audio as audio_mod
         from unittest.mock import MagicMock
         import time as _time
@@ -769,11 +772,9 @@ class TestAudioCaptureDrain:
         cap = AudioCapture(output_path=tmp_path / "x.flac", sample_rate=48000)
         cap.start()
         try:
-            # Mic DEGRADED, loopback HEALTHY -- must NOT fire fatal.
-            with cap._mic_source._lock:
-                cap._mic_source._state = _SourceHealth.DEGRADED
-            # Give the drain loop at least one health tick (~1s).
-            _time.sleep(1.5)
+            # Mic HEALTHY, loopback dict empty (enumeration returns nothing
+            # under the default MagicMock) -- must NOT fire fatal.
+            _time.sleep(1.5)  # at least one health tick
             assert cap._fatal_event.is_set() is False
             assert cap._fatal_error is None
         finally:
