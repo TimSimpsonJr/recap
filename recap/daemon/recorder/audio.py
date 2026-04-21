@@ -230,9 +230,11 @@ class _SourceStream:
         * ``bind_to is None`` and ``kind == "mic"``: return the default
           WASAPI input device (the mic path always default-follows; it
           never takes an explicit ``bind_to``).
-        * ``bind_to is not None`` (loopback only in practice): scan the
-          full WASAPI device enumeration and return the device whose
-          identity tuple matches ``self._bind_to``.
+        * ``bind_to is not None``: scan the full WASAPI device
+          enumeration and return the device whose identity tuple matches
+          ``self._bind_to``. No kind-check is enforced here today; only
+          loopback callers pass ``bind_to`` in the current change (mic
+          binding is out of scope for this phase).
 
         Raises:
             AudioDeviceError: when ``bind_to`` is set but no device in the
@@ -398,35 +400,62 @@ class _SourceStream:
     def attempt_reopen_if_due(self) -> None:
         """Drain-thread entry point for health maintenance.
 
-        Cheap when healthy: checks the latest default-device identity
-        against the bound identity, returns immediately if they match.
-        Only does reopen work when needed AND the backoff window has
-        elapsed. See design §3.
+        Cheap when healthy: probes the target identity (bound endpoint
+        when ``_bind_to`` is set, else the current OS default) and
+        compares it to ``_bound_identity``. Returns immediately if they
+        match. Only does reopen work when needed AND the backoff window
+        has elapsed. See design §3.
+
+        For bound streams, a vanished identity (not in the current
+        WASAPI enumeration) flips ``_terminal=True`` and returns without
+        burning through the reconnect budget -- the membership watcher
+        (Task 7) uses this signal to evict the source cleanly.
         """
         with self._lock:
             if self._state == _SourceHealth.STOPPED:
                 return
 
             needs_reopen = False
+            # Route the probe through _lookup_bound_device so bound streams
+            # check their OWN identity instead of the OS default. Without
+            # this, a bound non-default loopback would see the default
+            # identity != its own bound identity on every 1s health tick
+            # and thrash reopen. Legacy default-following streams (bind_to
+            # is None) fall through to the default-lookup branch inside
+            # _lookup_bound_device and keep today's behavior.
             try:
-                runtime_pyaudio = _require_pyaudio()
-                probe = runtime_pyaudio.PyAudio()
-                try:
-                    if self._kind == "loopback":
-                        info = probe.get_default_wasapi_loopback()
-                    else:
-                        info = probe.get_default_wasapi_device(d_in=True)
-                finally:
-                    try:
-                        probe.terminate()
-                    except Exception:
-                        pass
-                self._latest_default_identity = self._compute_identity(info)
-                if self._latest_default_identity != self._bound_identity:
-                    needs_reopen = True
+                info = self._lookup_bound_device()
+            except AudioDeviceError as exc:
+                # Bound identity is no longer in the enumeration. Don't
+                # thrash the reconnect budget -- flip terminal so the
+                # membership watcher (Task 7) evicts this source. Returning
+                # here is the same control-flow shape as the STOPPED bail
+                # above, so no post-lock work runs for this case.
+                logger.warning(
+                    "%s bound identity vanished during health probe: %s",
+                    self._kind, exc,
+                )
+                self._terminal = True
+                return
             except Exception:
+                # Any OTHER failure (PyAudio init error, OS-level glitch,
+                # transient device-count hiccup) keeps the legacy behavior:
+                # assume the probe is stale and let the scheduling branch
+                # below trigger a reopen attempt under backoff.
                 logger.exception("%s identity probe failed", self._kind)
                 needs_reopen = True
+            else:
+                # ``_latest_default_identity`` is a historical name -- since
+                # bind_to landed it tracks the latest probed identity,
+                # whether that's the bound endpoint (bound streams) or the
+                # current OS default (legacy default-following streams).
+                probe_identity = self._compute_identity(info)
+                self._latest_default_identity = probe_identity
+                if (
+                    self._bound_identity is not None
+                    and probe_identity != self._bound_identity
+                ):
+                    needs_reopen = True
 
             if self._state in (_SourceHealth.RECONNECTING, _SourceHealth.DEGRADED):
                 needs_reopen = True
@@ -485,9 +514,11 @@ class _SourceStream:
             logger.warning("%s recovered (from degraded)", self._kind)
 
     def _do_reopen(self) -> None:
-        """Tear down the current stream, open a new one on the current
-        default device, rebuild the resampler if the native rate
-        changed. No journaling here -- caller owns state transitions.
+        """Tear down the current stream, open a new one on the target
+        device returned by ``_lookup_bound_device()`` (the bound endpoint
+        when ``_bind_to`` is set, else the current default), rebuild the
+        resampler if the native rate changed. No journaling here --
+        caller owns state transitions.
 
         Ordering: close the old stream first, probe the new device,
         open the new stream, and ONLY THEN rewrite bound state under

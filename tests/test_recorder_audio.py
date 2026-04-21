@@ -933,3 +933,64 @@ class TestSourceStreamExplicitBinding:
 
         assert called["default"] == 0, "bind_to must not fall back to default"
         assert info["endpointId"] == "endpoint-guid-xyz"
+
+    def test_lookup_bound_device_raises_when_identity_absent(self, monkeypatch):
+        """If bind_to is set but no device in the current enumeration has a
+        matching identity, _lookup_bound_device raises AudioDeviceError. This
+        is the signal the membership watcher uses to evict a vanished endpoint."""
+        from recap.daemon.recorder.audio import _SourceStream, AudioDeviceError
+        ghost = ("endpoint", "ghost-id")
+        s = _SourceStream(kind="loopback", output_rate=48000, bind_to=ghost)
+
+        class _FakePA:
+            def get_device_count(self):
+                return 1
+            def get_device_info_by_index(self, idx):
+                # Identity will compute to ("endpoint", "different-id")
+                return {"endpointId": "different-id", "name": "Different",
+                        "index": idx, "maxInputChannels": 2,
+                        "defaultSampleRate": 48000.0, "isLoopbackDevice": True}
+            def terminate(self):
+                pass
+
+        fake_runtime = MagicMock()
+        fake_runtime.PyAudio.return_value = _FakePA()
+        monkeypatch.setattr(
+            "recap.daemon.recorder.audio._require_pyaudio", lambda: fake_runtime,
+        )
+
+        with pytest.raises(AudioDeviceError, match="ghost-id"):
+            s._lookup_bound_device()
+
+    def test_attempt_reopen_flips_terminal_when_bound_identity_gone(
+        self, monkeypatch,
+    ):
+        """attempt_reopen_if_due on a bound stream whose identity has vanished
+        from the WASAPI enumeration must flip is_terminal=True without
+        attempting reopen. This is the main failure-mode path -- Bluetooth
+        device unplugged, loopback endpoint permanently gone."""
+        from recap.daemon.recorder.audio import _SourceStream, _SourceHealth
+        ghost = ("endpoint", "ghost-id")
+        s = _SourceStream(kind="loopback", output_rate=48000, bind_to=ghost)
+        # Put the stream in a state where it could be due for reopen.
+        # Default _state is STOPPED which bails out before the probe; bump
+        # to HEALTHY so the probe branch actually runs.
+        s._state = _SourceHealth.HEALTHY
+        s._bound_identity = ghost
+        s._next_reopen_at = 0.0  # immediately due
+
+        class _FakePA:
+            def get_device_count(self):
+                return 0  # nothing matches
+            def terminate(self):
+                pass
+
+        fake_runtime = MagicMock()
+        fake_runtime.PyAudio.return_value = _FakePA()
+        monkeypatch.setattr(
+            "recap.daemon.recorder.audio._require_pyaudio", lambda: fake_runtime,
+        )
+
+        s.attempt_reopen_if_due()
+
+        assert s.is_terminal is True
