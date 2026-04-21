@@ -569,3 +569,72 @@ def run_pipeline(
 
     logger.info("Pipeline complete: %s", note_path)
     return note_path
+
+
+# ---------------------------------------------------------------------------
+# Test-only helper
+# ---------------------------------------------------------------------------
+
+def run_export_for_test(
+    audio_path: pathlib.Path,
+    note_path: pathlib.Path,
+    vault_root: pathlib.Path,
+) -> None:
+    """Test-only helper: exercise the export stage without transcribe/diarize/
+    analyze.
+
+    Loads the sidecar next to *audio_path*, builds a minimum-viable
+    ``MeetingMetadata`` and ``AnalysisResult`` from its fields + zero-value
+    defaults, then calls ``build_canonical_frontmatter`` + ``upsert_note`` to
+    write the note.
+
+    Exists so ``tests/test_audio_warning_e2e.py`` can validate the
+    sidecar -> note chain end-to-end without running the ML stages. Not
+    intended for production use -- callers that need a real export should go
+    through ``run_pipeline``.
+    """
+    from datetime import date as _date
+
+    from recap.artifacts import load_recording_metadata
+    from recap.models import AnalysisResult, MeetingMetadata
+    from recap.vault import build_canonical_frontmatter, upsert_note
+
+    sidecar = load_recording_metadata(audio_path)
+    if sidecar is None:
+        raise FileNotFoundError(
+            f"No sidecar metadata next to {audio_path}; write one before calling.",
+        )
+
+    meeting = MeetingMetadata(
+        title=sidecar.title,
+        date=_date.fromisoformat(sidecar.date),
+        participants=list(sidecar.participants),
+        platform=sidecar.platform,
+    )
+    analysis = AnalysisResult(
+        speaker_mapping={},
+        meeting_type="other",
+        summary="",
+        key_points=[],
+        decisions=[],
+        action_items=[],
+        follow_ups=[],
+        relationship_notes=None,
+        people=[],
+        companies=[],
+    )
+    fm = build_canonical_frontmatter(
+        metadata=meeting,
+        analysis=analysis,
+        duration_seconds=0,
+        recording_path=audio_path,
+        org=sidecar.org,
+        org_subfolder=sidecar.org.title(),
+        recording_metadata=sidecar,
+    )
+    upsert_note(
+        note_path,
+        fm,
+        body="## Summary\n\nNo content.\n",
+        vault_path=vault_root,
+    )
