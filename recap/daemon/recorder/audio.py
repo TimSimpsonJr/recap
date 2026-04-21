@@ -923,6 +923,11 @@ class AudioCapture:
         active_count = 0
         now = time.monotonic()
 
+        # Lockless iteration: _loopback_sources is drain-thread-owned.
+        # _tick_membership (Task 7) is the only other mutator of this dict
+        # and runs on the same drain thread, so no read-during-write race
+        # exists. Matches the single-writer-drain-thread convention used
+        # by _SourceStream.is_terminal and attempt_reopen_if_due.
         for key, entry in self._loopback_sources.items():
             stream_bytes = entry.stream.drain_resampled(bytes_needed)
 

@@ -98,19 +98,32 @@ class TestDrainAndMix:
 
     def test_rms_measured_before_padding(self, capture):
         """A stream that returns a short buffer must have its RMS measured on
-        the unpadded samples. Measuring after padding with zeros would depress
-        the level of legitimately-active short-buffer streams."""
+        the unpadded samples. If RMS were measured after zero-padding, the
+        below-threshold padded-RMS would misclassify a legitimately active
+        short-buffer stream as silent.
+
+        Values chosen so the regression is actually exercised:
+          - unpadded RMS = 1000 (above ~328 threshold)
+          - padded RMS over 480 samples = ~144 (below threshold)
+        A broken implementation measuring RMS post-pad would now misclassify
+        as silent; the correct implementation includes the stream.
+        """
         chunk_frames = 480
-        short = np.full(100, 20000, dtype=np.int16)
+        # Exactly 10 real samples, level chosen so unpadded-RMS clears
+        # threshold and padded-RMS would not.
+        short = np.full(10, 1000, dtype=np.int16)
         capture._mic_buffer = _mic_bytes(chunk_frames)
         entry = _entry_with_buffer(short)
         capture._loopback_sources = {("x",): entry}
 
         _, system, _ = capture._drain_and_mix(chunk_frames)
 
-        np.testing.assert_array_equal(system[:100], short)
-        assert np.all(system[100:] == 0)
+        # The stream must be classified active (only possible if RMS was
+        # measured on the unpadded 10 samples, not the 480-sample padded view).
         assert entry.state == "active"
+        # The 10 real samples should appear in channel-1; the rest is zero-pad.
+        np.testing.assert_array_equal(system[:10], short)
+        assert np.all(system[10:] == 0)
 
     def test_first_signal_promotes_probation_to_active(self, capture):
         chunk_frames = 480
@@ -134,6 +147,32 @@ class TestDrainAndMix:
         capture._drain_and_mix(chunk_frames)
         assert entry.state == "probation"
         assert entry.last_active_at is None
+
+    def test_active_stays_sticky_when_chunk_falls_silent(self, capture):
+        """Once a stream is ACTIVE, a chunk with sub-threshold RMS leaves it
+        ACTIVE (no demotion) but excludes it from this chunk's active_count.
+
+        This invariant is load-bearing for Task 7's membership watcher: ACTIVE
+        entries are only evicted on device-gone or is_terminal, never on
+        silence. The mix math must exclude them per chunk without touching
+        state, so that a later chunk that carries signal can still contribute
+        via the already-ACTIVE entry."""
+        chunk_frames = 480
+        silent = np.zeros(chunk_frames, dtype=np.int16)
+        entry = _entry_with_buffer(silent)
+        entry.state = "active"  # simulate a previously-promoted entry
+        entry.last_active_at = 5.0  # some prior timestamp
+        capture._mic_buffer = _mic_bytes(chunk_frames)
+        capture._loopback_sources = {("a",): entry}
+
+        _, system, _ = capture._drain_and_mix(chunk_frames)
+
+        # State unchanged -- ACTIVE is sticky through silence.
+        assert entry.state == "active"
+        # last_active_at not updated (chunk was below threshold)
+        assert entry.last_active_at == 5.0
+        # Excluded from the mix on this chunk -> zero channel-1.
+        assert np.all(system == 0)
 
     def test_saturation_clips_without_overflow(self, capture):
         chunk_frames = 480
