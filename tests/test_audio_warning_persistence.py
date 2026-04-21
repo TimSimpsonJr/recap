@@ -16,9 +16,12 @@ from recap.daemon.recorder.audio_events import (
 
 
 def _event_type_called(journal_mock, event_type: str) -> bool:
+    # EventJournal.append signature: append(level, event, message, *, payload=)
+    # Event name is the second positional arg.
     return any(
-        call.kwargs.get("event_type") == event_type
-        for call in journal_mock.record.call_args_list
+        (call.args[1] if len(call.args) > 1 else call.kwargs.get("event"))
+        == event_type
+        for call in journal_mock.append.call_args_list
     )
 
 
@@ -40,7 +43,7 @@ class TestScenarioAZeroEndpoints:
 
         cap._note_scenario_no_loopback_at_start()
 
-        journal.record.assert_called_once()
+        journal.append.assert_called_once()
         assert _event_type_called(journal, EVT_AUDIO_NO_LOOPBACK_AT_START)
         assert WARN_NO_SYSTEM_AUDIO_CAPTURED in cap._audio_warnings
 
@@ -55,7 +58,7 @@ class TestScenarioBNoActiveEverPromoted:
 
         cap._note_scenario_no_system_audio_if_applicable()
 
-        journal.record.assert_called_once()
+        journal.append.assert_called_once()
         assert _event_type_called(journal, EVT_AUDIO_NO_SYSTEM_AUDIO)
         assert WARN_NO_SYSTEM_AUDIO_CAPTURED in cap._audio_warnings
 
@@ -69,7 +72,7 @@ class TestScenarioBNoActiveEverPromoted:
         cap._note_scenario_no_system_audio_if_applicable()
         cap._note_scenario_no_system_audio_if_applicable()
 
-        assert journal.record.call_count == 1
+        assert journal.append.call_count == 1
         assert cap._audio_warnings.count(WARN_NO_SYSTEM_AUDIO_CAPTURED) == 1
 
     def test_scenario_b_does_not_fire_if_any_active_ever(self, tmp_path):
@@ -81,7 +84,7 @@ class TestScenarioBNoActiveEverPromoted:
 
         cap._note_scenario_no_system_audio_if_applicable()
 
-        journal.record.assert_not_called()
+        journal.append.assert_not_called()
         assert WARN_NO_SYSTEM_AUDIO_CAPTURED not in cap._audio_warnings
 
 
@@ -96,7 +99,7 @@ class TestScenarioCAllLoopbacksLost:
 
         cap._note_scenario_all_loopbacks_lost_if_applicable()
 
-        journal.record.assert_called_once()
+        journal.append.assert_called_once()
         assert _event_type_called(journal, EVT_AUDIO_ALL_LOOPBACKS_LOST)
         assert WARN_SYSTEM_AUDIO_INTERRUPTED in cap._audio_warnings
 

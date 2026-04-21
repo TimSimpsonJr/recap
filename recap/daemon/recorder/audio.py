@@ -1134,14 +1134,26 @@ class AudioCapture:
             self._audio_warnings.append(code)
 
     def _record_journal_event(self, event_type: str, **details: Any) -> None:
+        """Emit a journal entry for an audio-capture scenario event.
+
+        Uses ``EventJournal.append(level, event, message, *, payload=)`` --
+        the interface the daemon's ``recap.daemon.events.EventJournal``
+        actually exposes. ``message`` is popped out of ``details`` (every
+        scenario passes one); the remainder becomes ``payload``.
+
+        Guarded by a blanket try/except so a misbehaving journal cannot
+        kill the drain thread.
+        """
         if self._event_journal is None:
             return
+        message = details.pop("message", "")
+        payload = details or None
         try:
-            self._event_journal.record(
-                level="warning", event_type=event_type, details=details,
+            self._event_journal.append(
+                "warning", event_type, message, payload=payload,
             )
         except Exception:
-            logger.debug("event journal record() raised", exc_info=True)
+            logger.debug("event journal emit raised", exc_info=True)
 
     def _note_scenario_no_loopback_at_start(self) -> None:
         """Scenario A: zero loopback endpoints at recording start.

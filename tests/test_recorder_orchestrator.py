@@ -144,3 +144,101 @@ async def test_monitor_capture_health_stops_recorder_on_fatal_event(tmp_path):
                 await monitor
             except (asyncio.CancelledError, Exception):
                 pass
+
+
+@pytest.mark.asyncio
+async def test_stop_persists_audio_warnings_into_sidecar(tmp_path):
+    """On stop, the recorder must rewrite the sidecar with the AudioCapture's
+    accumulated _audio_warnings / _system_audio_devices_seen so the pipeline
+    export stage can render them in the note frontmatter + body callout."""
+    from recap.artifacts import RecordingMetadata, load_recording_metadata
+    from recap.daemon.recorder.recorder import Recorder
+
+    recorder = Recorder(recordings_path=tmp_path)
+
+    # Bypass full start() — inject a fake AudioCapture + populate the
+    # initial sidecar like start() would.
+    fake_capture = MagicMock()
+    fake_capture._audio_warnings = ["no-system-audio-captured"]
+    fake_capture._system_audio_devices_seen = ["Laptop Speakers", "HDMI Audio"]
+    fake_capture.stop = MagicMock()
+
+    audio_path = tmp_path / "test.flac"
+    audio_path.touch()
+    initial_metadata = RecordingMetadata(
+        org="testorg",
+        note_path="",
+        title="Test",
+        date="2026-04-21",
+        participants=[],
+        platform="manual",
+    )
+    from recap.artifacts import write_recording_metadata
+    write_recording_metadata(audio_path, initial_metadata)
+
+    recorder._audio_capture = fake_capture
+    recorder._current_path = audio_path
+    recorder._current_metadata = initial_metadata
+    recorder.state_machine.detected("testorg")
+    recorder.state_machine.start_recording("testorg")
+
+    await recorder.stop()
+
+    loaded = load_recording_metadata(audio_path)
+    assert loaded is not None
+    assert loaded.audio_warnings == ["no-system-audio-captured"]
+    assert loaded.system_audio_devices_seen == ["Laptop Speakers", "HDMI Audio"]
+
+
+@pytest.mark.asyncio
+async def test_recorder_passes_event_journal_into_audio_capture(tmp_path):
+    """When the Recorder is constructed with an event_journal, starting a
+    recording must thread that journal into the AudioCapture so Scenarios
+    A/B/C fire in production rather than being silently dropped."""
+    import threading
+    from recap.daemon.recorder.recorder import Recorder
+
+    journal = MagicMock()
+    recorder = Recorder(recordings_path=tmp_path, event_journal=journal)
+
+    captured: dict = {}
+
+    class _FakeAudioCapture:
+        def __init__(self, **kwargs):
+            self._event_journal = None
+            self._fatal_event = threading.Event()
+            self._audio_warnings: list[str] = []
+            self._system_audio_devices_seen: list[str] = []
+            captured["instance"] = self
+
+        def start(self):
+            pass
+
+        def stop(self):
+            pass
+
+        @property
+        def is_recording(self):
+            return True
+
+        on_chunk = None
+
+    with patch(
+        "recap.daemon.recorder.recorder.AudioCapture",
+        _FakeAudioCapture,
+    ), patch(
+        "recap.daemon.recorder.recorder.StreamingTranscriber",
+        return_value=MagicMock(),
+    ), patch(
+        "recap.daemon.recorder.recorder.StreamingDiarizer",
+        return_value=MagicMock(),
+    ):
+        try:
+            await recorder.start("testorg")
+            instance = captured.get("instance")
+            assert instance is not None
+            assert instance._event_journal is journal
+        finally:
+            # Tear down the async monitors start() spun up so the test
+            # doesn't leak "Task was destroyed but it is pending!" warnings.
+            await recorder.stop()

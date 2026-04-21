@@ -170,3 +170,40 @@ class TestBodyCallout:
         assert "User agenda" in content  # preserved above marker
         assert "[!warning]" in content  # callout in new body
         assert "audio-warnings:" in content  # frontmatter merged
+
+
+class TestPipelineExportThreadsWarnings:
+    def test_frontmatter_includes_devices_seen_when_non_empty(self, tmp_path):
+        """build_canonical_frontmatter-level test: when system_audio_devices_seen
+        is populated on the RecordingMetadata, the frontmatter dict carries it
+        under the 'system-audio-devices-seen' key (so the callout renderer in
+        upsert_note has device names available)."""
+        from recap.vault import build_canonical_frontmatter
+        fm = build_canonical_frontmatter(
+            metadata=_meeting_metadata(),
+            analysis=_analysis_result(),
+            duration_seconds=120,
+            recording_path=tmp_path / "r.flac",
+            org="testorg",
+            org_subfolder="TestOrg",
+            recording_metadata=_recording_metadata(
+                audio_warnings=["no-system-audio-captured"],
+                devices_seen=["Laptop Speakers", "HDMI Audio"],
+            ),
+        )
+        assert fm.get("system-audio-devices-seen") == ["Laptop Speakers", "HDMI Audio"]
+
+    def test_frontmatter_omits_devices_seen_when_empty(self, tmp_path):
+        from recap.vault import build_canonical_frontmatter
+        fm = build_canonical_frontmatter(
+            metadata=_meeting_metadata(),
+            analysis=_analysis_result(),
+            duration_seconds=120,
+            recording_path=tmp_path / "r.flac",
+            org="testorg",
+            org_subfolder="TestOrg",
+            recording_metadata=_recording_metadata(
+                audio_warnings=[], devices_seen=[],
+            ),
+        )
+        assert "system-audio-devices-seen" not in fm

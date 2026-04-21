@@ -128,6 +128,10 @@ def build_canonical_frontmatter(
             fm["meeting-link"] = recording_metadata.meeting_link
         if recording_metadata.audio_warnings:
             fm["audio-warnings"] = list(recording_metadata.audio_warnings)
+        if recording_metadata.system_audio_devices_seen:
+            fm["system-audio-devices-seen"] = list(
+                recording_metadata.system_audio_devices_seen,
+            )
 
     return fm
 

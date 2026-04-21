@@ -11,7 +11,7 @@ import logging
 import shutil
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from recap.artifacts import RecordingMetadata, write_recording_metadata
 from recap.daemon.recorder.audio import AudioCapture
@@ -42,12 +42,14 @@ class Recorder:
         silence_timeout_minutes: float = 5,
         max_duration_hours: float = 4,
         on_state_change: Callable | None = None,
+        event_journal: Any = None,
     ) -> None:
         self._recordings_path = recordings_path
         self._sample_rate = sample_rate
         self._channels = channels
         self._silence_timeout_seconds = silence_timeout_minutes * 60
         self._max_duration_seconds = max_duration_hours * 3600
+        self._event_journal = event_journal
 
         self.state_machine = RecorderStateMachine(on_state_change=on_state_change)
 
@@ -185,6 +187,13 @@ class Recorder:
             sample_rate=48000,
             channels=self._channels,
         )
+        # Wire the daemon's event journal so AudioCapture's Scenario
+        # A/B/C hooks (no-loopback-at-start, no-system-audio,
+        # all-loopbacks-lost) can emit events in production. When no
+        # journal is provided (unit tests, minimal bootstraps) the
+        # capture's _record_journal_event is a no-op.
+        if self._event_journal is not None:
+            self._audio_capture._event_journal = self._event_journal
         self._silence_detector = SilenceDetector(
             timeout_seconds=self._silence_timeout_seconds,
         )
@@ -256,11 +265,37 @@ class Recorder:
             except asyncio.CancelledError:
                 pass
 
-        # Stop audio capture
+        # Stop audio capture.
+        # Capture the warnings + devices-seen BEFORE tearing down so the
+        # sidecar rewrite below picks up the final accumulated state.
         path = self._current_path
+        audio_warnings: list[str] = []
+        devices_seen: list[str] = []
         if self._audio_capture is not None:
+            audio_warnings = list(self._audio_capture._audio_warnings)
+            devices_seen = list(self._audio_capture._system_audio_devices_seen)
             self._audio_capture.stop()
             self._audio_capture = None
+
+        # Rewrite the sidecar with the accumulated audio warnings +
+        # devices-seen so the pipeline export stage can render them in
+        # the note frontmatter and body callout. Only rewrite if the
+        # initial sidecar was written (normal path), and only on stop
+        # paths where we still have a path + metadata reference.
+        if (
+            path is not None
+            and self._current_metadata is not None
+            and (audio_warnings or devices_seen)
+        ):
+            try:
+                self._current_metadata.audio_warnings = audio_warnings
+                self._current_metadata.system_audio_devices_seen = devices_seen
+                write_recording_metadata(path, self._current_metadata)
+            except OSError:
+                logger.warning(
+                    "Failed to persist audio warnings to sidecar for %s",
+                    path, exc_info=True,
+                )
 
         # Stop streaming and merge results
         self._stop_streaming()

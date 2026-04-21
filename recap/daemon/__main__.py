@@ -190,11 +190,14 @@ def _build_subservices(daemon: Daemon, auth_token: str) -> dict[str, Any]:
     """
     config = daemon.config
 
-    # Recorder.
+    # Recorder. Pass the daemon's event journal so AudioCapture can
+    # fire Scenario A/B/C events (no-loopback-at-start, no-system-audio,
+    # all-loopbacks-lost) into the same stream the plugin consumes.
     recorder = Recorder(
         recordings_path=config.recordings_path,
         silence_timeout_minutes=config.recording.silence_timeout_minutes,
         max_duration_hours=config.recording.max_duration_hours,
+        event_journal=daemon.event_journal,
     )
 
     # Pipeline trigger -- reads daemon.recorder lazily at invocation, by
