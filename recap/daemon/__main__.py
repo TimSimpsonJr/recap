@@ -17,6 +17,7 @@ from recap.artifacts import RecordingMetadata, load_recording_metadata
 from recap.daemon.auth import ensure_auth_token
 from recap.daemon.calendar.scheduler import CalendarSyncScheduler
 from recap.daemon.config import DaemonConfig, load_daemon_config
+from recap.daemon.exit_codes import EXIT_RESTART_REQUESTED
 from recap.daemon.logging_setup import setup_logging
 from recap.daemon.notifications import notify
 from recap.daemon.recorder.detector import MeetingDetector
@@ -502,6 +503,15 @@ def main(argv: list[str] | None = None) -> None:
         # shutdown, but if asyncio.run still raises KeyboardInterrupt, we
         # exit cleanly here.
         logger.info("Daemon interrupted by user")
+
+    # Restart handshake: when a caller flipped ``daemon.restart_requested``
+    # (via ``/api/admin/shutdown {"restart": true}`` or the tray's future
+    # Restart item) we exit with ``EXIT_RESTART_REQUESTED`` so the
+    # ``recap.launcher`` watchdog spawns a fresh child. Standalone
+    # daemons see the same code -- harmless, since there's no wrapper to
+    # act on it.
+    if daemon.restart_requested:
+        sys.exit(EXIT_RESTART_REQUESTED)
 
 
 if __name__ == "__main__":

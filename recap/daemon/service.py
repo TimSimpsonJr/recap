@@ -10,6 +10,7 @@ import argparse
 import asyncio
 import concurrent.futures
 import logging
+import os
 import pathlib
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -82,6 +83,17 @@ class Daemon:
         self._stop_event: Optional[asyncio.Event] = None
         self._stopped: bool = False
         self._pairing_timeout_task: Optional[asyncio.Task[None]] = None
+
+        # Restart handshake: ``/api/admin/shutdown {"restart": true}`` and
+        # the tray's future Restart item flip this flag before requesting
+        # shutdown so ``__main__`` can translate it into
+        # ``EXIT_RESTART_REQUESTED`` for the launcher watchdog.
+        self.restart_requested: bool = False
+        # ``RECAP_MANAGED=1`` marks this daemon as running under the
+        # launcher wrapper, which is a prerequisite for self-restart.
+        # Captured at construction so tests can control it via monkeypatch
+        # and so ``/api/status`` reports a stable value per process.
+        self.managed: bool = os.environ.get("RECAP_MANAGED") == "1"
 
         # Dedicated single-worker executor for tkinter popup work. All
         # popup tk state lives and dies on this one thread so finalization
@@ -175,7 +187,14 @@ class Daemon:
         # Bring up the HTTP server (non-blocking).
         port = self.config.daemon_ports.plugin_port
         logger.info("Starting HTTP server on port %d", port)
-        self._runner = web.AppRunner(self.app)
+        # ``shutdown_timeout`` caps how long ``_runner.cleanup()`` waits
+        # for active handlers (notably the long-lived ``/api/ws``) to
+        # drain. aiohttp's default is 60s and the cleanup goes through
+        # two timeout-bounded phases, which produced a ~120s stall on
+        # restart when the plugin's WebSocket was still connected. 5s
+        # is a belt-and-suspenders backstop; the primary fix is
+        # closing WS clients ourselves in ``stop()`` before cleanup.
+        self._runner = web.AppRunner(self.app, shutdown_timeout=5.0)
         await self._runner.setup()
         self._site = web.TCPSite(self._runner, "127.0.0.1", port)
         await self._site.start()
@@ -219,10 +238,27 @@ class Daemon:
 
         Stops in inverse order of start(): scheduler -> detector -> recorder ->
         HTTP runner. Emits ``daemon_stopped`` to the journal.
+
+        Per-step timings are logged at INFO so slow shutdowns (which
+        delay user-visible restart) can be traced without re-instrumenting.
         """
         if self._stopped:
             return
         self._stopped = True
+
+        import time as _time
+        shutdown_started = _time.monotonic()
+        step_started = shutdown_started
+
+        def _mark(step: str) -> None:
+            """Log elapsed time since the previous ``_mark`` call."""
+            nonlocal step_started
+            now = _time.monotonic()
+            logger.info(
+                "shutdown: %s took %.2fs (total %.2fs)",
+                step, now - step_started, now - shutdown_started,
+            )
+            step_started = now
 
         # Cancel the pairing timeout loop first; it's cheap and cannot
         # fail the shutdown sequence.
@@ -235,6 +271,7 @@ class Daemon:
                 # is logged by the loop itself, so just ignore here.
                 pass
             self._pairing_timeout_task = None
+        _mark("pairing_timeout_task")
 
         # Scheduler (cancels its task).
         if self.scheduler is not None:
@@ -243,6 +280,7 @@ class Daemon:
                 logger.info("Calendar sync stopped")
             except Exception:
                 logger.exception("Error stopping calendar scheduler")
+        _mark("scheduler.stop")
 
         # Detector (cancels its task and drains pending signal callbacks).
         if self.detector is not None:
@@ -251,6 +289,7 @@ class Daemon:
                 logger.info("Meeting detection stopped")
             except Exception:
                 logger.exception("Error stopping meeting detector")
+        _mark("detector.stop")
 
         # Signal popup worker: sticky-signal any running/queued dialogs to
         # bail out, then wait a bounded period for the dedicated executor
@@ -267,6 +306,7 @@ class Daemon:
         if self._popup_executor is not None:
             self._popup_executor.shutdown(wait=False)
             self._popup_executor = None
+        _mark("signal_popup + popup_executor")
 
         # Recorder: stop any active capture cleanly. No-op if idle.
         if self.recorder is not None:
@@ -286,6 +326,36 @@ class Daemon:
                     )
                 except Exception:
                     logger.exception("Error stopping recorder")
+        _mark("recorder.stop")
+
+        # Proactively close tracked WebSocket clients before the runner
+        # cleans up. The plugin holds a long-lived ``/api/ws`` connection
+        # whose handler sits in ``async for msg in ws`` until the socket
+        # closes; without this, ``runner.cleanup()`` waits out its
+        # shutdown timeout (default 60s, now capped at 5s above) for each
+        # connection-shutdown phase -- a ~120s stall on restart that the
+        # user felt as a hung button. Closing here lets the handler's
+        # ``async for`` return immediately.
+        if self.app is not None:
+            from recap.daemon.server import _WS_CLIENTS_KEY
+            try:
+                ws_clients = self.app.get(_WS_CLIENTS_KEY, set())
+                # Snapshot the set because ``close()`` may trigger the
+                # handler's ``finally`` which mutates ``ws_clients``.
+                pending = [ws for ws in list(ws_clients) if not ws.closed]
+                if pending:
+                    logger.info(
+                        "Closing %d WebSocket client(s) before shutdown",
+                        len(pending),
+                    )
+                    await asyncio.gather(
+                        *(ws.close(code=1001, message=b"server shutdown")
+                          for ws in pending),
+                        return_exceptions=True,
+                    )
+            except Exception:
+                logger.exception("Error closing WebSocket clients")
+        _mark("ws_clients.close")
 
         # HTTP runner.
         if self._runner is not None:
@@ -295,6 +365,7 @@ class Daemon:
                 logger.exception("Error cleaning up HTTP runner")
             self._runner = None
             self._site = None
+        _mark("runner.cleanup")
 
         if self._stop_event is not None:
             self._stop_event.set()
@@ -325,12 +396,18 @@ class Daemon:
             return None
         return server.sockets[0].getsockname()[1]
 
-    def request_shutdown(self) -> None:
+    def request_shutdown(self, *, restart: bool = False) -> None:
         """Signal the daemon to begin shutdown.
+
+        When ``restart`` is true the ``restart_requested`` flag is set
+        so ``__main__`` can return ``EXIT_RESTART_REQUESTED`` to the
+        launcher watchdog, which respawns a fresh daemon child.
 
         Safe to call from a signal handler or another thread (uses
         ``loop.call_soon_threadsafe``).
         """
+        if restart:
+            self.restart_requested = True
         if self._stop_event is None or self.loop is None:
             return
         self.loop.call_soon_threadsafe(self._stop_event.set)

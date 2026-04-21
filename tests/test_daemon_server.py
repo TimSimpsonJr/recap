@@ -834,3 +834,125 @@ class TestApiConfigOrgsShape:
         for org in data["orgs"]:
             assert "name" in org
             assert "default_backend" in org
+
+
+@pytest.mark.asyncio
+class TestApiStatusManagedFlag:
+    """``/api/status`` exposes ``managed`` and ``can_restart``.
+
+    The plugin reads ``can_restart`` to decide whether its Restart
+    Daemon button is actionable. The daemon only advertises
+    ``can_restart: true`` when launched under the ``recap.launcher``
+    wrapper (``RECAP_MANAGED=1``); standalone daemons cannot be
+    restarted because nothing would respawn them.
+    """
+
+    async def test_unmanaged_daemon_reports_cannot_restart(
+        self, daemon_client, monkeypatch,
+    ):
+        monkeypatch.delenv("RECAP_MANAGED", raising=False)
+        client, daemon = daemon_client
+        # ``Daemon.managed`` is captured at construction; reset it here
+        # so the fixture's pre-existing daemon reflects the unset env.
+        daemon.managed = False
+        resp = await client.get(
+            "/api/status",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["managed"] is False
+        assert data["can_restart"] is False
+
+    async def test_managed_daemon_reports_can_restart(
+        self, daemon_client, monkeypatch,
+    ):
+        monkeypatch.setenv("RECAP_MANAGED", "1")
+        client, daemon = daemon_client
+        daemon.managed = True
+        resp = await client.get(
+            "/api/status",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["managed"] is True
+        assert data["can_restart"] is True
+
+
+@pytest.mark.asyncio
+class TestApiAdminShutdown:
+    """``POST /api/admin/shutdown`` triggers a graceful shutdown.
+
+    ``{"restart": true}`` sets ``daemon.restart_requested`` before
+    requesting shutdown so the ``__main__`` exit handler can translate
+    it into ``EXIT_RESTART_REQUESTED`` for the launcher. Without the
+    body (or with ``restart: false``) the daemon simply stops.
+    """
+
+    async def test_requires_auth(self, daemon_client):
+        client, _ = daemon_client
+        resp = await client.post("/api/admin/shutdown")
+        assert resp.status == 401
+
+    async def test_shutdown_without_restart_flag(self, daemon_client):
+        client, daemon = daemon_client
+        resp = await client.post(
+            "/api/admin/shutdown",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["status"] == "shutdown_requested"
+        assert data["restart"] is False
+        assert daemon.restart_requested is False
+
+    async def test_shutdown_with_restart_true_sets_flag(self, daemon_client):
+        client, daemon = daemon_client
+        # Restart is only honored in managed mode; simulate the launcher
+        # having set ``RECAP_MANAGED=1`` before the daemon booted.
+        daemon.managed = True
+        resp = await client.post(
+            "/api/admin/shutdown",
+            json={"restart": True},
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["status"] == "shutdown_requested"
+        assert data["restart"] is True
+        assert daemon.restart_requested is True
+
+    async def test_restart_requires_managed_mode(
+        self, daemon_client, monkeypatch,
+    ):
+        """Restart is refused on an unmanaged daemon.
+
+        Accepting it anyway would shut the daemon down with no process
+        to bring it back -- worse UX than refusing the call. The plugin
+        already greys the button out based on ``can_restart``; this is
+        the server-side enforcement behind that UI gate."""
+        monkeypatch.delenv("RECAP_MANAGED", raising=False)
+        client, daemon = daemon_client
+        daemon.managed = False
+        resp = await client.post(
+            "/api/admin/shutdown",
+            json={"restart": True},
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 409
+        data = await resp.json()
+        assert "not managed" in data["error"].lower()
+        assert daemon.restart_requested is False
+
+    async def test_rejects_non_dict_body(self, daemon_client):
+        client, _ = daemon_client
+        resp = await client.post(
+            "/api/admin/shutdown",
+            data="not-json",
+            headers={
+                "Authorization": f"Bearer {AUTH_TOKEN}",
+                "Content-Type": "application/json",
+            },
+        )
+        assert resp.status == 400

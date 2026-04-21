@@ -101,6 +101,12 @@ async def _api_status(request: web.Request) -> web.Response:
         if daemon.event_journal is not None:
             recent_errors = daemon.event_journal.tail(level="error", limit=10)
 
+    # ``managed``/``can_restart`` come from the Daemon (set at
+    # construction from ``RECAP_MANAGED``). Absent daemon -> unmanaged
+    # (the no-daemon branch below is only used in tests and a very
+    # early startup window).
+    managed = bool(daemon.managed) if daemon is not None else False
+
     if recorder is None:
         return web.json_response(
             {
@@ -109,6 +115,8 @@ async def _api_status(request: web.Request) -> web.Response:
                 "last_calendar_sync": last_sync,
                 "uptime_seconds": uptime,
                 "recent_errors": recent_errors,
+                "managed": managed,
+                "can_restart": managed,
             }
         )
 
@@ -127,7 +135,56 @@ async def _api_status(request: web.Request) -> web.Response:
             "last_calendar_sync": last_sync,
             "uptime_seconds": uptime,
             "recent_errors": recent_errors,
+            "managed": managed,
+            "can_restart": managed,
         }
+    )
+
+
+async def _api_admin_shutdown(request: web.Request) -> web.Response:
+    """POST /api/admin/shutdown -- graceful shutdown, optional restart.
+
+    Body (optional): ``{"restart": true|false}``. Default is
+    ``restart=false`` (plain stop). ``restart=true`` is only honored
+    when the daemon is managed (``RECAP_MANAGED=1``); otherwise a 409
+    is returned because nothing would respawn the daemon.
+
+    The response is sent before the daemon begins tearing down. The
+    plugin treats the 200 as an acknowledgment and follows up with
+    ``/api/status`` polling to see the new process come back.
+    """
+    daemon: Daemon | None = request.app.get("daemon")
+    if daemon is None:
+        return web.json_response(
+            {"error": "daemon not available"}, status=503,
+        )
+
+    restart = False
+    if request.body_exists and request.content_length:
+        try:
+            body = await request.json()
+        except json.JSONDecodeError:
+            return web.json_response({"error": "invalid JSON body"}, status=400)
+        if not isinstance(body, dict):
+            return web.json_response(
+                {"error": "request body must be a JSON object"}, status=400,
+            )
+        restart = bool(body.get("restart", False))
+
+    if restart and not daemon.managed:
+        return web.json_response(
+            {
+                "error": (
+                    "daemon is not managed by the launcher -- restart not "
+                    "supported. Launch via 'uv run python -m recap.launcher'."
+                ),
+            },
+            status=409,
+        )
+
+    daemon.request_shutdown(restart=restart)
+    return web.json_response(
+        {"status": "shutdown_requested", "restart": restart},
     )
 
 
@@ -1096,6 +1153,7 @@ def create_app(
     app.router.add_post("/api/meetings/reprocess", _reprocess)
     app.router.add_post("/api/meetings/speakers", _speakers)
     app.router.add_post("/api/index/rename", _api_index_rename)
+    app.router.add_post("/api/admin/shutdown", _api_admin_shutdown)
     app.router.add_get("/api/config/orgs", _config_orgs)
     app.router.add_get("/api/oauth/{provider}/status", _oauth_status)
     app.router.add_post("/api/oauth/{provider}/start", _oauth_start)

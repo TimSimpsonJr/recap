@@ -228,3 +228,140 @@ class TestDaemonLifecycle:
             f"Unexpected errors/warnings: "
             f"{[(r.levelname, r.getMessage()) for r in bad]}"
         )
+
+
+class TestDaemonShutdownRestartFlag:
+    """``request_shutdown(restart=True)`` sets ``restart_requested``.
+
+    The launcher watchdog reads the process exit code to decide whether
+    to loop (42) or stop (0). ``__main__.main`` translates
+    ``daemon.restart_requested`` into that code, so this flag is the
+    whole restart handshake on the Python side.
+    """
+
+    def test_default_restart_requested_is_false(self, tmp_path):
+        cfg = _make_config(tmp_path)
+        d = Daemon(cfg)
+        assert d.restart_requested is False
+
+    @pytest.mark.asyncio
+    async def test_request_shutdown_without_restart_keeps_flag_false(
+        self, tmp_path,
+    ):
+        cfg = _make_config(tmp_path)
+        d = Daemon(cfg)
+        await d.start(args=_minimal_args(), callbacks=_stub_callbacks(d))
+        try:
+            d.request_shutdown()
+            await d.wait_for_shutdown()
+            assert d.restart_requested is False
+        finally:
+            await d.stop()
+
+    @pytest.mark.asyncio
+    async def test_request_shutdown_with_restart_sets_flag(self, tmp_path):
+        cfg = _make_config(tmp_path)
+        d = Daemon(cfg)
+        await d.start(args=_minimal_args(), callbacks=_stub_callbacks(d))
+        try:
+            d.request_shutdown(restart=True)
+            await d.wait_for_shutdown()
+            assert d.restart_requested is True
+        finally:
+            await d.stop()
+
+
+class TestDaemonShutdownClosesWebSockets:
+    """``Daemon.stop()`` must proactively close tracked WebSocket clients.
+
+    Without this, the plugin's long-lived ``/api/ws`` connection kept
+    the aiohttp runner cleanup blocked through its shutdown timeout
+    (default 60s, cleanup goes through two phases -> ~120s total) on
+    every restart. Closing clients ourselves lets the ``async for msg
+    in ws`` loop return immediately."""
+
+    @pytest.mark.asyncio
+    async def test_stop_closes_tracked_ws_clients(self, tmp_path):
+        from recap.daemon.server import _WS_CLIENTS_KEY
+
+        cfg = _make_config(tmp_path)
+        d = Daemon(cfg)
+        await d.start(args=_minimal_args(), callbacks=_stub_callbacks(d))
+
+        # Inject a fake WS client that tracks whether close() was awaited.
+        class _FakeWS:
+            def __init__(self) -> None:
+                self.closed = False
+                self.close_call: tuple | None = None
+
+            async def close(self, *, code: int, message: bytes) -> None:
+                self.close_call = (code, message)
+                self.closed = True
+
+        fake = _FakeWS()
+        d.app[_WS_CLIENTS_KEY].add(fake)
+
+        await d.stop()
+
+        assert fake.close_call is not None, (
+            "Daemon.stop() must call ws.close() on tracked clients"
+        )
+        assert fake.close_call[0] == 1001  # going-away status code
+        assert fake.closed is True
+
+    @pytest.mark.asyncio
+    async def test_stop_skips_already_closed_ws_clients(self, tmp_path):
+        """Closing an already-closed socket raises in aiohttp; skip it."""
+        from recap.daemon.server import _WS_CLIENTS_KEY
+
+        cfg = _make_config(tmp_path)
+        d = Daemon(cfg)
+        await d.start(args=_minimal_args(), callbacks=_stub_callbacks(d))
+
+        class _FakeWS:
+            def __init__(self, already_closed: bool) -> None:
+                self.closed = already_closed
+                self.close_called = False
+
+            async def close(self, **_kwargs) -> None:
+                self.close_called = True
+                self.closed = True
+
+        closed_ws = _FakeWS(already_closed=True)
+        open_ws = _FakeWS(already_closed=False)
+        d.app[_WS_CLIENTS_KEY].update({closed_ws, open_ws})
+
+        await d.stop()
+
+        assert closed_ws.close_called is False
+        assert open_ws.close_called is True
+
+
+class TestDaemonManagedMode:
+    """``Daemon.managed`` reflects the ``RECAP_MANAGED`` env var.
+
+    The plugin reads this (via ``/api/status``) to decide whether the
+    Restart button is actionable. Unmanaged daemons can still shut down
+    but cannot self-restart (nothing would spawn a replacement child).
+    """
+
+    def test_managed_false_when_env_unset(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("RECAP_MANAGED", raising=False)
+        cfg = _make_config(tmp_path)
+        d = Daemon(cfg)
+        assert d.managed is False
+
+    def test_managed_true_when_env_is_one(self, tmp_path, monkeypatch):
+        monkeypatch.setenv("RECAP_MANAGED", "1")
+        cfg = _make_config(tmp_path)
+        d = Daemon(cfg)
+        assert d.managed is True
+
+    def test_managed_false_for_other_values(self, tmp_path, monkeypatch):
+        """Only the literal ``"1"`` counts. Empty, ``"0"``, ``"true"`` etc.
+        all mean unmanaged -- keeps the contract boring and unambiguous."""
+        cfg = _make_config(tmp_path)
+        for raw in ("", "0", "true", "yes"):
+            monkeypatch.setenv("RECAP_MANAGED", raw)
+            d = Daemon(cfg)
+            assert d.managed is False, f"RECAP_MANAGED={raw!r} should not be managed"
