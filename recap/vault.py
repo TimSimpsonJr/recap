@@ -27,6 +27,46 @@ MEETING_RECORD_MARKER = "## Meeting Record"
 _CALENDAR_OWNED_KEYS = {"time", "event-id", "meeting-link", "calendar-source"}
 
 
+_AUDIO_WARNING_BANNERS = {
+    "no-system-audio-captured": (
+        "> [!warning] System audio was not captured during this recording.\n"
+        "> Only the microphone channel has speech. If you expected other "
+        "participants' voices, verify the meeting app's output device is "
+        "one that was active on this machine.\n"
+        "> Active outputs seen during recording: {devices}."
+    ),
+    "system-audio-interrupted": (
+        "> [!warning] System audio dropped out during this recording.\n"
+        "> Some portions of the transcript may be one-sided.\n"
+        "> Active outputs seen during recording: {devices}."
+    ),
+}
+
+
+def _render_audio_warning_callout(
+    warnings: list[str], devices_seen: list[str],
+) -> str:
+    """Render the body callout for audio warnings. Empty warnings -> empty string.
+
+    Each warning code in ``warnings`` that has a banner template in
+    ``_AUDIO_WARNING_BANNERS`` produces one callout block. Blocks are joined
+    with blank lines. The result ends with two newlines for clean placement
+    above the body.
+    """
+    if not warnings:
+        return ""
+    devices = ", ".join(devices_seen) if devices_seen else "(none recorded)"
+    blocks = []
+    for code in warnings:
+        template = _AUDIO_WARNING_BANNERS.get(code)
+        if template is None:
+            continue
+        blocks.append(template.format(devices=devices))
+    if not blocks:
+        return ""
+    return "\n\n".join(blocks) + "\n\n"
+
+
 def slugify(text: str) -> str:
     slug = text.lower()
     slug = re.sub(r"[^a-z0-9\s-]", "", slug)
@@ -122,21 +162,29 @@ def upsert_note(
     """
     note_path.parent.mkdir(parents=True, exist_ok=True)
 
+    # Prepend the audio-warning callout (if any) to the body so all five
+    # upsert branches write the banner consistently.
+    callout = _render_audio_warning_callout(
+        warnings=frontmatter.get("audio-warnings", []),
+        devices_seen=frontmatter.get("system-audio-devices-seen", []),
+    )
+    body_with_callout = callout + body
+
     if not note_path.exists():
-        _write_new_note(note_path, frontmatter, body)
+        _write_new_note(note_path, frontmatter, body_with_callout)
     else:
         existing = note_path.read_text(encoding="utf-8").replace("\r\n", "\n")
         has_frontmatter = existing.startswith("---\n") and existing.count("---\n") >= 2
         has_marker = MEETING_RECORD_MARKER in existing
 
         if not has_frontmatter and not has_marker:
-            _prepend_fm_and_append_body(note_path, existing, frontmatter, body)
+            _prepend_fm_and_append_body(note_path, existing, frontmatter, body_with_callout)
         elif has_frontmatter and not has_marker:
-            _merge_fm_and_append_body(note_path, existing, frontmatter, body)
+            _merge_fm_and_append_body(note_path, existing, frontmatter, body_with_callout)
         elif has_marker and not has_frontmatter:
-            _prepend_fm_and_replace_below_marker(note_path, existing, frontmatter, body)
+            _prepend_fm_and_replace_below_marker(note_path, existing, frontmatter, body_with_callout)
         else:
-            _merge_fm_and_replace_below_marker(note_path, existing, frontmatter, body)
+            _merge_fm_and_replace_below_marker(note_path, existing, frontmatter, body_with_callout)
 
     _update_index_if_applicable(note_path, frontmatter, event_index, vault_path)
 

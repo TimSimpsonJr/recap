@@ -96,3 +96,77 @@ class TestFrontmatterAudioWarnings:
         # Mutating the source list must not affect the frontmatter output.
         rm.audio_warnings.append("zombie-stream-detected")
         assert fm["audio-warnings"] == ["no-system-audio-captured"]
+
+
+class TestBodyCallout:
+    def test_no_callout_when_warnings_empty(self, tmp_path):
+        from recap.vault import upsert_note
+        note_path = tmp_path / "note.md"
+        fm = {
+            "pipeline-status": "complete",
+            "title": "T",
+            "date": "2026-04-21",
+        }
+        upsert_note(note_path, fm, body="## Summary\n\nHi.\n")
+        content = note_path.read_text(encoding="utf-8")
+        assert "[!warning]" not in content
+
+    def test_no_system_audio_callout_wording(self, tmp_path):
+        from recap.vault import upsert_note
+        note_path = tmp_path / "note.md"
+        fm = {
+            "pipeline-status": "complete",
+            "title": "T",
+            "date": "2026-04-21",
+            "audio-warnings": ["no-system-audio-captured"],
+            "system-audio-devices-seen": ["Laptop Speakers", "HDMI Audio"],
+        }
+        upsert_note(note_path, fm, body="## Summary\n\nHi.\n")
+        content = note_path.read_text(encoding="utf-8")
+        assert "[!warning] System audio was not captured" in content
+        assert "Laptop Speakers" in content
+        assert "HDMI Audio" in content
+
+    def test_interrupted_callout_wording(self, tmp_path):
+        from recap.vault import upsert_note
+        note_path = tmp_path / "note.md"
+        fm = {
+            "pipeline-status": "complete",
+            "title": "T",
+            "date": "2026-04-21",
+            "audio-warnings": ["system-audio-interrupted"],
+            "system-audio-devices-seen": ["AirPods"],
+        }
+        upsert_note(note_path, fm, body="## Summary\n\nHi.\n")
+        content = note_path.read_text(encoding="utf-8")
+        assert "[!warning] System audio dropped out" in content
+
+    def test_upsert_preserves_warning_on_merge_path(self, tmp_path):
+        """Existing note with calendar frontmatter + marker -> pipeline run
+        with warnings. Callout must appear below the marker; frontmatter
+        merged with new audio-warnings key."""
+        from recap.vault import upsert_note, MEETING_RECORD_MARKER
+        note_path = tmp_path / "note.md"
+        existing = (
+            "---\n"
+            "date: '2026-04-21'\n"
+            "title: T\n"
+            "---\n"
+            "\n"
+            "User agenda\n"
+            f"\n{MEETING_RECORD_MARKER}\n\n"
+            "(old body)\n"
+        )
+        note_path.write_text(existing, encoding="utf-8")
+        fm = {
+            "pipeline-status": "complete",
+            "title": "T",
+            "date": "2026-04-21",
+            "audio-warnings": ["no-system-audio-captured"],
+            "system-audio-devices-seen": ["Laptop Speakers"],
+        }
+        upsert_note(note_path, fm, body="## Summary\n\nNew body.\n")
+        content = note_path.read_text(encoding="utf-8")
+        assert "User agenda" in content  # preserved above marker
+        assert "[!warning]" in content  # callout in new body
+        assert "audio-warnings:" in content  # frontmatter merged
