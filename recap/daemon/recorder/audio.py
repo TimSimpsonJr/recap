@@ -280,6 +280,19 @@ class _SourceStream:
             self._resampled_buffer = b""
             return have + b"\x00" * (byte_count - len(have))
 
+    def drain_resampled(self, max_bytes: int) -> bytes:
+        """Drain up to max_bytes from the resampled output buffer.
+
+        Returns whatever is currently available up to max_bytes. May return
+        less than requested (including empty) when the buffer has not yet
+        filled. Caller is responsible for padding with zeros if alignment
+        matters.
+        """
+        with self._lock:
+            out = self._resampled_buffer[:max_bytes]
+            self._resampled_buffer = self._resampled_buffer[max_bytes:]
+        return out
+
     def start(self) -> None:
         """Open the underlying PyAudio stream and build the resampler.
 

@@ -994,3 +994,26 @@ class TestSourceStreamExplicitBinding:
         s.attempt_reopen_if_due()
 
         assert s.is_terminal is True
+
+
+class TestSourceStreamDrain:
+    def test_drain_resampled_returns_requested_bytes(self):
+        from recap.daemon.recorder.audio import _SourceStream
+        s = _SourceStream(kind="loopback", output_rate=48000)
+        s._resampled_buffer = b"\x01\x02\x03\x04\x05\x06\x07\x08"
+        out = s.drain_resampled(4)
+        assert out == b"\x01\x02\x03\x04"
+        assert s._resampled_buffer == b"\x05\x06\x07\x08"
+
+    def test_drain_resampled_returns_partial_when_short(self):
+        from recap.daemon.recorder.audio import _SourceStream
+        s = _SourceStream(kind="loopback", output_rate=48000)
+        s._resampled_buffer = b"\x01\x02"
+        out = s.drain_resampled(8)
+        assert out == b"\x01\x02"
+        assert s._resampled_buffer == b""
+
+    def test_drain_resampled_returns_empty_when_no_data(self):
+        from recap.daemon.recorder.audio import _SourceStream
+        s = _SourceStream(kind="loopback", output_rate=48000)
+        assert s.drain_resampled(4) == b""
