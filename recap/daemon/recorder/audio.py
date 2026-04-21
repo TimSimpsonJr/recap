@@ -14,6 +14,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Literal
 
+from recap.daemon.recorder.audio_events import (
+    EVT_AUDIO_NO_LOOPBACK_AT_START,
+    EVT_AUDIO_NO_SYSTEM_AUDIO,
+    EVT_AUDIO_ALL_LOOPBACKS_LOST,
+    WARN_NO_SYSTEM_AUDIO_CAPTURED,
+    WARN_SYSTEM_AUDIO_INTERRUPTED,
+)
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -817,6 +825,17 @@ class AudioCapture:
         self._mic_source: _SourceStream | None = None
         self._loopback_sources: dict[tuple, "_LoopbackEntry"] = {}
         self._last_membership_tick: float = 0.0
+
+        # --- Audio-warning persistence (Task 11) ---
+        # _event_journal is optional; the recorder wires it at construction
+        # time in production, tests leave it None when not under test.
+        self._event_journal: Any = None
+        self._audio_warnings: list[str] = []
+        self._system_audio_devices_seen: list[str] = []
+        self._any_active_ever: bool = False
+        self._active_count_was_nonzero: bool = False
+        self._scenario_a_fired: bool = False
+
         self._fatal_error: Exception | None = None
         self._fatal_event: threading.Event = threading.Event()
         self._drain_thread: threading.Thread | None = None
@@ -923,6 +942,12 @@ class AudioCapture:
                 if entry.state == "probation":
                     entry.state = "active"
                     entry.last_active_at = now
+                    # Mark coverage achieved. Both flags are one-way (set True,
+                    # never reset) to match Scenario B/C semantics: B asks
+                    # "did we ever get ACTIVE?", C asks "did we ever have
+                    # ACTIVE coverage before losing it?".
+                    self._any_active_ever = True
+                    self._active_count_was_nonzero = True
                     logger.info(
                         "loopback %s promoted to ACTIVE (elapsed=%.1fs)",
                         entry.device_name, now - entry.opened_at,
@@ -933,6 +958,11 @@ class AudioCapture:
         if active_count > 0:
             system_mix_i32 = system_sum_i32 // active_count
             system_mix = numpy.clip(system_mix_i32, -32768, 32767).astype(numpy.int16)
+            # Sticky one-way flag covers the case where the drain thread sees
+            # ACTIVE entries without going through a promotion this tick
+            # (e.g. cap object externally constructed for test with state
+            # already "active").
+            self._active_count_was_nonzero = True
         else:
             system_mix = numpy.zeros(chunk_frames, dtype=numpy.int16)
 
@@ -992,6 +1022,13 @@ class AudioCapture:
         enumerated_keys = set(enumerated.keys())
         current_keys = set(self._loopback_sources.keys())
 
+        # Scenario A: zero loopback endpoints at start. Fires at most once via
+        # the _scenario_a_fired gate. Only meaningful when we have no current
+        # sources either -- the check is cheap so we run it unconditionally
+        # and let the gate handle dedup.
+        if not enumerated_keys and not self._loopback_sources:
+            self._note_scenario_no_loopback_at_start()
+
         # Adds: open new streams for newly-appeared endpoints.
         for key in enumerated_keys - current_keys:
             info = enumerated[key]
@@ -1010,6 +1047,11 @@ class AudioCapture:
                 last_active_at=None, device_name=info["name"],
                 missing_since=None,
             )
+            # Track device names we've ever opened for the note banner
+            # (Task 13 renders it). De-duped in-place so a device that
+            # churns in and out of enumeration doesn't fill the list.
+            if info["name"] not in self._system_audio_devices_seen:
+                self._system_audio_devices_seen.append(info["name"])
             native_rate = int(info.get("defaultSampleRate", 0))
             logger.info(
                 "loopback opened: %s (identity=%s, native_rate=%d)",
@@ -1054,6 +1096,15 @@ class AudioCapture:
                     ),
                 )
 
+        # Scenarios B and C run after all evictions settle. Both are
+        # idempotent: B gates on "WARN already appended", C gates on the
+        # active-count transition itself. Per-stream churn (PROBATION or
+        # terminal streams evicting while others remain ACTIVE) does NOT
+        # fire a warning -- the scenario checks see a still-nonzero
+        # _loopback_sources or ACTIVE count and no-op.
+        self._note_scenario_no_system_audio_if_applicable()
+        self._note_scenario_all_loopbacks_lost_if_applicable()
+
     def _evict_entry(self, key: tuple, reason: str) -> None:
         """Stop and drop a loopback entry, emitting one info line."""
         entry = self._loopback_sources.pop(key, None)
@@ -1067,6 +1118,92 @@ class AudioCapture:
                 entry.device_name, exc_info=True,
             )
         logger.info("loopback removed: %s (%s)", entry.device_name, reason)
+
+    # --- Audio-warning emission (Task 11) ---
+    # Three scenarios, each emits a journal event (optional -- _event_journal
+    # may be None in tests) AND persists a sidecar warning code to
+    # _audio_warnings. Persisted codes are deduplicated by
+    # _append_warning_once; per-scenario idempotency is enforced either via
+    # _scenario_a_fired (Scenario A), a "was this code already appended?"
+    # check (Scenario B), or by virtue of the transition-gate itself
+    # (Scenario C fires only when active_count_was_nonzero is true and the
+    # current ACTIVE count is zero).
+
+    def _append_warning_once(self, code: str) -> None:
+        if code not in self._audio_warnings:
+            self._audio_warnings.append(code)
+
+    def _record_journal_event(self, event_type: str, **details: Any) -> None:
+        if self._event_journal is None:
+            return
+        try:
+            self._event_journal.record(
+                level="warning", event_type=event_type, details=details,
+            )
+        except Exception:
+            logger.debug("event journal record() raised", exc_info=True)
+
+    def _note_scenario_no_loopback_at_start(self) -> None:
+        """Scenario A: zero loopback endpoints at recording start.
+
+        Pathological case -- the machine has no enabled render devices at all.
+        Idempotent via _scenario_a_fired flag so a mis-wired caller can't
+        multiply-emit.
+        """
+        if self._scenario_a_fired:
+            return
+        self._scenario_a_fired = True
+        self._append_warning_once(WARN_NO_SYSTEM_AUDIO_CAPTURED)
+        self._record_journal_event(
+            EVT_AUDIO_NO_LOOPBACK_AT_START,
+            message="No system audio devices available; recording microphone only",
+        )
+
+    def _note_scenario_no_system_audio_if_applicable(self) -> None:
+        """Scenario B: no endpoint ever became ACTIVE.
+
+        Fires once when _loopback_sources is empty AND no entry has ever been
+        ACTIVE. Dedupes via the presence of WARN_NO_SYSTEM_AUDIO_CAPTURED in
+        _audio_warnings -- a second call after emission is a no-op.
+        """
+        if self._any_active_ever:
+            return
+        if self._loopback_sources:
+            return
+        if WARN_NO_SYSTEM_AUDIO_CAPTURED in self._audio_warnings:
+            return
+        self._audio_warnings.append(WARN_NO_SYSTEM_AUDIO_CAPTURED)
+        self._record_journal_event(
+            EVT_AUDIO_NO_SYSTEM_AUDIO,
+            message=(
+                "No system audio captured. Verify the meeting app's output "
+                "device is one that was active on this machine."
+            ),
+            devices_seen=list(self._system_audio_devices_seen),
+        )
+
+    def _note_scenario_all_loopbacks_lost_if_applicable(self) -> None:
+        """Scenario C: ACTIVE count transitions non-zero -> zero.
+
+        Emits the journal event on each transition (the drain thread may
+        cycle through this repeatedly if streams keep flapping), but dedupes
+        the sidecar warning code so it appears once per recording.
+        """
+        active_count = sum(
+            1 for e in self._loopback_sources.values() if e.state == "active"
+        )
+        if not self._active_count_was_nonzero:
+            return
+        if active_count > 0:
+            return
+        self._append_warning_once(WARN_SYSTEM_AUDIO_INTERRUPTED)
+        self._record_journal_event(
+            EVT_AUDIO_ALL_LOOPBACKS_LOST,
+            message=(
+                "All system audio sources went offline mid-recording. "
+                "Remaining audio is microphone only."
+            ),
+        )
 
     def _interleave_and_encode(self, chunk_frames: int) -> None:
         """Take buffered mic and loopback data, interleave, and feed to encoder.
