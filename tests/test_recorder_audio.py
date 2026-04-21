@@ -865,7 +865,7 @@ class TestSourceStreamTerminalState:
         s = _SourceStream(kind="loopback", output_rate=48000)
         assert s.is_terminal is False
 
-    def test_is_terminal_true_after_budget_exhausted(self, monkeypatch):
+    def test_is_terminal_true_after_budget_exhausted(self):
         """When the internal reopen retry counter exceeds _MAX_RECONNECT_ATTEMPTS,
         is_terminal flips to True and stays True."""
         from recap.daemon.recorder.audio import _SourceStream

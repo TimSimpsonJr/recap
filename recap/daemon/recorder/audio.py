@@ -176,8 +176,15 @@ class _SourceStream:
 
     @property
     def is_terminal(self) -> bool:
-        """True when the source has exhausted its reconnect budget and should
-        not be kept alive. Never flips back to False once set."""
+        """True once the source has exhausted _MAX_RECONNECT_ATTEMPTS failed
+        reopens. Sticky: never flips back to False.
+
+        Lockless read: _terminal is a single-bool field, GIL guarantees the
+        load is atomic. The write site in attempt_reopen_if_due runs on the
+        drain thread (the only mutator), so no read-during-write race
+        exists. Matches the file's single-writer-drain-thread convention for
+        _reconnect_attempts and _next_reopen_at.
+        """
         return self._terminal
 
     def _mark_terminal_for_test(self) -> None:  # pragma: no cover - test-only helper
@@ -400,6 +407,9 @@ class _SourceStream:
             self._do_reopen()
         except Exception as exc:
             logger.warning("%s reopen failed: %s", self._kind, exc)
+            # Lockless read: attempt_reopen_if_due is the single writer of
+            # _reconnect_attempts (incremented above under self._lock) and
+            # runs on the drain thread, so no read-during-write race exists.
             if self._reconnect_attempts >= _MAX_RECONNECT_ATTEMPTS:
                 self._terminal = True
                 logger.warning(
