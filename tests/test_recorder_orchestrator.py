@@ -191,6 +191,58 @@ async def test_stop_persists_audio_warnings_into_sidecar(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_stop_captures_audio_warnings_after_final_drain_tick(tmp_path):
+    """Regression: audio_warnings must be read AFTER audio_capture.stop()
+    so any Scenario warning emitted during the final drain tick is
+    persisted to the sidecar. Previously the read happened before stop,
+    missing any final-tick warnings."""
+    from recap.artifacts import RecordingMetadata, load_recording_metadata, write_recording_metadata
+    from recap.daemon.recorder.recorder import Recorder
+
+    recorder = Recorder(recordings_path=tmp_path)
+
+    # Fake AudioCapture where stop() is the point at which _audio_warnings
+    # gains its final entry — simulating Scenario A/B/C firing during the
+    # final drain tick inside AudioCapture.stop().
+    fake_capture = MagicMock()
+    fake_capture._audio_warnings = []
+    fake_capture._system_audio_devices_seen = []
+
+    def _stop_side_effect():
+        fake_capture._audio_warnings.append("late-warning")
+
+    fake_capture.stop = MagicMock(side_effect=_stop_side_effect)
+
+    audio_path = tmp_path / "test.flac"
+    audio_path.touch()
+    initial_metadata = RecordingMetadata(
+        org="testorg",
+        note_path="",
+        title="Test",
+        date="2026-04-21",
+        participants=[],
+        platform="manual",
+    )
+    write_recording_metadata(audio_path, initial_metadata)
+
+    recorder._audio_capture = fake_capture
+    recorder._current_path = audio_path
+    recorder._current_metadata = initial_metadata
+    recorder.state_machine.detected("testorg")
+    recorder.state_machine.start_recording("testorg")
+
+    # Pre-stop invariant: no warnings have been accumulated yet.
+    assert fake_capture._audio_warnings == []
+
+    await recorder.stop()
+
+    # The late-warning added during stop() must land in the sidecar.
+    loaded = load_recording_metadata(audio_path)
+    assert loaded is not None
+    assert loaded.audio_warnings == ["late-warning"]
+
+
+@pytest.mark.asyncio
 async def test_recorder_passes_event_journal_into_audio_capture(tmp_path):
     """When the Recorder is constructed with an event_journal, starting a
     recording must thread that journal into the AudioCapture so Scenarios

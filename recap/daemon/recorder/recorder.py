@@ -272,9 +272,12 @@ class Recorder:
         audio_warnings: list[str] = []
         devices_seen: list[str] = []
         if self._audio_capture is not None:
+            self._audio_capture.stop()
+            # Capture warnings AFTER stop() so any Scenario A/B/C event that
+            # fires during the final drain tick (e.g., all loopbacks lost as
+            # the encoder flushes its tail) makes it into the sidecar.
             audio_warnings = list(self._audio_capture._audio_warnings)
             devices_seen = list(self._audio_capture._system_audio_devices_seen)
-            self._audio_capture.stop()
             self._audio_capture = None
 
         # Rewrite the sidecar with the accumulated audio warnings +
