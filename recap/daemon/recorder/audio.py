@@ -813,6 +813,8 @@ class AudioCapture:
         self._loopback_buffer: bytes = b""
         self._mic_source: _SourceStream | None = None
         self._loopback_source: _SourceStream | None = None
+        self._loopback_sources: dict[tuple, "_LoopbackEntry"] = {}
+        self._last_membership_tick: float = 0.0
         self._fatal_error: Exception | None = None
         self._fatal_event: threading.Event = threading.Event()
         self._drain_thread: threading.Thread | None = None
@@ -890,6 +892,84 @@ class AudioCapture:
         mono_chunk_bytes = mono_combined.tobytes()
 
         return mic_samples, lb_samples, mono_chunk_bytes
+
+    def _drain_and_mix(
+        self, chunk_frames: int,
+    ) -> tuple["np.ndarray", "np.ndarray", bytes]:
+        """Drain mic + all loopback sources for one chunk and build channel-0
+        (mic), channel-1 (system mix), and the mono chunk for on_chunk.
+
+        Replaces _combine_frames for the multi-output design. Mic behavior is
+        unchanged; system mix is an RMS-thresholded divide-by-active-count
+        average of all loopback streams.
+
+        Lifecycle side effect: a PROBATION _LoopbackEntry whose chunk RMS
+        crosses _LOOPBACK_ACTIVE_RMS_LINEAR flips to ACTIVE here (the only
+        place promotions happen).
+        """
+        numpy = _require_numpy()
+        bytes_needed = chunk_frames * 2
+
+        # --- Mic drain: unchanged. ---
+        with self._lock:
+            mic_data = self._mic_buffer[:bytes_needed]
+            self._mic_buffer = self._mic_buffer[bytes_needed:]
+        if len(mic_data) < bytes_needed:
+            mic_data += b"\x00" * (bytes_needed - len(mic_data))
+        mic_samples = numpy.frombuffer(mic_data, dtype=numpy.int16)[:chunk_frames]
+
+        # --- Loopback drain + mix ---
+        system_sum_i32 = numpy.zeros(chunk_frames, dtype=numpy.int32)
+        active_count = 0
+        now = time.monotonic()
+
+        for key, entry in self._loopback_sources.items():
+            stream_bytes = entry.stream.drain_resampled(bytes_needed)
+
+            # Measure RMS on UNPADDED samples only -- padding zeros before
+            # measurement would depress the level of a stream with a short
+            # buffer and misclassify it as silent.
+            real_samples = numpy.frombuffer(stream_bytes, dtype=numpy.int16)
+            if real_samples.size > 0:
+                rms_linear = float(
+                    numpy.sqrt(numpy.mean(real_samples.astype(numpy.float64) ** 2)),
+                )
+            else:
+                rms_linear = 0.0
+
+            # Pad for alignment after measuring.
+            if len(stream_bytes) < bytes_needed:
+                stream_bytes = stream_bytes + b"\x00" * (bytes_needed - len(stream_bytes))
+            stream_samples = numpy.frombuffer(
+                stream_bytes, dtype=numpy.int16,
+            )[:chunk_frames]
+
+            if rms_linear > _LOOPBACK_ACTIVE_RMS_LINEAR:
+                system_sum_i32 += stream_samples.astype(numpy.int32)
+                active_count += 1
+                if entry.state == "probation":
+                    entry.state = "active"
+                    entry.last_active_at = now
+                    logger.info(
+                        "loopback %s promoted to ACTIVE (elapsed=%.1fs)",
+                        entry.device_name, now - entry.opened_at,
+                    )
+                else:
+                    entry.last_active_at = now
+
+        if active_count > 0:
+            system_mix_i32 = system_sum_i32 // active_count
+            system_mix = numpy.clip(system_mix_i32, -32768, 32767).astype(numpy.int16)
+        else:
+            system_mix = numpy.zeros(chunk_frames, dtype=numpy.int16)
+
+        # Mono for on_chunk consumers: (mic + system_mix) / 2 in int32.
+        mono_i32 = (
+            mic_samples.astype(numpy.int32) + system_mix.astype(numpy.int32)
+        ) // 2
+        mono_bytes = numpy.clip(mono_i32, -32768, 32767).astype(numpy.int16).tobytes()
+
+        return mic_samples, system_mix, mono_bytes
 
     def _interleave_and_encode(self, chunk_frames: int) -> None:
         """Take buffered mic and loopback data, interleave, and feed to encoder.
