@@ -877,3 +877,59 @@ class TestSourceStreamTerminalState:
         # Never flips back
         s._mark_terminal_for_test()
         assert s.is_terminal is True
+
+
+class TestSourceStreamExplicitBinding:
+    def test_bind_to_none_preserves_default_loopback(self):
+        """No bind_to -> today's default-following behavior."""
+        from recap.daemon.recorder.audio import _SourceStream
+        s = _SourceStream(kind="loopback", output_rate=48000)
+        assert s._bind_to is None
+
+    def test_bind_to_explicit_identity_stored(self):
+        """Explicit identity is stored and is what reopen will look up."""
+        from recap.daemon.recorder.audio import _SourceStream
+        # bind_to mirrors the tuple shape produced by _compute_identity; a
+        # native-endpoint device yields ("endpoint", <id>).
+        identity = ("endpoint", "endpoint-guid-abc")
+        s = _SourceStream(kind="loopback", output_rate=48000, bind_to=identity)
+        assert s._bind_to == identity
+
+    def test_bind_to_loopback_open_uses_specific_endpoint(self, monkeypatch):
+        """When bind_to is set, _lookup_bound_device returns the specific
+        endpoint info instead of calling get_default_wasapi_loopback."""
+        from recap.daemon.recorder.audio import _SourceStream
+        identity = ("endpoint", "endpoint-guid-xyz")
+        s = _SourceStream(kind="loopback", output_rate=48000, bind_to=identity)
+
+        # Capture which device-lookup path was exercised.
+        called = {"default": 0}
+
+        class _FakePA:
+            def get_default_wasapi_loopback(self):
+                called["default"] += 1
+                return {"name": "WRONG", "index": 0, "maxInputChannels": 2,
+                        "defaultSampleRate": 48000.0}
+
+            def get_device_info_by_index(self, idx):
+                return {"endpointId": "endpoint-guid-xyz", "name": "AirPods",
+                        "index": idx, "maxInputChannels": 2,
+                        "defaultSampleRate": 48000.0, "isLoopbackDevice": True}
+
+            def get_device_count(self):
+                return 1
+
+            def terminate(self):
+                pass
+
+        fake_runtime = MagicMock()
+        fake_runtime.PyAudio.return_value = _FakePA()
+
+        monkeypatch.setattr(
+            "recap.daemon.recorder.audio._require_pyaudio", lambda: fake_runtime,
+        )
+
+        info = s._lookup_bound_device()
+
+        assert called["default"] == 0, "bind_to must not fall back to default"
+        assert info["endpointId"] == "endpoint-guid-xyz"

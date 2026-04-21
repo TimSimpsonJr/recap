@@ -136,7 +136,13 @@ class _SourceStream:
     Private to this module -- nothing imports it from elsewhere.
     """
 
-    def __init__(self, *, kind: str, output_rate: int) -> None:
+    def __init__(
+        self,
+        *,
+        kind: str,
+        output_rate: int,
+        bind_to: tuple | None = None,
+    ) -> None:
         self._kind = kind
         self._output_rate = output_rate
         self._state = _SourceHealth.STOPPED
@@ -161,6 +167,13 @@ class _SourceStream:
         self._reconnect_attempts = 0
         self._next_reopen_at: float = 0.0
         self._terminal: bool = False
+        # Explicit per-endpoint binding. None means legacy default-following
+        # behavior (``get_default_wasapi_loopback`` / ``get_default_wasapi_device``
+        # on every open and reopen). A tuple is a stable identity produced by
+        # ``_compute_identity``; ``_lookup_bound_device`` scans the WASAPI
+        # enumeration for a match. Only loopback streams are expected to set
+        # this; the mic path keeps default-following behavior.
+        self._bind_to: tuple | None = bind_to
 
     @property
     def state(self) -> _SourceHealth:
@@ -206,6 +219,49 @@ class _SourceStream:
             info.get("maxInputChannels", 0),
         )
 
+    def _lookup_bound_device(self) -> dict:
+        """Return the PyAudio device-info dict for this stream's target.
+
+        Three cases:
+
+        * ``bind_to is None`` and ``kind == "loopback"``: return the default
+          WASAPI loopback endpoint (legacy behavior -- the stream follows
+          whatever the OS currently considers the default render device).
+        * ``bind_to is None`` and ``kind == "mic"``: return the default
+          WASAPI input device (the mic path always default-follows; it
+          never takes an explicit ``bind_to``).
+        * ``bind_to is not None`` (loopback only in practice): scan the
+          full WASAPI device enumeration and return the device whose
+          identity tuple matches ``self._bind_to``.
+
+        Raises:
+            AudioDeviceError: when ``bind_to`` is set but no device in the
+                current enumeration produces a matching identity. Callers
+                in the reopen path translate this into ``is_terminal=True``
+                rather than burning through the full reconnect budget.
+        """
+        pa = _require_pyaudio().PyAudio()
+        try:
+            if self._bind_to is None:
+                if self._kind == "loopback":
+                    return pa.get_default_wasapi_loopback()
+                return pa.get_default_wasapi_device(d_in=True)
+
+            count = pa.get_device_count()
+            for idx in range(count):
+                info = pa.get_device_info_by_index(idx)
+                if self._compute_identity(info) == self._bind_to:
+                    return info
+            raise AudioDeviceError(
+                f"loopback bound endpoint {self._bind_to!r} not in current "
+                f"WASAPI enumeration",
+            )
+        finally:
+            try:
+                pa.terminate()
+            except Exception:
+                pass
+
     def read_frames(self, target_frames: int) -> bytes:
         """Return target_frames worth of mono int16 bytes at output_rate.
         Silence-pads on underflow or when the source isn't HEALTHY.
@@ -230,12 +286,12 @@ class _SourceStream:
         happen post-start are handled by attempt_reopen_if_due.
         """
         runtime_pyaudio = _require_pyaudio()
+        # Device lookup goes through ``_lookup_bound_device``, which opens
+        # and terminates its own short-lived PyAudio handle. That's a few
+        # extra microseconds versus sharing ``pa`` below, but keeps the
+        # default-following / bound-endpoint branching in one place.
+        info = self._lookup_bound_device()
         pa = runtime_pyaudio.PyAudio()
-
-        if self._kind == "loopback":
-            info = pa.get_default_wasapi_loopback()
-        else:
-            info = pa.get_default_wasapi_device(d_in=True)
 
         native_rate = int(info["defaultSampleRate"])
         native_channels = int(info.get("maxInputChannels", 1) or 1)
@@ -454,12 +510,25 @@ class _SourceStream:
                 pass
 
         runtime_pyaudio = _require_pyaudio()
+        # Probe the target device FIRST via the helper -- it owns its own
+        # short-lived PyAudio handle. If the bound identity has vanished
+        # from the enumeration, flip the terminal flag immediately (the
+        # membership watcher evicts this source rather than waiting for
+        # the full reopen budget to drain) and re-raise so the caller's
+        # failure path runs instead of the HEALTHY-transition path.
+        try:
+            info = self._lookup_bound_device()
+        except AudioDeviceError as exc:
+            logger.warning("%s bound identity vanished: %s", self._kind, exc)
+            self._terminal = True
+            # Mirror the existing failure path: null the already-closed
+            # stream/pa handles so the next call doesn't double-close.
+            self._stream = None
+            self._pa = None
+            raise
+
         pa = runtime_pyaudio.PyAudio()
         try:
-            if self._kind == "loopback":
-                info = pa.get_default_wasapi_loopback()
-            else:
-                info = pa.get_default_wasapi_device(d_in=True)
             native_rate = int(info["defaultSampleRate"])
             native_channels = int(info.get("maxInputChannels", 1) or 1)
             new_identity = self._compute_identity(info)
