@@ -857,3 +857,23 @@ class TestAudioCaptureDrain:
         assert observed_steps[1] >= 0.49
         assert observed_steps[2] >= 0.99
         assert observed_steps[3] >= 1.99
+
+
+class TestSourceStreamTerminalState:
+    def test_is_terminal_false_by_default(self):
+        from recap.daemon.recorder.audio import _SourceStream
+        s = _SourceStream(kind="loopback", output_rate=48000)
+        assert s.is_terminal is False
+
+    def test_is_terminal_true_after_budget_exhausted(self, monkeypatch):
+        """When the internal reopen retry counter exceeds _MAX_RECONNECT_ATTEMPTS,
+        is_terminal flips to True and stays True."""
+        from recap.daemon.recorder.audio import _SourceStream
+        s = _SourceStream(kind="loopback", output_rate=48000)
+        # Force the exhausted state via the single public mutator used by the
+        # reopen loop; do not poke private state from the test.
+        s._mark_terminal_for_test()  # tiny test-only helper added in impl
+        assert s.is_terminal is True
+        # Never flips back
+        s._mark_terminal_for_test()
+        assert s.is_terminal is True

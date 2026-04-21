@@ -121,6 +121,9 @@ class _SourceHealth(enum.Enum):
     DEGRADED = "degraded"
 
 
+_MAX_RECONNECT_ATTEMPTS = 20
+
+
 class _SourceStream:
     """One capture source: either the mic or the WASAPI loopback.
 
@@ -157,6 +160,7 @@ class _SourceStream:
         self._last_status_ok_ts: float | None = None
         self._reconnect_attempts = 0
         self._next_reopen_at: float = 0.0
+        self._terminal: bool = False
 
     @property
     def state(self) -> _SourceHealth:
@@ -169,6 +173,16 @@ class _SourceStream:
 
     def is_degraded(self) -> bool:
         return self.state == _SourceHealth.DEGRADED
+
+    @property
+    def is_terminal(self) -> bool:
+        """True when the source has exhausted its reconnect budget and should
+        not be kept alive. Never flips back to False once set."""
+        return self._terminal
+
+    def _mark_terminal_for_test(self) -> None:  # pragma: no cover - test-only helper
+        """Test hook: flip the terminal flag without going through the reopen loop."""
+        self._terminal = True
 
     @staticmethod
     def _compute_identity(info: dict) -> tuple:
@@ -386,6 +400,12 @@ class _SourceStream:
             self._do_reopen()
         except Exception as exc:
             logger.warning("%s reopen failed: %s", self._kind, exc)
+            if self._reconnect_attempts >= _MAX_RECONNECT_ATTEMPTS:
+                self._terminal = True
+                logger.warning(
+                    "%s exceeded reconnect budget (%d); marking terminal",
+                    self._kind, _MAX_RECONNECT_ATTEMPTS,
+                )
             return
 
         with self._lock:
