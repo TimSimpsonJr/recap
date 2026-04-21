@@ -248,3 +248,58 @@ class TestFeedMockFramesMulti:
         assert ("airpods",) in cap._loopback_sources
         airpods_entry = cap._loopback_sources[("airpods",)]
         assert airpods_entry.state == "active"
+
+
+class TestAirPodsScenarioEndToEnd:
+    """Regression test for the 2026-04-21 failure mode: meeting routed to
+    AirPods via Zoho's in-call picker while the Windows default output is
+    Laptop Speakers. The new architecture must capture AirPods audio and
+    evict the silent Speakers/HDMI endpoints after their probation window."""
+
+    def test_airpods_only_wins_after_probation_expiry(self, tmp_path, monkeypatch):
+        import numpy as np
+        cap = AudioCapture(output_path=tmp_path / "out.flac")
+        captured_chunks: list[bytes] = []
+        cap.on_chunk = lambda c, sr: captured_chunks.append(c)
+
+        chunk_frames = 480
+        mic_frame = (np.full(chunk_frames, 2000, dtype=np.int16)).tobytes()
+        speech_frame = (np.full(chunk_frames, 12000, dtype=np.int16)).tobytes()
+        silent_frame = b"\x00" * (chunk_frames * 2)
+
+        # Feed 10 chunks of the AirPods-only scenario.
+        for _ in range(10):
+            cap._test_feed_mock_frames_multi(
+                mic_frame=mic_frame,
+                loopback_frames_by_key={
+                    ("airpods",): ("AirPods", speech_frame),
+                    ("speakers",): ("Laptop Speakers", silent_frame),
+                    ("hdmi",): ("HDMI", silent_frame),
+                },
+            )
+
+        # After 10 chunks: AirPods is ACTIVE, others remain PROBATION.
+        assert cap._loopback_sources[("airpods",)].state == "active"
+        assert cap._loopback_sources[("speakers",)].state == "probation"
+        assert cap._loopback_sources[("hdmi",)].state == "probation"
+
+        # Simulate probation expiry by advancing opened_at into the past
+        # and running _tick_membership with the same three endpoints still
+        # enumerated. AirPods is ACTIVE so it survives; Speakers and HDMI
+        # are PROBATION past timeout so they get evicted.
+        past = cap._loopback_sources[("airpods",)].opened_at - 100.0
+        for entry in cap._loopback_sources.values():
+            entry.opened_at = past
+        monkeypatch.setattr(
+            cap, "_enumerate_loopback_endpoints",
+            lambda: iter([
+                (("airpods",), {"name": "AirPods", "index": 3, "defaultSampleRate": 48000.0}),
+                (("speakers",), {"name": "Laptop Speakers", "index": 1, "defaultSampleRate": 48000.0}),
+                (("hdmi",), {"name": "HDMI", "index": 2, "defaultSampleRate": 48000.0}),
+            ]),
+        )
+        cap._tick_membership(now=0.0)
+
+        assert ("airpods",) in cap._loopback_sources
+        assert ("speakers",) not in cap._loopback_sources
+        assert ("hdmi",) not in cap._loopback_sources
