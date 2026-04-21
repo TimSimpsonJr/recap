@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 import pathlib
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Any
 
@@ -54,6 +54,8 @@ class RecordingMetadata:
     event_id: str | None = None
     meeting_link: str = ""
     llm_backend: str | None = None
+    audio_warnings: list[str] = field(default_factory=list)
+    system_audio_devices_seen: list[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> RecordingMetadata:
@@ -72,6 +74,8 @@ class RecordingMetadata:
             event_id=data.get("event_id"),
             meeting_link=data.get("meeting_link", ""),
             llm_backend=data.get("llm_backend"),
+            audio_warnings=list(data.get("audio_warnings", [])),
+            system_audio_devices_seen=list(data.get("system_audio_devices_seen", [])),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -86,6 +90,8 @@ class RecordingMetadata:
             "event_id": self.event_id,
             "meeting_link": self.meeting_link,
             "llm_backend": self.llm_backend,
+            "audio_warnings": list(self.audio_warnings),
+            "system_audio_devices_seen": list(self.system_audio_devices_seen),
         }
 
     def to_meeting_metadata(self) -> MeetingMetadata:

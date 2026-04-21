@@ -92,3 +92,56 @@ class TestToVaultRelative:
         result = to_vault_relative(outside, vault)
         # Degraded mode: returns the absolute path as-is (str)
         assert result == str(outside)
+
+
+class TestRecordingMetadataAudioWarnings:
+    def test_defaults_to_empty_lists(self, tmp_path):
+        m = RecordingMetadata(
+            org="test",
+            note_path="",
+            title="T",
+            date="2026-04-21",
+            participants=[],
+            platform="zoho_meet",
+        )
+        assert m.audio_warnings == []
+        assert m.system_audio_devices_seen == []
+
+    def test_roundtrip_preserves_warnings(self, tmp_path):
+        audio_path = tmp_path / "rec.flac"
+        audio_path.touch()
+        m = RecordingMetadata(
+            org="test",
+            note_path="",
+            title="T",
+            date="2026-04-21",
+            participants=[],
+            platform="zoho_meet",
+            audio_warnings=["no-system-audio-captured"],
+            system_audio_devices_seen=["Laptop Speakers", "HDMI"],
+        )
+        write_recording_metadata(audio_path, m)
+        loaded = load_recording_metadata(audio_path)
+        assert loaded is not None
+        assert loaded.audio_warnings == ["no-system-audio-captured"]
+        assert loaded.system_audio_devices_seen == ["Laptop Speakers", "HDMI"]
+
+    def test_loads_older_sidecar_without_fields(self, tmp_path):
+        """Older sidecars without the new fields deserialize with empty defaults."""
+        import json
+
+        audio_path = tmp_path / "rec.flac"
+        audio_path.touch()
+        sidecar = audio_path.with_suffix(".metadata.json")
+        sidecar.write_text(json.dumps({
+            "org": "test",
+            "note_path": "",
+            "title": "T",
+            "date": "2026-04-21",
+            "participants": [],
+            "platform": "zoho_meet",
+        }))
+        loaded = load_recording_metadata(audio_path)
+        assert loaded is not None
+        assert loaded.audio_warnings == []
+        assert loaded.system_audio_devices_seen == []
