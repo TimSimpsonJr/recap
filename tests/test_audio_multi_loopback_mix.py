@@ -195,3 +195,28 @@ class TestDrainAndMix:
 
         expected = ((mic.astype(np.int32) + system.astype(np.int32)) // 2).astype(np.int16)
         np.testing.assert_array_equal(mono, expected)
+
+
+class TestInterleaveUsesDrainAndMix:
+    def test_interleave_uses_mic_and_system_mix(self, capture, monkeypatch):
+        """_interleave_and_encode must build the stereo FLAC frame from
+        _drain_and_mix output (mic in channel 0, system mix in channel 1)."""
+        chunk_frames = 480
+        mic = np.full(chunk_frames, 1000, dtype=np.int16)
+        system = np.full(chunk_frames, 2000, dtype=np.int16)
+
+        monkeypatch.setattr(
+            capture, "_drain_and_mix",
+            lambda cf: (mic, system, b"\x00" * cf * 2),
+        )
+        captured: list = []
+        capture._encoder = MagicMock()
+        capture._encoder.process.side_effect = lambda frames: captured.append(frames)
+
+        capture._interleave_and_encode(chunk_frames)
+
+        assert len(captured) == 1
+        frames = captured[0]
+        assert frames.shape == (chunk_frames, 2)
+        np.testing.assert_array_equal(frames[:, 0], mic)
+        np.testing.assert_array_equal(frames[:, 1], system)

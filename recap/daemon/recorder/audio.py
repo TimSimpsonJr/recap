@@ -859,40 +859,6 @@ class AudioCapture:
         # Normalize int16 range to 0.0-1.0
         return float(rms / 32768.0)
 
-    def _combine_frames(self, chunk_frames: int) -> tuple[Any, Any, bytes]:
-        """Drain both buffers and return mic/loopback samples plus a mono mix.
-
-        Returns:
-            (mic_samples, lb_samples, mono_chunk_bytes) where:
-            - mic_samples and lb_samples are numpy int16 arrays of length chunk_frames
-            - mono_chunk_bytes is the averaged (mic + loopback) mix as int16 bytes,
-              suitable for feeding to streaming ASR/diarization models.
-        """
-        numpy = _require_numpy()
-        bytes_needed = chunk_frames * 2  # 2 bytes per int16 sample
-
-        with self._lock:
-            mic_data = self._mic_buffer[:bytes_needed]
-            self._mic_buffer = self._mic_buffer[bytes_needed:]
-            lb_data = self._loopback_buffer[:bytes_needed]
-            self._loopback_buffer = self._loopback_buffer[bytes_needed:]
-
-        # Pad with silence if one source has less data
-        if len(mic_data) < bytes_needed:
-            mic_data += b"\x00" * (bytes_needed - len(mic_data))
-        if len(lb_data) < bytes_needed:
-            lb_data += b"\x00" * (bytes_needed - len(lb_data))
-
-        mic_samples = numpy.frombuffer(mic_data, dtype=numpy.int16)[:chunk_frames]
-        lb_samples = numpy.frombuffer(lb_data, dtype=numpy.int16)[:chunk_frames]
-
-        # Build mono mix (mic + loopback averaged) for streaming consumers.
-        # Widen to int32 before averaging to avoid int16 overflow.
-        mono_combined = ((mic_samples.astype(numpy.int32) + lb_samples.astype(numpy.int32)) // 2).astype(numpy.int16)
-        mono_chunk_bytes = mono_combined.tobytes()
-
-        return mic_samples, lb_samples, mono_chunk_bytes
-
     def _drain_and_mix(
         self, chunk_frames: int,
     ) -> tuple["np.ndarray", "np.ndarray", bytes]:
@@ -989,12 +955,12 @@ class AudioCapture:
         """
         numpy = _require_numpy()
 
-        mic_samples, lb_samples, mono_chunk_bytes = self._combine_frames(chunk_frames)
+        mic_samples, system_mix, mono_chunk_bytes = self._drain_and_mix(chunk_frames)
 
-        # Interleave: [mic0, lb0, mic1, lb1, ...]
+        # Interleave: [mic0, sys0, mic1, sys1, ...]
         interleaved = numpy.empty(chunk_frames * 2, dtype=numpy.int16)
         interleaved[0::2] = mic_samples
-        interleaved[1::2] = lb_samples
+        interleaved[1::2] = system_mix
 
         # Update RMS from the interleaved audio
         self._current_rms = self._compute_rms(interleaved)
@@ -1013,21 +979,51 @@ class AudioCapture:
     def _test_feed_mock_frames(
         self, mic_frame: bytes, system_frame: bytes
     ) -> None:  # pragma: no cover - test-only helper
-        """Test helper: push raw mic/system bytes into the buffers and drive the
-        interleave/encode cycle exactly as the drain loop would.
+        """Legacy single-loopback test helper. Constructs one synthetic
+        _LoopbackEntry containing the system_frame and drives the normal
+        _drain_and_mix + _interleave_and_encode path.
 
-        Designed to exercise the real `_interleave_and_encode` path (including
-        `on_chunk`) without requiring a live pyFLAC encoder or WASAPI streams.
-        The encoder is expected to be ``None`` in tests, in which case the
-        FLAC-encode step is skipped but the callback still fires.
+        Preserved for backwards compatibility with existing tests; new tests
+        should use _test_feed_mock_frames_multi (Task 15) for per-stream
+        control.
+
+        The synthetic entry starts in state="active" so that even legacy
+        tests using all-zero system_frame bytes still exercise the full
+        interleave+encode cycle (though they produce an all-zero channel-1
+        via the active_count=0 branch when the RMS of zeros is below
+        threshold -- same observable result as before).
         """
         if len(mic_frame) != len(system_frame):
             raise ValueError("mic_frame and system_frame must have the same length")
-        chunk_frames = len(mic_frame) // 2  # int16 = 2 bytes per sample
+        chunk_frames = len(mic_frame) // 2
+
+        class _StubStream:
+            def __init__(self, frame: bytes) -> None:
+                self._buf = frame
+                self.is_terminal = False
+
+            def drain_resampled(self, max_bytes: int) -> bytes:
+                out = self._buf[:max_bytes]
+                self._buf = self._buf[max_bytes:]
+                return out
+
+        entry = _LoopbackEntry(
+            stream=_StubStream(system_frame),
+            state="active",
+            opened_at=0.0,
+            last_active_at=None,
+            device_name="test",
+            missing_since=None,
+        )
+
         with self._lock:
             self._mic_buffer += mic_frame
-            self._loopback_buffer += system_frame
-        self._interleave_and_encode(chunk_frames)
+        prior = self._loopback_sources
+        self._loopback_sources = {("test",): entry}
+        try:
+            self._interleave_and_encode(chunk_frames)
+        finally:
+            self._loopback_sources = prior
 
     def _mic_callback(self, in_data: bytes, frame_count: int, time_info: dict, status: int) -> tuple[None, int]:
         """PyAudioWPatch callback for microphone stream."""
