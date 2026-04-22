@@ -952,3 +952,34 @@ def test_build_recording_metadata_unknown_platform_label_fallback(tmp_path, monk
     )
     assert metadata.title == "Meet call"
     assert metadata.note_path == "Acme/Meetings/2026-04-22 1000 - Meet call.md"
+
+
+def test_extension_detection_path_synthesizes_unscheduled(tmp_path, monkeypatch):
+    """`_recording_metadata_from_enriched` inherits synthesis behavior."""
+    import recap.daemon.recorder.detector as det_mod
+
+    class _FakeDatetime:
+        @staticmethod
+        def now(tz=None):
+            if tz is None:
+                return datetime(2026, 4, 22, 16, 15, 0)
+            return datetime(2026, 4, 22, 16, 15, 0, tzinfo=tz)
+    monkeypatch.setattr(det_mod, "datetime", _FakeDatetime)
+
+    detector = _make_detector_with_org(tmp_path)
+    (tmp_path / "Acme" / "Meetings").mkdir(parents=True)
+
+    metadata = detector._recording_metadata_from_enriched(
+        "acme",
+        {"title": "Browser Meeting", "participants": [], "platform": "zoom"},
+        meeting_link="https://zoom.example/42",
+        event_id=None,
+    )
+    assert metadata.event_id is not None
+    assert metadata.event_id.startswith("unscheduled:")
+    assert metadata.title == "Zoom call"
+    assert metadata.note_path == "Acme/Meetings/2026-04-22 1615 - Zoom call.md"
+    assert metadata.meeting_link == "https://zoom.example/42"
+    assert metadata.recording_started_at is not None
+    # Belt-and-braces: the captured instant is timezone-aware.
+    assert metadata.recording_started_at.tzinfo is not None
