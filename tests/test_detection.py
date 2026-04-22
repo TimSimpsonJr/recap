@@ -269,3 +269,28 @@ class TestDetectionGateInstrumentation:
             if "detection_gate" in r.getMessage()
         ]
         assert gate_lines == []
+
+    def test_no_teams_diagnostics_when_teams_disabled(self, monkeypatch, caplog):
+        """With teams disabled, teams-specific diagnostic lines must not fire.
+        Otherwise a zoom-only or signal-only user sees teams_substring_count
+        tallies + enumerated_teams_candidate lines and misreads it as a
+        teams detection bug.
+        """
+        import logging
+        import recap.daemon.recorder.detection as det
+        monkeypatch.setattr(
+            det, "_enumerate_windows",
+            lambda: [(1, "Standup | Microsoft Teams"), (2, "Zoom Meeting")],
+        )
+        monkeypatch.setattr(det.call_state, "is_call_active", lambda h, p: True)
+
+        with caplog.at_level(logging.DEBUG, logger="recap.daemon.recorder.detection"):
+            det.detect_meeting_windows({"zoom"})
+
+        messages = [r.getMessage() for r in caplog.records]
+        assert not any("window_enumeration" in m for m in messages), (
+            "teams-specific summary fired when teams is disabled"
+        )
+        assert not any("enumerated_teams_candidate" in m for m in messages), (
+            "teams candidate line fired when teams is disabled"
+        )

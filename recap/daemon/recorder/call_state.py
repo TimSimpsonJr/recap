@@ -132,9 +132,12 @@ def _is_teams_call_active(control: Any) -> bool:
             ct = getattr(c, "ControlTypeName", None)
             name = getattr(c, "Name", "") or ""
             if ct == "ButtonControl":
-                if len(buttons_seen) < _TEAMS_WALK_BUTTON_CAP:
+                stripped = name.strip()
+                # Skip empty / whitespace-only names so icon-only buttons
+                # cannot crowd out informative labels in buttons_seen.
+                if stripped and len(buttons_seen) < _TEAMS_WALK_BUTTON_CAP:
                     buttons_seen.append(name)
-                if name.strip().lower() in _TEAMS_LEAVE_NAMES:
+                if stripped.lower() in _TEAMS_LEAVE_NAMES:
                     return True
             for child in c.GetChildren():
                 if _walk(child, depth + 1):

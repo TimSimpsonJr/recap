@@ -314,6 +314,34 @@ class TestTeamsCallStateWalkLogging:
         ]
         assert walk_lines == []
 
+    def test_buttons_seen_skips_empty_names(self, caplog):
+        """Icon-only buttons with empty Name must not crowd out useful labels.
+        If 20 empty buttons get visited before any named one, the log would
+        fill up with blanks and obscure the real evidence.
+        """
+        import logging
+        from recap.daemon.recorder.call_state import _is_teams_call_active
+
+        empty_buttons = [FakeControl("ButtonControl", "") for _ in range(10)]
+        whitespace_button = FakeControl("ButtonControl", "   ")
+        real_button = FakeControl("ButtonControl", "Activity")
+        root = FakeControl(children=[*empty_buttons, whitespace_button, real_button])
+
+        with caplog.at_level(logging.DEBUG, logger=self._LOGGER):
+            assert _is_teams_call_active(root) is False
+
+        walk_lines = [
+            r.getMessage() for r in caplog.records
+            if "teams_call_state_walk" in r.getMessage()
+        ]
+        assert len(walk_lines) == 1
+        line = walk_lines[0]
+        # Non-empty name must appear.
+        assert "'Activity'" in line
+        # No empty or whitespace-only entries in the list.
+        assert "''" not in line
+        assert "'   '" not in line
+
     def test_buttons_seen_list_is_capped(self, caplog):
         """Cap the recorded list to avoid enormous log lines on dense
         UI trees. Implementation caps at 20 entries -- anything more is

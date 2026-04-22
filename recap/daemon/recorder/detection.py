@@ -88,24 +88,30 @@ def detect_meeting_windows(
     platforms = enabled_platforms if enabled_platforms is not None else set(MEETING_PATTERNS)
     meetings: list[MeetingWindow] = []
 
-    teams_pattern = MEETING_PATTERNS["teams"]
+    # Teams diagnostics only fire when Teams is actually being checked,
+    # otherwise a zoom-only or signal-only run emits misleading teams_*
+    # tallies and candidate lines.
+    teams_diagnostics_enabled = "teams" in platforms
+    teams_pattern = MEETING_PATTERNS["teams"] if teams_diagnostics_enabled else None
     teams_substring_count = 0
     teams_regex_matched_count = 0
 
     for hwnd, title in windows:
-        has_teams_substring = "teams" in title.lower()
-        teams_regex_match = bool(teams_pattern.search(title))
-        if has_teams_substring:
-            teams_substring_count += 1
-        if teams_regex_match:
-            teams_regex_matched_count += 1
-        # Diagnostic for issue #30: a Teams-looking window that the regex
-        # rejected is the signature of the regex being the broken gate.
-        if has_teams_substring and not teams_regex_match:
-            logger.debug(
-                "enumerated_teams_candidate hwnd=%d regex_matched=false title=%r",
-                hwnd, title,
-            )
+        if teams_diagnostics_enabled:
+            has_teams_substring = "teams" in title.lower()
+            teams_regex_match = bool(teams_pattern.search(title))
+            if has_teams_substring:
+                teams_substring_count += 1
+            if teams_regex_match:
+                teams_regex_matched_count += 1
+            # Diagnostic for issue #30: a Teams-looking window that the
+            # regex rejected is the signature of the regex being the
+            # broken gate.
+            if has_teams_substring and not teams_regex_match:
+                logger.debug(
+                    "enumerated_teams_candidate hwnd=%d regex_matched=false title=%r",
+                    hwnd, title,
+                )
 
         if hwnd in _EXCLUDED_HWNDS:
             continue
@@ -130,10 +136,12 @@ def detect_meeting_windows(
                 meetings.append(MeetingWindow(hwnd=hwnd, title=title, platform=platform))
                 break  # one match per window is enough
 
-    logger.debug(
-        "window_enumeration total=%d teams_substring_count=%d teams_regex_matched_count=%d",
-        len(windows), teams_substring_count, teams_regex_matched_count,
-    )
+    if teams_diagnostics_enabled:
+        logger.debug(
+            "window_enumeration total=%d teams_substring_count=%d "
+            "teams_regex_matched_count=%d",
+            len(windows), teams_substring_count, teams_regex_matched_count,
+        )
 
     return meetings
 
