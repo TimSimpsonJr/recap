@@ -141,3 +141,123 @@ def test_is_call_active_returns_false_when_control_is_none(monkeypatch):
 
     monkeypatch.setattr(uiautomation, "ControlFromHandle", lambda hwnd: None)
     assert is_call_active(hwnd=1, platform="teams") is False
+
+
+class TestIsCallActiveLogging:
+    """call_state_check debug lines for every return path.
+
+    Each path must emit a single line with platform, hwnd, result, and a
+    reason naming the branch taken. The existing exception-fallback
+    behavior (result=true on uia errors) is locked in by the fallback
+    test below so future changes cannot silently flip detection semantics.
+
+    Refs #30 (diagnostic instrumentation).
+    """
+
+    _LOGGER = "recap.daemon.recorder.call_state"
+
+    def test_logs_no_checker_for_unregistered_platform(self, caplog):
+        import logging
+        from recap.daemon.recorder.call_state import is_call_active
+
+        with caplog.at_level(logging.DEBUG, logger=self._LOGGER):
+            assert is_call_active(hwnd=1, platform="signal") is True
+
+        lines = [
+            r.getMessage() for r in caplog.records
+            if "call_state_check" in r.getMessage()
+        ]
+        assert len(lines) == 1
+        line = lines[0]
+        assert "platform=signal" in line
+        assert "result=true" in line
+        assert "reason=no_checker_for_platform" in line
+
+    def test_logs_uia_control_not_found(self, monkeypatch, caplog):
+        import logging
+        import uiautomation
+        from recap.daemon.recorder.call_state import is_call_active
+
+        monkeypatch.setattr(uiautomation, "ControlFromHandle", lambda hwnd: None)
+
+        with caplog.at_level(logging.DEBUG, logger=self._LOGGER):
+            assert is_call_active(hwnd=42, platform="teams") is False
+
+        lines = [
+            r.getMessage() for r in caplog.records
+            if "call_state_check" in r.getMessage()
+        ]
+        assert len(lines) == 1
+        line = lines[0]
+        assert "platform=teams" in line
+        assert "hwnd=42" in line
+        assert "result=false" in line
+        assert "reason=uia_control_not_found" in line
+
+    def test_logs_checker_confirmed_true(self, monkeypatch, caplog):
+        import logging
+        import uiautomation
+        from recap.daemon.recorder.call_state import is_call_active
+
+        leave_btn = FakeControl("ButtonControl", "Leave")
+        root = FakeControl(children=[leave_btn])
+        monkeypatch.setattr(uiautomation, "ControlFromHandle", lambda hwnd: root)
+
+        with caplog.at_level(logging.DEBUG, logger=self._LOGGER):
+            assert is_call_active(hwnd=7, platform="teams") is True
+
+        lines = [
+            r.getMessage() for r in caplog.records
+            if "call_state_check" in r.getMessage()
+        ]
+        assert any(
+            "result=true" in l and "reason=checker_confirmed" in l
+            for l in lines
+        )
+
+    def test_logs_checker_declined(self, monkeypatch, caplog):
+        import logging
+        import uiautomation
+        from recap.daemon.recorder.call_state import is_call_active
+
+        chat_btn = FakeControl("ButtonControl", "Chat")
+        root = FakeControl(children=[chat_btn])
+        monkeypatch.setattr(uiautomation, "ControlFromHandle", lambda hwnd: root)
+
+        with caplog.at_level(logging.DEBUG, logger=self._LOGGER):
+            assert is_call_active(hwnd=8, platform="teams") is False
+
+        lines = [
+            r.getMessage() for r in caplog.records
+            if "call_state_check" in r.getMessage()
+        ]
+        assert any(
+            "result=false" in l and "reason=checker_declined" in l
+            for l in lines
+        )
+
+    def test_logs_uia_exception_fallback_returning_true(self, monkeypatch, caplog):
+        """Behavior lock: uia exceptions must still produce result=true.
+        Flipping this to False would silently change detection semantics
+        for platforms with registered checkers.
+        """
+        import logging
+        import uiautomation
+        from recap.daemon.recorder.call_state import is_call_active
+
+        def boom(_):
+            raise RuntimeError("uia blew up")
+
+        monkeypatch.setattr(uiautomation, "ControlFromHandle", boom)
+
+        with caplog.at_level(logging.DEBUG, logger=self._LOGGER):
+            assert is_call_active(hwnd=9, platform="teams") is True
+
+        lines = [
+            r.getMessage() for r in caplog.records
+            if "call_state_check" in r.getMessage()
+        ]
+        assert any(
+            "result=true" in l and "reason=uia_exception_fallback" in l
+            for l in lines
+        )

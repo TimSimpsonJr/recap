@@ -156,6 +156,11 @@ def is_call_active(hwnd: int, platform: str) -> bool:
     """
     checker = _CALL_STATE_CHECKERS.get(platform)
     if checker is None:
+        logger.debug(
+            "call_state_check platform=%s hwnd=%d result=true "
+            "reason=no_checker_for_platform",
+            platform, hwnd,
+        )
         return True
     try:
         import uiautomation as auto  # type: ignore[import-untyped]
@@ -167,14 +172,31 @@ def is_call_active(hwnd: int, platform: str) -> bool:
             # false-positive class Phase 7 eliminated. The broader Exception
             # path below remains a best-effort fallback for transient UIA
             # runtime errors.
+            logger.debug(
+                "call_state_check platform=%s hwnd=%d result=false "
+                "reason=uia_control_not_found",
+                platform, hwnd,
+            )
             return False
-        return checker(control)
+        result = checker(control)
+        logger.debug(
+            "call_state_check platform=%s hwnd=%d result=%s reason=%s",
+            platform, hwnd,
+            "true" if result else "false",
+            "checker_confirmed" if result else "checker_declined",
+        )
+        return result
     except Exception:
         logger.debug(
             "UIA call-state check failed for %s hwnd=%s",
             platform,
             hwnd,
             exc_info=True,
+        )
+        logger.debug(
+            "call_state_check platform=%s hwnd=%d result=true "
+            "reason=uia_exception_fallback",
+            platform, hwnd,
         )
         return True
 
