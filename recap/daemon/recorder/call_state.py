@@ -6,9 +6,38 @@ Shared between detector confirmation (Phase 7 §3, Task 11) and enrichment
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from typing import Any, Callable
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Windows identity helpers (thin wrappers kept separate so tests can patch
+# them without importing pywin32 or psutil).
+# ---------------------------------------------------------------------------
+
+
+def _GetClassName(hwnd: int) -> str:
+    """Return the window class name for ``hwnd``. Raises on failure.
+
+    Thin wrapper over ``win32gui.GetClassName`` so tests can monkeypatch
+    this symbol on the module without stubbing the whole pywin32 surface.
+    """
+    import win32gui  # type: ignore[import-untyped]
+    return win32gui.GetClassName(hwnd)
+
+
+def _GetProcessNameForHwnd(hwnd: int) -> str:
+    """Return the owning process name for ``hwnd`` (e.g. ``ms-teams.exe``).
+
+    Raises on failure. Thin wrapper over win32process + psutil so tests
+    can monkeypatch this symbol directly.
+    """
+    import psutil
+    import win32process  # type: ignore[import-untyped]
+    _tid, pid = win32process.GetWindowThreadProcessId(hwnd)
+    return psutil.Process(pid).name()
 
 
 def _walk_depth_limited(
@@ -175,6 +204,152 @@ _CALL_STATE_CHECKERS: dict[str, Callable[[Any], bool]] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Round-2 diagnostic helpers for issue #30. These do not participate in the
+# detection decision path -- they emit one debug log line each when a Teams
+# checker declines, so the next log capture can disambiguate "wrong subtree"
+# from "UIA cannot see the control at all."
+# ---------------------------------------------------------------------------
+
+
+def _gather_uia_tree_shape(
+    control: Any,
+    max_depth: int = 15,
+) -> dict[int, dict[str, int]]:
+    """Return ``{depth: {ControlTypeName: count}}`` for the subtree under
+    ``control`` up to ``max_depth`` (inclusive). Mirrors the depth
+    semantics of ``_walk_depth_limited`` (``if depth > max_depth``).
+
+    Exceptions raised while descending any subtree are logged at debug
+    and treated as "stop descending here" -- the rest of the tree is
+    still counted. This mirrors ``_walk_depth_limited``'s behavior so
+    the diagnostic reflects what the existing walker would actually see.
+    """
+    shape: dict[int, dict[str, int]] = defaultdict(lambda: defaultdict(int))
+
+    def _walk(c: Any, depth: int) -> None:
+        if depth > max_depth:
+            return
+        try:
+            ct = getattr(c, "ControlTypeName", "Unknown") or "Unknown"
+            shape[depth][ct] += 1
+            for child in c.GetChildren():
+                _walk(child, depth + 1)
+        except Exception:
+            logger.debug("UIA tree-shape walk error at depth %d", depth, exc_info=True)
+
+    _walk(control, 0)
+    return {k: dict(v) for k, v in shape.items()}
+
+
+def _get_window_identity(hwnd: int) -> tuple[str, str]:
+    """Return ``(class_name, process_name)`` for ``hwnd``.
+
+    Returns ``("", "")`` if either lookup fails so a diagnostic log call
+    cannot crash the detection poll.
+    """
+    try:
+        cls = _GetClassName(hwnd)
+    except Exception:
+        logger.debug("GetClassName failed for hwnd=%s", hwnd, exc_info=True)
+        return ("", "")
+    try:
+        proc = _GetProcessNameForHwnd(hwnd)
+    except Exception:
+        logger.debug("GetProcessNameForHwnd failed for hwnd=%s", hwnd, exc_info=True)
+        return (cls, "")
+    return (cls, proc)
+
+
+def _find_leave_buttons_via_uia_search(control: Any) -> list[str]:
+    """Return the leave-type button names found anywhere in ``control``'s
+    descendants, restricted to the existing decision signal
+    (``_TEAMS_LEAVE_NAMES``).
+
+    Uses ``uiautomation``'s property-based descendant search when the
+    library exposes it on ``control`` (production path). Falls back to a
+    recursive ButtonControl scan when the search API is not available
+    (unit-test path with ``FakeControl``).
+
+    The return value is the list of matching names found, in order of
+    discovery. Duplicate names are deduplicated.
+    """
+    found: list[str] = []
+    seen: set[str] = set()
+
+    # Production path: use uiautomation's constructor-based control search,
+    # which issues UIA property queries rather than manual tree traversal.
+    # If FindFirst/constructor search is available, use it.
+    try:
+        # The uiautomation library exposes ``.ButtonControl(...)`` on controls
+        # for lazy property-based search; ``.Exists(maxSearchSeconds=...)``
+        # runs the query.
+        search_method = getattr(control, "ButtonControl", None)
+        if callable(search_method):
+            import uiautomation as auto  # type: ignore[import-untyped]
+            _ = auto  # silence unused-import; kept for import-error signal
+            # Capitalized canonical forms to search for -- Name is
+            # case-sensitive in UIA property search.
+            for canonical in ("Leave", "Hang up", "End call"):
+                try:
+                    candidate = search_method(
+                        searchDepth=0xFFFFFFFF,
+                        Name=canonical,
+                    )
+                    if hasattr(candidate, "Exists") and candidate.Exists(
+                        maxSearchSeconds=1,
+                    ):
+                        if canonical not in seen:
+                            seen.add(canonical)
+                            found.append(canonical)
+                except Exception:
+                    logger.debug(
+                        "uia property search failed for %r",
+                        canonical, exc_info=True,
+                    )
+            return found
+    except Exception:
+        logger.debug("uia search path unavailable", exc_info=True)
+
+    # Fallback path: recursive manual scan. Used only when the UIA search
+    # API is unreachable (unit tests with FakeControl, or uiautomation
+    # not importable). Same decision criteria as _is_teams_call_active.
+    def _walk(c: Any) -> None:
+        try:
+            ct = getattr(c, "ControlTypeName", None)
+            name = getattr(c, "Name", "") or ""
+            stripped = name.strip()
+            if ct == "ButtonControl" and stripped.lower() in _TEAMS_LEAVE_NAMES:
+                if stripped not in seen:
+                    seen.add(stripped)
+                    found.append(stripped)
+            for child in c.GetChildren():
+                _walk(child)
+        except Exception:
+            logger.debug("UIA fallback scan error", exc_info=True)
+
+    _walk(control)
+    return found
+
+
+def _emit_teams_round2_diagnostics(hwnd: int, control: Any) -> None:
+    """Emit the three round-2 diagnostic log lines for a Teams hwnd when
+    the existing checker declined. Refs #30.
+    """
+    shape = _gather_uia_tree_shape(control, max_depth=15)
+    cls, proc = _get_window_identity(hwnd)
+    leave_names = _find_leave_buttons_via_uia_search(control)
+    logger.debug("uia_tree_shape hwnd=%d depth_counts=%r", hwnd, shape)
+    logger.debug(
+        "teams_window_identity hwnd=%d class=%r process=%r",
+        hwnd, cls, proc,
+    )
+    logger.debug(
+        "teams_leave_button_findall hwnd=%d found=%s names=%r",
+        hwnd, "true" if leave_names else "false", leave_names,
+    )
+
+
 def is_call_active(hwnd: int, platform: str) -> bool:
     """Return True if the window at hwnd is an active call for the given platform.
 
@@ -213,6 +388,12 @@ def is_call_active(hwnd: int, platform: str) -> bool:
             "true" if result else "false",
             "checker_confirmed" if result else "checker_declined",
         )
+        # Round-2 diagnostics for issue #30: when a teams checker
+        # declines, emit the tree shape, window identity, and
+        # property-based descendant search so the next capture can
+        # pinpoint which subtree the existing walker is missing.
+        if platform == "teams" and not result:
+            _emit_teams_round2_diagnostics(hwnd, control)
         return result
     except Exception:
         logger.debug(

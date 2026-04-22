@@ -368,3 +368,257 @@ class TestTeamsCallStateWalkLogging:
         assert match is not None
         items = [x.strip() for x in match.group(1).split(",") if x.strip()]
         assert len(items) <= 20
+
+
+class TestGatherUiaTreeShape:
+    """Round-2 diagnostic for issue #30: aggregate control-type counts per
+    depth so a single log line per hwnd shows the shape of the UIA tree
+    under the Teams window. Complements the button-names walk: if the
+    tree has large CustomControl/PaneControl subtrees at deep levels,
+    that is the signature of the WebView2 content boundary the current
+    checker is stopping at.
+    """
+
+    def test_counts_control_types_per_depth(self):
+        from recap.daemon.recorder.call_state import _gather_uia_tree_shape
+
+        leaf_a = FakeControl("ButtonControl", "a")
+        leaf_b = FakeControl("ButtonControl", "b")
+        pane = FakeControl("PaneControl", "p", children=[leaf_a])
+        title = FakeControl("TitleBarControl", "t")
+        root = FakeControl("WindowControl", "root", children=[pane, title, leaf_b])
+
+        shape = _gather_uia_tree_shape(root, max_depth=15)
+
+        assert shape[0] == {"WindowControl": 1}
+        assert shape[1] == {"PaneControl": 1, "TitleBarControl": 1, "ButtonControl": 1}
+        assert shape[2] == {"ButtonControl": 1}
+
+    def test_respects_max_depth(self):
+        from recap.daemon.recorder.call_state import _gather_uia_tree_shape
+
+        # Build a deep chain (20 levels) of PaneControls with a leaf button.
+        leaf = FakeControl("ButtonControl", "leaf")
+        node = leaf
+        for _ in range(20):
+            node = FakeControl("PaneControl", "p", children=[node])
+
+        shape = _gather_uia_tree_shape(node, max_depth=5)
+
+        # Depths 0..5 inclusive should be present (matching the existing
+        # walker's `if depth > max_depth` check semantics); deeper levels
+        # must not appear.
+        assert set(shape.keys()) <= set(range(6))
+        assert 6 not in shape
+        assert 15 not in shape
+
+    def test_swallows_exceptions_in_subtree(self):
+        """A broken GetChildren() on one subtree must not abort the whole walk."""
+        from recap.daemon.recorder.call_state import _gather_uia_tree_shape
+
+        class BrokenControl(FakeControl):
+            def GetChildren(self):
+                raise RuntimeError("uia blew up mid-walk")
+
+        good_leaf = FakeControl("ButtonControl", "good")
+        broken = BrokenControl("PaneControl", "broken")
+        root = FakeControl("WindowControl", "root", children=[broken, good_leaf])
+
+        shape = _gather_uia_tree_shape(root, max_depth=15)
+
+        # root and both direct children should still be counted.
+        assert shape[0] == {"WindowControl": 1}
+        assert shape[1]["PaneControl"] == 1
+        assert shape[1]["ButtonControl"] == 1
+
+
+class TestGetWindowIdentity:
+    """Round-2 diagnostic for issue #30: resolve the owning process name
+    and window class name for a Teams hwnd so we can disambiguate desktop
+    Teams from Teams-in-Edge and anchor future gating on a stable class
+    name.
+    """
+
+    def test_returns_class_and_process_name(self, monkeypatch):
+        from recap.daemon.recorder.call_state import _get_window_identity
+
+        # Mock win32gui.GetClassName + psutil process name lookup.
+        import recap.daemon.recorder.call_state as cs
+
+        def fake_get_class_name(hwnd):
+            return "TeamsWebView"
+
+        def fake_get_process_name(hwnd):
+            return "ms-teams.exe"
+
+        monkeypatch.setattr(cs, "_GetClassName", fake_get_class_name)
+        monkeypatch.setattr(cs, "_GetProcessNameForHwnd", fake_get_process_name)
+
+        identity = _get_window_identity(12345)
+        assert identity == ("TeamsWebView", "ms-teams.exe")
+
+    def test_returns_sentinel_on_exception(self, monkeypatch):
+        """If win32 or psutil fails, return ('', '') rather than raising,
+        so a diagnostic log line cannot crash the detection poll."""
+        from recap.daemon.recorder.call_state import _get_window_identity
+        import recap.daemon.recorder.call_state as cs
+
+        def boom(hwnd):
+            raise RuntimeError("win32 broken")
+
+        monkeypatch.setattr(cs, "_GetClassName", boom)
+
+        identity = _get_window_identity(99)
+        assert identity == ("", "")
+
+
+class TestFindLeaveButtonsViaUiaSearch:
+    """Round-2 diagnostic: use uiautomation's property-based descendant
+    search for leave-type button names, separate from the existing
+    manual tree walk. If this finds the button when the walk doesn't,
+    the fix direction is "change traversal method." If neither finds it,
+    the fix is bigger (process-based or audio-session-based detection).
+
+    Only the existing decision signal (`_TEAMS_LEAVE_NAMES`) drives the
+    search criteria -- adding Mute or Camera here would light up
+    unrelated controls and obscure the evidence we need.
+    """
+
+    def test_returns_empty_list_when_find_api_unavailable(self):
+        """FakeControl lacks the uiautomation search methods; the helper
+        must degrade to an empty list without raising. In production the
+        function uses the real library; unit tests cover graceful
+        degradation."""
+        from recap.daemon.recorder.call_state import (
+            _find_leave_buttons_via_uia_search,
+        )
+        root = FakeControl("WindowControl", "root", children=[])
+        assert _find_leave_buttons_via_uia_search(root) == []
+
+    def test_finds_leave_button_via_recursive_scan_fallback(self):
+        """With FakeControl lacking UIA search methods, the helper falls
+        back to a deep recursive scan for ButtonControls whose stripped
+        lowercase name is in _TEAMS_LEAVE_NAMES. This verifies the
+        fallback path that unit tests exercise; the real UIA search path
+        needs a Windows + uiautomation environment to test.
+        """
+        from recap.daemon.recorder.call_state import (
+            _find_leave_buttons_via_uia_search,
+        )
+        deep_leaf = FakeControl("ButtonControl", "Leave")
+        nested = deep_leaf
+        for _ in range(10):
+            nested = FakeControl("PaneControl", "p", children=[nested])
+        root = FakeControl("WindowControl", "root", children=[nested])
+
+        assert _find_leave_buttons_via_uia_search(root) == ["Leave"]
+
+    def test_matches_only_existing_leave_name_set(self):
+        """Mute/Camera/etc must not appear in the result even if present
+        in the tree -- this diagnostic must tell us whether the existing
+        decision signal is reachable, not whether any call-like control
+        exists."""
+        from recap.daemon.recorder.call_state import (
+            _find_leave_buttons_via_uia_search,
+        )
+        mute_button = FakeControl("ButtonControl", "Mute")
+        camera_button = FakeControl("ButtonControl", "Camera")
+        chat_button = FakeControl("ButtonControl", "Chat")
+        root = FakeControl("WindowControl", "root", children=[
+            mute_button, camera_button, chat_button,
+        ])
+        assert _find_leave_buttons_via_uia_search(root) == []
+
+    def test_collects_all_three_leave_name_variants(self):
+        """All three decision-signal names (Leave, Hang up, End call)
+        must be captured if present, in the order encountered."""
+        from recap.daemon.recorder.call_state import (
+            _find_leave_buttons_via_uia_search,
+        )
+        root = FakeControl("WindowControl", "root", children=[
+            FakeControl("ButtonControl", "Leave"),
+            FakeControl("ButtonControl", "Hang up"),
+            FakeControl("ButtonControl", "End call"),
+            FakeControl("ButtonControl", "Chat"),
+        ])
+        found = _find_leave_buttons_via_uia_search(root)
+        assert set(found) == {"Leave", "Hang up", "End call"}
+
+
+class TestTeamsDiagnosticsEmittedOnCheckerDeclined:
+    """When the teams checker returns False, the three round-2 diagnostic
+    lines (uia_tree_shape, teams_window_identity, teams_leave_button_findall)
+    must all be emitted so the next log capture can diagnose which subtree
+    the checker is missing.
+    """
+
+    _LOGGER = "recap.daemon.recorder.call_state"
+
+    def test_emits_three_diagnostics_on_checker_declined(
+        self, monkeypatch, caplog,
+    ):
+        import logging
+        import uiautomation
+        import recap.daemon.recorder.call_state as cs
+        from recap.daemon.recorder.call_state import is_call_active
+
+        # Build a tree that makes the existing checker decline
+        # (only non-call buttons).
+        chat_btn = FakeControl("ButtonControl", "Chat")
+        root = FakeControl("WindowControl", "teams", children=[chat_btn])
+        monkeypatch.setattr(uiautomation, "ControlFromHandle", lambda hwnd: root)
+        monkeypatch.setattr(cs, "_GetClassName", lambda hwnd: "TeamsWebView")
+        monkeypatch.setattr(cs, "_GetProcessNameForHwnd", lambda hwnd: "ms-teams.exe")
+
+        with caplog.at_level(logging.DEBUG, logger=self._LOGGER):
+            assert is_call_active(hwnd=101, platform="teams") is False
+
+        messages = [r.getMessage() for r in caplog.records]
+        assert any("uia_tree_shape" in m and "hwnd=101" in m for m in messages)
+        assert any(
+            "teams_window_identity" in m and "hwnd=101" in m
+            and "class='TeamsWebView'" in m and "process='ms-teams.exe'" in m
+            for m in messages
+        )
+        assert any(
+            "teams_leave_button_findall" in m and "hwnd=101" in m
+            for m in messages
+        )
+
+    def test_no_diagnostics_when_checker_confirmed(self, monkeypatch, caplog):
+        """If the existing checker works, we do not need the diagnostics.
+        This keeps healthy-case logs quiet."""
+        import logging
+        import uiautomation
+        from recap.daemon.recorder.call_state import is_call_active
+
+        leave_btn = FakeControl("ButtonControl", "Leave")
+        root = FakeControl("WindowControl", "teams", children=[leave_btn])
+        monkeypatch.setattr(uiautomation, "ControlFromHandle", lambda hwnd: root)
+
+        with caplog.at_level(logging.DEBUG, logger=self._LOGGER):
+            assert is_call_active(hwnd=102, platform="teams") is True
+
+        messages = [r.getMessage() for r in caplog.records]
+        assert not any("uia_tree_shape" in m for m in messages)
+        assert not any("teams_window_identity" in m for m in messages)
+        assert not any("teams_leave_button_findall" in m for m in messages)
+
+    def test_no_diagnostics_for_non_teams_platforms(self, monkeypatch, caplog):
+        """Zoom and other platforms must not trigger the teams-specific
+        diagnostics even when their checker declines."""
+        import logging
+        import uiautomation
+        from recap.daemon.recorder.call_state import is_call_active
+
+        root = FakeControl("WindowControl", "zoom", children=[])
+        monkeypatch.setattr(uiautomation, "ControlFromHandle", lambda hwnd: root)
+
+        with caplog.at_level(logging.DEBUG, logger=self._LOGGER):
+            # zoom checker decline on empty tree
+            assert is_call_active(hwnd=103, platform="zoom") is False
+
+        messages = [r.getMessage() for r in caplog.records]
+        assert not any("uia_tree_shape" in m for m in messages)
+        assert not any("teams_window_identity" in m for m in messages)
+        assert not any("teams_leave_button_findall" in m for m in messages)
