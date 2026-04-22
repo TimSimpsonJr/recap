@@ -261,92 +261,111 @@ def _get_window_identity(hwnd: int) -> tuple[str, str]:
     return (cls, proc)
 
 
-def _find_leave_buttons_via_uia_search(control: Any) -> list[str]:
-    """Return the leave-type button names found anywhere in ``control``'s
-    descendants, restricted to the existing decision signal
-    (``_TEAMS_LEAVE_NAMES``).
+# Canonical (case-sensitive) names passed to UIA property search. UIA's
+# Name property match is case-sensitive, so we query each variant
+# explicitly rather than lowercasing.
+_TEAMS_LEAVE_CANONICAL_NAMES: tuple[str, ...] = ("Leave", "Hang up", "End call")
 
-    Uses ``uiautomation``'s property-based descendant search when the
-    library exposes it on ``control`` (production path). Falls back to a
-    recursive ButtonControl scan when the search API is not available
-    (unit-test path with ``FakeControl``).
+# Tight per-name search timeout so a declined Teams window cannot stall
+# the 3-second detection poll. 3 names x 0.1s = worst-case ~0.3s.
+_LEAVE_FINDALL_MAX_SEARCH_SECONDS = 0.1
 
-    The return value is the list of matching names found, in order of
-    discovery. Duplicate names are deduplicated.
+
+def _find_leave_buttons_via_uia_search(control: Any) -> tuple[list[str], str]:
+    """Return ``(names, path)`` where ``names`` is the subset of
+    ``_TEAMS_LEAVE_CANONICAL_NAMES`` that UIA's property-based descendant
+    search confirms exist under ``control``, and ``path`` is one of:
+
+    - ``"uia_property"``   -- the property search actually ran. ``names``
+      is a trustworthy answer, whether empty or not.
+    - ``"no_uia_search_api"`` -- the control does not expose the
+      constructor-style search method; we did not run a search. ``names``
+      is always ``[]``. No silent fallback to tree walking, because that
+      would be indistinguishable from the existing checker.
+    - ``"uia_property_error"`` -- the search method raised before
+      producing a result. ``names`` is always ``[]``.
+
+    The path field is what makes the round-2 log line interpretable:
+    ``found=true path=uia_property`` is the only signal that tells us
+    property search reaches controls the walker missed. Refs #30.
     """
+    search_method = getattr(control, "ButtonControl", None)
+    if not callable(search_method):
+        return ([], "no_uia_search_api")
+
     found: list[str] = []
     seen: set[str] = set()
-
-    # Production path: use uiautomation's constructor-based control search,
-    # which issues UIA property queries rather than manual tree traversal.
-    # If FindFirst/constructor search is available, use it.
     try:
-        # The uiautomation library exposes ``.ButtonControl(...)`` on controls
-        # for lazy property-based search; ``.Exists(maxSearchSeconds=...)``
-        # runs the query.
-        search_method = getattr(control, "ButtonControl", None)
-        if callable(search_method):
-            import uiautomation as auto  # type: ignore[import-untyped]
-            _ = auto  # silence unused-import; kept for import-error signal
-            # Capitalized canonical forms to search for -- Name is
-            # case-sensitive in UIA property search.
-            for canonical in ("Leave", "Hang up", "End call"):
-                try:
-                    candidate = search_method(
-                        searchDepth=0xFFFFFFFF,
-                        Name=canonical,
-                    )
-                    if hasattr(candidate, "Exists") and candidate.Exists(
-                        maxSearchSeconds=1,
-                    ):
-                        if canonical not in seen:
-                            seen.add(canonical)
-                            found.append(canonical)
-                except Exception:
-                    logger.debug(
-                        "uia property search failed for %r",
-                        canonical, exc_info=True,
-                    )
-            return found
+        for canonical in _TEAMS_LEAVE_CANONICAL_NAMES:
+            try:
+                candidate = search_method(
+                    searchDepth=0xFFFFFFFF,
+                    Name=canonical,
+                )
+            except Exception:
+                logger.debug(
+                    "uia property search failed constructing candidate for %r",
+                    canonical, exc_info=True,
+                )
+                return ([], "uia_property_error")
+            exists_fn = getattr(candidate, "Exists", None)
+            if not callable(exists_fn):
+                # The search method exists but candidate does not look
+                # like a uiautomation control. Treat as unavailable.
+                return ([], "no_uia_search_api")
+            try:
+                present = exists_fn(
+                    maxSearchSeconds=_LEAVE_FINDALL_MAX_SEARCH_SECONDS,
+                )
+            except Exception:
+                logger.debug(
+                    "uia Exists failed for %r", canonical, exc_info=True,
+                )
+                return ([], "uia_property_error")
+            if present and canonical not in seen:
+                seen.add(canonical)
+                found.append(canonical)
     except Exception:
-        logger.debug("uia search path unavailable", exc_info=True)
+        logger.debug("uia property search path failed", exc_info=True)
+        return ([], "uia_property_error")
+    return (found, "uia_property")
 
-    # Fallback path: recursive manual scan. Used only when the UIA search
-    # API is unreachable (unit tests with FakeControl, or uiautomation
-    # not importable). Same decision criteria as _is_teams_call_active.
-    def _walk(c: Any) -> None:
-        try:
-            ct = getattr(c, "ControlTypeName", None)
-            name = getattr(c, "Name", "") or ""
-            stripped = name.strip()
-            if ct == "ButtonControl" and stripped.lower() in _TEAMS_LEAVE_NAMES:
-                if stripped not in seen:
-                    seen.add(stripped)
-                    found.append(stripped)
-            for child in c.GetChildren():
-                _walk(child)
-        except Exception:
-            logger.debug("UIA fallback scan error", exc_info=True)
 
-    _walk(control)
-    return found
+# ---------------------------------------------------------------------------
+# Per-hwnd deduplication so the round-2 diagnostics emit one snapshot per
+# Teams window per daemon session, not every poll. Repeated emission would
+# both spam the log and (via repeated property searches) distort the
+# detection cadence the diagnostic is trying to measure.
+# ---------------------------------------------------------------------------
+
+_DIAGNOSED_TEAMS_HWNDS: set[int] = set()
+
+
+def _reset_diagnosed_hwnds() -> None:
+    """Test-only helper: clear the per-hwnd diagnostic dedupe set."""
+    _DIAGNOSED_TEAMS_HWNDS.clear()
 
 
 def _emit_teams_round2_diagnostics(hwnd: int, control: Any) -> None:
     """Emit the three round-2 diagnostic log lines for a Teams hwnd when
-    the existing checker declined. Refs #30.
+    the existing checker declined. At most once per hwnd per daemon
+    session. Refs #30.
     """
+    if hwnd in _DIAGNOSED_TEAMS_HWNDS:
+        return
+    _DIAGNOSED_TEAMS_HWNDS.add(hwnd)
+
     shape = _gather_uia_tree_shape(control, max_depth=15)
     cls, proc = _get_window_identity(hwnd)
-    leave_names = _find_leave_buttons_via_uia_search(control)
+    leave_names, leave_path = _find_leave_buttons_via_uia_search(control)
     logger.debug("uia_tree_shape hwnd=%d depth_counts=%r", hwnd, shape)
     logger.debug(
         "teams_window_identity hwnd=%d class=%r process=%r",
         hwnd, cls, proc,
     )
     logger.debug(
-        "teams_leave_button_findall hwnd=%d found=%s names=%r",
-        hwnd, "true" if leave_names else "false", leave_names,
+        "teams_leave_button_findall hwnd=%d path=%s found=%s names=%r",
+        hwnd, leave_path, "true" if leave_names else "false", leave_names,
     )
 
 

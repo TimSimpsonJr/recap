@@ -9,6 +9,8 @@ Task 11 will add call-state checker tests here.
 """
 from __future__ import annotations
 
+import pytest
+
 from recap.daemon.recorder import call_state
 from recap.daemon.recorder.call_state import (
     _walk_depth_limited,
@@ -472,77 +474,151 @@ class TestGetWindowIdentity:
         assert identity == ("", "")
 
 
+class _LazyCandidate:
+    """Stand-in for a lazy uiautomation control returned by
+    ``control.ButtonControl(...)``. ``Exists`` is the moment the query
+    actually runs."""
+
+    def __init__(self, exists: bool):
+        self._exists = exists
+        self.exists_calls: list[float] = []
+
+    def Exists(self, maxSearchSeconds: float = 0.0) -> bool:
+        self.exists_calls.append(maxSearchSeconds)
+        return self._exists
+
+
+class FakeSearchableControl(FakeControl):
+    """FakeControl with a ``ButtonControl`` search method so tests can
+    exercise the UIA property-search path directly."""
+
+    def __init__(
+        self,
+        ControlTypeName: str = "",
+        Name: str = "",
+        children: list | None = None,
+        *,
+        names_that_exist: set[str] | None = None,
+        search_raises: bool = False,
+    ):
+        super().__init__(ControlTypeName, Name, children)
+        self._names_that_exist = names_that_exist or set()
+        self._search_raises = search_raises
+        self.candidates: list[_LazyCandidate] = []
+
+    def ButtonControl(self, searchDepth=0, Name: str = ""):
+        if self._search_raises:
+            raise RuntimeError("uia property search blew up")
+        candidate = _LazyCandidate(exists=Name in self._names_that_exist)
+        self.candidates.append(candidate)
+        return candidate
+
+
 class TestFindLeaveButtonsViaUiaSearch:
     """Round-2 diagnostic: use uiautomation's property-based descendant
-    search for leave-type button names, separate from the existing
-    manual tree walk. If this finds the button when the walk doesn't,
-    the fix direction is "change traversal method." If neither finds it,
-    the fix is bigger (process-based or audio-session-based detection).
-
-    Only the existing decision signal (`_TEAMS_LEAVE_NAMES`) drives the
-    search criteria -- adding Mute or Camera here would light up
-    unrelated controls and obscure the evidence we need.
+    search for leave-type button names. The helper returns
+    ``(names, path)`` where path is one of ``uia_property``,
+    ``no_uia_search_api``, or ``uia_property_error`` so the emitted log
+    line can be interpreted unambiguously -- found=true via uia_property
+    is the only signal that tells us the property search path actually
+    works. Only the existing decision signal (``_TEAMS_LEAVE_NAMES``)
+    drives the search criteria; adding Mute/Camera would obscure the
+    evidence we need.
     """
 
-    def test_returns_empty_list_when_find_api_unavailable(self):
-        """FakeControl lacks the uiautomation search methods; the helper
-        must degrade to an empty list without raising. In production the
-        function uses the real library; unit tests cover graceful
-        degradation."""
-        from recap.daemon.recorder.call_state import (
-            _find_leave_buttons_via_uia_search,
-        )
-        root = FakeControl("WindowControl", "root", children=[])
-        assert _find_leave_buttons_via_uia_search(root) == []
-
-    def test_finds_leave_button_via_recursive_scan_fallback(self):
-        """With FakeControl lacking UIA search methods, the helper falls
-        back to a deep recursive scan for ButtonControls whose stripped
-        lowercase name is in _TEAMS_LEAVE_NAMES. This verifies the
-        fallback path that unit tests exercise; the real UIA search path
-        needs a Windows + uiautomation environment to test.
+    def test_returns_no_uia_search_api_path_when_search_unavailable(self):
+        """FakeControl (no .ButtonControl method) must be reported as
+        ``path=no_uia_search_api``, not silently scanned by some other
+        means. A positive result here would be ambiguous about what the
+        diagnostic actually measured.
         """
-        from recap.daemon.recorder.call_state import (
-            _find_leave_buttons_via_uia_search,
-        )
-        deep_leaf = FakeControl("ButtonControl", "Leave")
-        nested = deep_leaf
-        for _ in range(10):
-            nested = FakeControl("PaneControl", "p", children=[nested])
-        root = FakeControl("WindowControl", "root", children=[nested])
-
-        assert _find_leave_buttons_via_uia_search(root) == ["Leave"]
-
-    def test_matches_only_existing_leave_name_set(self):
-        """Mute/Camera/etc must not appear in the result even if present
-        in the tree -- this diagnostic must tell us whether the existing
-        decision signal is reachable, not whether any call-like control
-        exists."""
-        from recap.daemon.recorder.call_state import (
-            _find_leave_buttons_via_uia_search,
-        )
-        mute_button = FakeControl("ButtonControl", "Mute")
-        camera_button = FakeControl("ButtonControl", "Camera")
-        chat_button = FakeControl("ButtonControl", "Chat")
-        root = FakeControl("WindowControl", "root", children=[
-            mute_button, camera_button, chat_button,
-        ])
-        assert _find_leave_buttons_via_uia_search(root) == []
-
-    def test_collects_all_three_leave_name_variants(self):
-        """All three decision-signal names (Leave, Hang up, End call)
-        must be captured if present, in the order encountered."""
         from recap.daemon.recorder.call_state import (
             _find_leave_buttons_via_uia_search,
         )
         root = FakeControl("WindowControl", "root", children=[
             FakeControl("ButtonControl", "Leave"),
-            FakeControl("ButtonControl", "Hang up"),
-            FakeControl("ButtonControl", "End call"),
-            FakeControl("ButtonControl", "Chat"),
         ])
-        found = _find_leave_buttons_via_uia_search(root)
-        assert set(found) == {"Leave", "Hang up", "End call"}
+        found, path = _find_leave_buttons_via_uia_search(root)
+        assert found == []
+        assert path == "no_uia_search_api"
+
+    def test_returns_uia_property_path_with_found_names(self):
+        from recap.daemon.recorder.call_state import (
+            _find_leave_buttons_via_uia_search,
+        )
+        root = FakeSearchableControl(
+            "WindowControl", "root",
+            names_that_exist={"Leave", "Hang up"},
+        )
+        found, path = _find_leave_buttons_via_uia_search(root)
+        assert set(found) == {"Leave", "Hang up"}
+        assert path == "uia_property"
+
+    def test_returns_uia_property_path_with_empty_when_none_exist(self):
+        """A real UIA property search that found nothing must still be
+        reported as ``uia_property`` so we know the property path ran."""
+        from recap.daemon.recorder.call_state import (
+            _find_leave_buttons_via_uia_search,
+        )
+        root = FakeSearchableControl(
+            "WindowControl", "root",
+            names_that_exist=set(),
+        )
+        found, path = _find_leave_buttons_via_uia_search(root)
+        assert found == []
+        assert path == "uia_property"
+
+    def test_returns_uia_property_error_path_on_exception(self):
+        from recap.daemon.recorder.call_state import (
+            _find_leave_buttons_via_uia_search,
+        )
+        root = FakeSearchableControl(
+            "WindowControl", "root", search_raises=True,
+        )
+        found, path = _find_leave_buttons_via_uia_search(root)
+        assert found == []
+        assert path == "uia_property_error"
+
+    def test_uses_short_max_search_seconds_per_name(self):
+        """Each candidate's Exists call must use a short maxSearchSeconds
+        so a declined Teams window cannot stall the 3s detection poll.
+        Three names x 0.1s = worst case ~0.3s per hwnd."""
+        from recap.daemon.recorder.call_state import (
+            _find_leave_buttons_via_uia_search,
+        )
+        root = FakeSearchableControl(
+            "WindowControl", "root",
+            names_that_exist=set(),
+        )
+        _find_leave_buttons_via_uia_search(root)
+        # Three candidates (Leave, Hang up, End call), each queried once.
+        assert len(root.candidates) == 3
+        for candidate in root.candidates:
+            assert candidate.exists_calls, "Exists was never called"
+            for elapsed in candidate.exists_calls:
+                assert 0 < elapsed <= 0.25, (
+                    f"maxSearchSeconds={elapsed} too large; "
+                    "would stall the detection poll"
+                )
+
+    def test_searches_exactly_three_leave_name_variants(self):
+        """Only the existing decision-signal names are queried; no Mute,
+        Camera, or other call-adjacent controls pollute the diagnostic."""
+        from recap.daemon.recorder.call_state import (
+            _find_leave_buttons_via_uia_search,
+            _TEAMS_LEAVE_NAMES,
+        )
+        root = FakeSearchableControl(
+            "WindowControl", "root",
+            names_that_exist={"Mute", "Camera", "End call"},
+        )
+        found, path = _find_leave_buttons_via_uia_search(root)
+        # Only End call (in _TEAMS_LEAVE_NAMES) is returned; Mute/Camera
+        # are not even in the query set.
+        assert path == "uia_property"
+        assert found == ["End call"]
+        # Sanity check: _TEAMS_LEAVE_NAMES has exactly three names.
+        assert len(_TEAMS_LEAVE_NAMES) == 3
 
 
 class TestTeamsDiagnosticsEmittedOnCheckerDeclined:
@@ -550,9 +626,21 @@ class TestTeamsDiagnosticsEmittedOnCheckerDeclined:
     lines (uia_tree_shape, teams_window_identity, teams_leave_button_findall)
     must all be emitted so the next log capture can diagnose which subtree
     the checker is missing.
+
+    Diagnostics fire at most once per hwnd per daemon session -- a declined
+    Teams window polled every 3 seconds would otherwise both spam the log
+    and (via repeated property searches) distort the detection cadence the
+    diagnostic is trying to measure.
     """
 
     _LOGGER = "recap.daemon.recorder.call_state"
+
+    @pytest.fixture(autouse=True)
+    def _reset_diagnosed_hwnds(self):
+        from recap.daemon.recorder.call_state import _reset_diagnosed_hwnds
+        _reset_diagnosed_hwnds()
+        yield
+        _reset_diagnosed_hwnds()
 
     def test_emits_three_diagnostics_on_checker_declined(
         self, monkeypatch, caplog,
@@ -580,10 +668,113 @@ class TestTeamsDiagnosticsEmittedOnCheckerDeclined:
             and "class='TeamsWebView'" in m and "process='ms-teams.exe'" in m
             for m in messages
         )
+        # The findall line must include the path so the signal is
+        # unambiguous; FakeControl has no search API, so path should be
+        # no_uia_search_api.
         assert any(
             "teams_leave_button_findall" in m and "hwnd=101" in m
+            and "path=no_uia_search_api" in m and "found=false" in m
             for m in messages
         )
+
+    def test_emits_uia_property_path_when_search_api_available(
+        self, monkeypatch, caplog,
+    ):
+        import logging
+        import uiautomation
+        import recap.daemon.recorder.call_state as cs
+        from recap.daemon.recorder.call_state import is_call_active
+
+        # FakeSearchableControl has ButtonControl() method, so the UIA
+        # property path runs. names_that_exist empty -> found=false but
+        # path must be uia_property.
+        root = FakeSearchableControl(
+            "WindowControl", "teams", children=[],
+            names_that_exist=set(),
+        )
+        # Make the existing tree-walk checker decline (no Leave button).
+        monkeypatch.setattr(uiautomation, "ControlFromHandle", lambda hwnd: root)
+        monkeypatch.setattr(cs, "_GetClassName", lambda hwnd: "TeamsWebView")
+        monkeypatch.setattr(cs, "_GetProcessNameForHwnd", lambda hwnd: "ms-teams.exe")
+
+        with caplog.at_level(logging.DEBUG, logger=self._LOGGER):
+            assert is_call_active(hwnd=104, platform="teams") is False
+
+        messages = [r.getMessage() for r in caplog.records]
+        findall = next(
+            m for m in messages if "teams_leave_button_findall" in m
+        )
+        assert "path=uia_property" in findall
+        assert "found=false" in findall
+
+    def test_diagnostics_emitted_only_once_per_hwnd(
+        self, monkeypatch, caplog,
+    ):
+        """Second and subsequent polls on the same declined hwnd must
+        not re-run the diagnostics -- otherwise they would both spam the
+        log and (via repeated property searches) distort the detection
+        cadence the diagnostic is trying to measure."""
+        import logging
+        import uiautomation
+        import recap.daemon.recorder.call_state as cs
+        from recap.daemon.recorder.call_state import is_call_active
+
+        chat_btn = FakeControl("ButtonControl", "Chat")
+        root = FakeControl("WindowControl", "teams", children=[chat_btn])
+        monkeypatch.setattr(uiautomation, "ControlFromHandle", lambda hwnd: root)
+        monkeypatch.setattr(cs, "_GetClassName", lambda hwnd: "TeamsWebView")
+        monkeypatch.setattr(cs, "_GetProcessNameForHwnd", lambda hwnd: "ms-teams.exe")
+
+        with caplog.at_level(logging.DEBUG, logger=self._LOGGER):
+            # First poll: diagnostics emit
+            assert is_call_active(hwnd=200, platform="teams") is False
+            first_count = sum(
+                1 for r in caplog.records
+                if "uia_tree_shape" in r.getMessage()
+            )
+            assert first_count == 1
+
+            # Second and third polls: diagnostics must NOT emit again
+            # for the same hwnd.
+            assert is_call_active(hwnd=200, platform="teams") is False
+            assert is_call_active(hwnd=200, platform="teams") is False
+
+        final_count = sum(
+            1 for r in caplog.records
+            if "uia_tree_shape" in r.getMessage()
+        )
+        assert final_count == 1, (
+            f"uia_tree_shape emitted {final_count} times; expected 1"
+        )
+
+    def test_diagnostics_re_emit_for_distinct_hwnds(self, monkeypatch, caplog):
+        """Distinct hwnds get their own diagnostic snapshots. Two Teams
+        windows in the same session must both be diagnosed."""
+        import logging
+        import uiautomation
+        import recap.daemon.recorder.call_state as cs
+        from recap.daemon.recorder.call_state import is_call_active
+
+        chat_btn = FakeControl("ButtonControl", "Chat")
+        root = FakeControl("WindowControl", "teams", children=[chat_btn])
+        monkeypatch.setattr(uiautomation, "ControlFromHandle", lambda hwnd: root)
+        monkeypatch.setattr(cs, "_GetClassName", lambda hwnd: "TeamsWebView")
+        monkeypatch.setattr(cs, "_GetProcessNameForHwnd", lambda hwnd: "ms-teams.exe")
+
+        with caplog.at_level(logging.DEBUG, logger=self._LOGGER):
+            assert is_call_active(hwnd=201, platform="teams") is False
+            assert is_call_active(hwnd=202, platform="teams") is False
+
+        count_201 = sum(
+            1 for r in caplog.records
+            if "uia_tree_shape" in r.getMessage() and "hwnd=201" in r.getMessage()
+        )
+        count_202 = sum(
+            1 for r in caplog.records
+            if "uia_tree_shape" in r.getMessage() and "hwnd=202" in r.getMessage()
+        )
+        assert count_201 == 1
+        assert count_202 == 1
 
     def test_no_diagnostics_when_checker_confirmed(self, monkeypatch, caplog):
         """If the existing checker works, we do not need the diagnostics.
