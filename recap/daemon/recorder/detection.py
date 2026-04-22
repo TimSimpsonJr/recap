@@ -112,8 +112,21 @@ def detect_meeting_windows(
         for platform in platforms:
             pattern = MEETING_PATTERNS.get(platform)
             if pattern and pattern.search(title):
-                if not call_state.is_call_active(hwnd, platform):
+                active = call_state.is_call_active(hwnd, platform)
+                if not active:
+                    logger.debug(
+                        "detection_gate platform=%s hwnd=%d "
+                        "title_matched=true call_state_active=false "
+                        "outcome=filtered reason=call_state_inactive title=%r",
+                        platform, hwnd, title,
+                    )
                     continue
+                logger.debug(
+                    "detection_gate platform=%s hwnd=%d "
+                    "title_matched=true call_state_active=true "
+                    "outcome=detected title=%r",
+                    platform, hwnd, title,
+                )
                 meetings.append(MeetingWindow(hwnd=hwnd, title=title, platform=platform))
                 break  # one match per window is enough
 

@@ -188,3 +188,84 @@ class TestEnumerationInstrumentation:
         assert "teams_regex_matched_count=0" in summary
         candidates = [m for m in messages if "enumerated_teams_candidate" in m]
         assert len(candidates) == 1
+
+
+class TestDetectionGateInstrumentation:
+    """detection_gate log lines for each regex-matched window, recording
+    whether both gates passed (outcome=detected) or the call-state gate
+    filtered the window (outcome=filtered, reason=call_state_inactive).
+    """
+
+    def test_logs_detection_gate_outcome_detected(self, monkeypatch, caplog):
+        import logging
+        import recap.daemon.recorder.detection as det
+        monkeypatch.setattr(
+            det, "_enumerate_windows",
+            lambda: [(42, "Standup | Microsoft Teams")],
+        )
+        monkeypatch.setattr(det.call_state, "is_call_active", lambda h, p: True)
+
+        with caplog.at_level(logging.DEBUG, logger="recap.daemon.recorder.detection"):
+            result = det.detect_meeting_windows({"teams"})
+
+        assert len(result) == 1
+        gate_lines = [
+            r.getMessage() for r in caplog.records
+            if "detection_gate" in r.getMessage()
+        ]
+        assert len(gate_lines) == 1
+        line = gate_lines[0]
+        assert "platform=teams" in line
+        assert "hwnd=42" in line
+        assert "title_matched=true" in line
+        assert "call_state_active=true" in line
+        assert "outcome=detected" in line
+        assert "title='Standup | Microsoft Teams'" in line
+
+    def test_logs_detection_gate_outcome_filtered_by_call_state(
+        self, monkeypatch, caplog,
+    ):
+        import logging
+        import recap.daemon.recorder.detection as det
+        monkeypatch.setattr(
+            det, "_enumerate_windows",
+            lambda: [(99, "Sprint Planning | Microsoft Teams")],
+        )
+        monkeypatch.setattr(det.call_state, "is_call_active", lambda h, p: False)
+
+        with caplog.at_level(logging.DEBUG, logger="recap.daemon.recorder.detection"):
+            result = det.detect_meeting_windows({"teams"})
+
+        assert result == []
+        gate_lines = [
+            r.getMessage() for r in caplog.records
+            if "detection_gate" in r.getMessage()
+        ]
+        assert len(gate_lines) == 1
+        line = gate_lines[0]
+        assert "platform=teams" in line
+        assert "hwnd=99" in line
+        assert "title_matched=true" in line
+        assert "call_state_active=false" in line
+        assert "outcome=filtered" in line
+        assert "reason=call_state_inactive" in line
+
+    def test_no_gate_line_for_non_matching_window(self, monkeypatch, caplog):
+        """Windows that fail the regex do not generate detection_gate lines
+        (they may still generate enumerated_teams_candidate for diagnostic)."""
+        import logging
+        import recap.daemon.recorder.detection as det
+        monkeypatch.setattr(
+            det, "_enumerate_windows",
+            lambda: [(1, "Notepad"), (2, "Microsoft Teams")],
+        )
+        monkeypatch.setattr(det.call_state, "is_call_active", lambda h, p: True)
+
+        with caplog.at_level(logging.DEBUG, logger="recap.daemon.recorder.detection"):
+            det.detect_meeting_windows({"teams"})
+
+        gate_lines = [
+            r.getMessage() for r in caplog.records
+            if "detection_gate" in r.getMessage()
+        ]
+        assert gate_lines == []
