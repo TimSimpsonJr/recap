@@ -805,12 +805,14 @@ def test_resolve_org_and_subfolder_returns_none_when_no_match(tmp_path):
 
 def test_build_recording_metadata_synthesizes_unscheduled_identity(tmp_path, monkeypatch):
     """No calendar event + no existing note -> synthetic id + precomputed path."""
-    frozen = datetime(2026, 4, 22, 14, 30, 0, tzinfo=timezone.utc)
-
     class _FakeDatetime:
         @staticmethod
         def now(tz=None):
-            return frozen.astimezone(tz) if tz is not None else frozen.replace(tzinfo=None)
+            # Simulate a machine where the local wall-clock is 2026-04-22 14:30.
+            # datetime.now() returns naive local; .astimezone() picks up host tz.
+            if tz is None:
+                return datetime(2026, 4, 22, 14, 30, 0)  # naive, represents local wall-clock
+            return datetime(2026, 4, 22, 14, 30, 0, tzinfo=tz)
 
     import recap.daemon.recorder.detector as det_mod
     monkeypatch.setattr(det_mod, "datetime", _FakeDatetime)
@@ -857,12 +859,13 @@ def test_build_recording_metadata_with_event_id_keeps_calendar_path(tmp_path, mo
 def test_build_recording_metadata_platform_label_map(tmp_path, monkeypatch):
     """Each known platform gets its 'X call' label; unknown falls back to Titlecase + ' call'."""
     import recap.daemon.recorder.detector as det_mod
-    frozen = datetime(2026, 4, 22, 9, 7, 0, tzinfo=timezone.utc)
 
     class _FakeDatetime:
         @staticmethod
         def now(tz=None):
-            return frozen.astimezone(tz) if tz is not None else frozen.replace(tzinfo=None)
+            if tz is None:
+                return datetime(2026, 4, 22, 9, 7, 0)
+            return datetime(2026, 4, 22, 9, 7, 0, tzinfo=tz)
     monkeypatch.setattr(det_mod, "datetime", _FakeDatetime)
 
     detector = _make_detector_with_org(tmp_path)

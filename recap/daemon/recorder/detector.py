@@ -179,11 +179,7 @@ class MeetingDetector:
         recording_started_at: datetime | None = None
 
         if not event_id and not note_path:
-            # ``captured`` is UTC-aware. We deliberately don't ``.astimezone()``
-            # to a local zone here: the filename + ``date`` field need to be
-            # deterministic across hosts (tests run in non-UTC zones too), and
-            # downstream display-time formatting can convert to local as needed.
-            captured = datetime.now(timezone.utc)
+            captured = datetime.now().astimezone()
             event_id, note_path, title = self._synthesize_unscheduled_identity(
                 org=org, platform=platform, captured=captured,
             )
