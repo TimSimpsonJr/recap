@@ -749,3 +749,44 @@ class TestOrgSubfolderResolution:
             detector._find_calendar_note("unknown-slug", "evt-1")
 
         assert captured["meetings_dir"] == vault / "Personal" / "Meetings"
+
+
+# ---------------------------------------------------------------------------
+# _resolve_org_and_subfolder helper (Task 2 for unscheduled-meetings)
+# ---------------------------------------------------------------------------
+
+from pathlib import Path
+from unittest.mock import Mock
+
+
+def _make_detector_with_org(monkeypatch, tmp_path):
+    """Factory: minimal detector where 'acme' org resolves to a subfolder."""
+    org_cfg = Mock()
+    org_cfg.slug = "acme"
+    org_cfg.resolve_subfolder = lambda vault: vault / "Acme"
+
+    config = Mock()
+    config.vault_path = str(tmp_path)
+    config.org_by_slug = lambda slug: org_cfg if slug == "acme" else None
+    config.default_org = org_cfg
+
+    recorder = Mock()
+    return MeetingDetector(config=config, recorder=recorder)
+
+
+def test_resolve_org_and_subfolder_returns_tuple(tmp_path):
+    """Helper returns (OrgConfig, resolved-subfolder-path)."""
+    detector = _make_detector_with_org(None, tmp_path)
+    org_cfg, subfolder = detector._resolve_org_and_subfolder("acme")
+    assert org_cfg.slug == "acme"
+    assert subfolder == tmp_path / "Acme"
+
+
+def test_resolve_org_and_subfolder_returns_none_when_no_match(tmp_path):
+    """Unknown slug + no default returns (None, None)."""
+    config = Mock()
+    config.vault_path = str(tmp_path)
+    config.org_by_slug = lambda slug: None
+    config.default_org = None
+    detector = MeetingDetector(config=config, recorder=Mock())
+    assert detector._resolve_org_and_subfolder("nonexistent") == (None, None)

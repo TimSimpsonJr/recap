@@ -99,6 +99,21 @@ class MeetingDetector:
                 return matched
         return getattr(self._config, "default_org", None)
 
+    def _resolve_org_and_subfolder(
+        self, org: str,
+    ) -> tuple["OrgConfig | None", "Path | None"]:
+        """Return ``(OrgConfig, vault/subfolder)`` for *org*, or ``(None, None)``.
+
+        Unscheduled-meeting synthesis needs both values from one lookup site.
+        Scheduled paths already have ``note_path`` from the calendar sync layer
+        and don't need this helper.
+        """
+        config = self._resolve_org_config(org)
+        if config is None:
+            return None, None
+        vault_path = Path(self._config.vault_path)
+        return config, config.resolve_subfolder(vault_path)
+
     def _find_calendar_note(self, org: str, event_id: str | None) -> str:
         if not event_id:
             return ""
