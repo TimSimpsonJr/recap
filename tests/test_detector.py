@@ -879,3 +879,76 @@ def test_build_recording_metadata_platform_label_map(tmp_path, monkeypatch):
         )
         assert m.title == label
         assert f"- {label}.md" in m.note_path
+
+
+def test_build_recording_metadata_collision_appends_suffix(tmp_path, monkeypatch):
+    """Second same-minute Teams call gets '(2)' suffix."""
+    import recap.daemon.recorder.detector as det_mod
+
+    class _FakeDatetime:
+        @staticmethod
+        def now(tz=None):
+            if tz is None:
+                return datetime(2026, 4, 22, 14, 30, 0)
+            return datetime(2026, 4, 22, 14, 30, 0, tzinfo=tz)
+    monkeypatch.setattr(det_mod, "datetime", _FakeDatetime)
+
+    detector = _make_detector_with_org(tmp_path)
+    meetings_dir = tmp_path / "Acme" / "Meetings"
+    meetings_dir.mkdir(parents=True)
+    (meetings_dir / "2026-04-22 1430 - Teams call.md").write_text("stub")
+
+    metadata = detector._build_recording_metadata(
+        org="acme", title="", platform="teams",
+        participants=[], meeting_link="", event_id=None,
+    )
+    assert metadata.note_path == "Acme/Meetings/2026-04-22 1430 - Teams call (2).md"
+
+
+def test_build_recording_metadata_collision_escalates_to_seconds(tmp_path, monkeypatch):
+    """9 pre-existing suffixes -> falls through to HHMMSS timestamp."""
+    import recap.daemon.recorder.detector as det_mod
+
+    class _FakeDatetime:
+        @staticmethod
+        def now(tz=None):
+            if tz is None:
+                return datetime(2026, 4, 22, 14, 30, 45)
+            return datetime(2026, 4, 22, 14, 30, 45, tzinfo=tz)
+    monkeypatch.setattr(det_mod, "datetime", _FakeDatetime)
+
+    detector = _make_detector_with_org(tmp_path)
+    meetings_dir = tmp_path / "Acme" / "Meetings"
+    meetings_dir.mkdir(parents=True)
+    (meetings_dir / "2026-04-22 1430 - Teams call.md").write_text("stub")
+    for n in range(2, 10):
+        (meetings_dir / f"2026-04-22 1430 - Teams call ({n}).md").write_text("stub")
+
+    metadata = detector._build_recording_metadata(
+        org="acme", title="", platform="teams",
+        participants=[], meeting_link="", event_id=None,
+    )
+    assert metadata.note_path == "Acme/Meetings/2026-04-22 143045 - Teams call.md"
+
+
+def test_build_recording_metadata_unknown_platform_label_fallback(tmp_path, monkeypatch):
+    """Platform not in _PLATFORM_LABELS uses Titlecase fallback."""
+    import recap.daemon.recorder.detector as det_mod
+
+    class _FakeDatetime:
+        @staticmethod
+        def now(tz=None):
+            if tz is None:
+                return datetime(2026, 4, 22, 10, 0, 0)
+            return datetime(2026, 4, 22, 10, 0, 0, tzinfo=tz)
+    monkeypatch.setattr(det_mod, "datetime", _FakeDatetime)
+
+    detector = _make_detector_with_org(tmp_path)
+    (tmp_path / "Acme" / "Meetings").mkdir(parents=True)
+
+    metadata = detector._build_recording_metadata(
+        org="acme", title="", platform="meet",
+        participants=[], meeting_link="", event_id=None,
+    )
+    assert metadata.title == "Meet call"
+    assert metadata.note_path == "Acme/Meetings/2026-04-22 1000 - Meet call.md"

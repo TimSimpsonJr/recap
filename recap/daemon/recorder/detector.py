@@ -8,7 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Awaitable, Callable
 
@@ -30,8 +30,8 @@ _PLATFORMS = ("teams", "zoom", "signal")
 # Human-readable titles for unscheduled-meeting synthesis. The keys must
 # mirror ``_PLATFORMS``; unknown platforms fall back to ``"{Titlecase} call"``.
 _PLATFORM_LABELS = {
-    "teams":  "Teams call",
-    "zoom":   "Zoom call",
+    "teams": "Teams call",
+    "zoom": "Zoom call",
     "signal": "Signal call",
 }
 
@@ -161,8 +161,19 @@ class MeetingDetector:
         if subfolder is None:
             return event_id, "", title
         vault_path = Path(self._config.vault_path)
-        base_name = f"{captured:%Y-%m-%d %H%M} - {title}.md"
-        candidate = subfolder / "Meetings" / base_name
+        meetings_dir = subfolder / "Meetings"
+        base = f"{captured:%Y-%m-%d %H%M} - {title}"
+        candidate = meetings_dir / f"{base}.md"
+
+        for n in range(2, 10):
+            if not candidate.exists():
+                break
+            candidate = meetings_dir / f"{base} ({n}).md"
+        else:
+            if candidate.exists():
+                # Extreme fallback: full seconds. Still deterministic.
+                candidate = meetings_dir / f"{captured:%Y-%m-%d %H%M%S} - {title}.md"
+
         return event_id, to_vault_relative(candidate, vault_path), title
 
     def _build_recording_metadata(
