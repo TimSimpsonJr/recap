@@ -5,7 +5,7 @@ import json
 import pathlib
 import re
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 from recap.models import AnalysisResult, MeetingMetadata, Participant, TranscriptResult
@@ -56,6 +56,7 @@ class RecordingMetadata:
     llm_backend: str | None = None
     audio_warnings: list[str] = field(default_factory=list)
     system_audio_devices_seen: list[str] = field(default_factory=list)
+    recording_started_at: datetime | None = None
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> RecordingMetadata:
@@ -63,6 +64,10 @@ class RecordingMetadata:
             Participant(name=p["name"], email=p.get("email"))
             for p in data.get("participants", [])
         ]
+        started_raw = data.get("recording_started_at")
+        recording_started_at: datetime | None = (
+            datetime.fromisoformat(started_raw) if started_raw else None
+        )
         return cls(
             org=data["org"],
             note_path=data["note_path"],
@@ -76,6 +81,7 @@ class RecordingMetadata:
             llm_backend=data.get("llm_backend"),
             audio_warnings=list(data.get("audio_warnings", [])),
             system_audio_devices_seen=list(data.get("system_audio_devices_seen", [])),
+            recording_started_at=recording_started_at,
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -92,6 +98,11 @@ class RecordingMetadata:
             "llm_backend": self.llm_backend,
             "audio_warnings": list(self.audio_warnings),
             "system_audio_devices_seen": list(self.system_audio_devices_seen),
+            "recording_started_at": (
+                self.recording_started_at.isoformat()
+                if self.recording_started_at is not None
+                else None
+            ),
         }
 
     def to_meeting_metadata(self) -> MeetingMetadata:
