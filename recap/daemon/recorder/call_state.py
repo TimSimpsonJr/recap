@@ -111,18 +111,43 @@ def extract_teams_participants(hwnd: int) -> list[str] | None:
         return None
 
 
+_TEAMS_LEAVE_NAMES: set[str] = {"leave", "hang up", "end call"}
+_TEAMS_WALK_BUTTON_CAP = 20
+_TEAMS_WALK_MAX_DEPTH = 15
+
+
 def _is_teams_call_active(control: Any) -> bool:
-    """Return True if a Teams window shows an in-call Leave/Hang up/End call button."""
+    """Return True if a Teams window shows an in-call Leave/Hang up/End call button.
 
-    def is_leave_button(c: Any) -> bool:
-        ct = getattr(c, "ControlTypeName", None)
-        name = getattr(c, "Name", "") or ""
-        return (
-            ct == "ButtonControl"
-            and name.strip().lower() in {"leave", "hang up", "end call"}
-        )
+    Also collects the first ~20 ButtonControl names seen during the walk so
+    that when the check returns False a diagnostic log line records what
+    Teams actually exposed. Refs #30.
+    """
+    buttons_seen: list[str] = []
 
-    return _walk_depth_limited(control, is_leave_button) is not None
+    def _walk(c: Any, depth: int) -> bool:
+        if depth > _TEAMS_WALK_MAX_DEPTH:
+            return False
+        try:
+            ct = getattr(c, "ControlTypeName", None)
+            name = getattr(c, "Name", "") or ""
+            if ct == "ButtonControl":
+                if len(buttons_seen) < _TEAMS_WALK_BUTTON_CAP:
+                    buttons_seen.append(name)
+                if name.strip().lower() in _TEAMS_LEAVE_NAMES:
+                    return True
+            for child in c.GetChildren():
+                if _walk(child, depth + 1):
+                    return True
+        except Exception:
+            logger.debug("UIA walk error at depth %d", depth, exc_info=True)
+        return False
+
+    if _walk(control, 0):
+        return True
+
+    logger.debug("teams_call_state_walk buttons_seen=%r", buttons_seen)
+    return False
 
 
 def _is_zoom_call_active(control: Any) -> bool:

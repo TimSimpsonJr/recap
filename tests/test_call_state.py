@@ -261,3 +261,82 @@ class TestIsCallActiveLogging:
             "result=true" in l and "reason=uia_exception_fallback" in l
             for l in lines
         )
+
+
+class TestTeamsCallStateWalkLogging:
+    """teams_call_state_walk logging of button names observed during the
+    UIA walk when no Leave/Hang up/End call button is found. Refs #30 --
+    these are the actual accessible names Teams exposes that we are
+    failing to match, and are the evidence needed to decide whether the
+    fix is a button-name expansion, a traversal change, or both.
+    """
+
+    _LOGGER = "recap.daemon.recorder.call_state"
+
+    def test_logs_button_names_seen_when_no_call_button(self, caplog):
+        import logging
+        from recap.daemon.recorder.call_state import _is_teams_call_active
+
+        chat = FakeControl("ButtonControl", "Chat")
+        activity = FakeControl("ButtonControl", "Activity")
+        pane = FakeControl("PaneControl", "side-pane")
+        root = FakeControl(children=[chat, pane, activity])
+
+        with caplog.at_level(logging.DEBUG, logger=self._LOGGER):
+            assert _is_teams_call_active(root) is False
+
+        walk_lines = [
+            r.getMessage() for r in caplog.records
+            if "teams_call_state_walk" in r.getMessage()
+        ]
+        assert len(walk_lines) == 1
+        line = walk_lines[0]
+        assert "buttons_seen=" in line
+        assert "'Chat'" in line
+        assert "'Activity'" in line
+
+    def test_no_walk_log_when_leave_button_found(self, caplog):
+        """Positive path does not emit a walk log -- the diagnostic only
+        fires when a filter happens, to keep noise low in the healthy case.
+        """
+        import logging
+        from recap.daemon.recorder.call_state import _is_teams_call_active
+
+        leave = FakeControl("ButtonControl", "Leave")
+        root = FakeControl(children=[leave])
+
+        with caplog.at_level(logging.DEBUG, logger=self._LOGGER):
+            assert _is_teams_call_active(root) is True
+
+        walk_lines = [
+            r.getMessage() for r in caplog.records
+            if "teams_call_state_walk" in r.getMessage()
+        ]
+        assert walk_lines == []
+
+    def test_buttons_seen_list_is_capped(self, caplog):
+        """Cap the recorded list to avoid enormous log lines on dense
+        UI trees. Implementation caps at 20 entries -- anything more is
+        noise for a diagnostic."""
+        import logging
+        from recap.daemon.recorder.call_state import _is_teams_call_active
+
+        # 50 non-matching buttons; collector should cap at 20
+        buttons = [FakeControl("ButtonControl", f"btn-{i}") for i in range(50)]
+        root = FakeControl(children=buttons)
+
+        with caplog.at_level(logging.DEBUG, logger=self._LOGGER):
+            assert _is_teams_call_active(root) is False
+
+        walk_lines = [
+            r.getMessage() for r in caplog.records
+            if "teams_call_state_walk" in r.getMessage()
+        ]
+        assert len(walk_lines) == 1
+        # Parse the buttons_seen list length from the formatted line.
+        # Line format: "teams_call_state_walk buttons_seen=['btn-0', ...]"
+        import re as _re
+        match = _re.search(r"buttons_seen=\[([^\]]*)\]", walk_lines[0])
+        assert match is not None
+        items = [x.strip() for x in match.group(1).split(",") if x.strip()]
+        assert len(items) <= 20
