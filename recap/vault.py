@@ -133,6 +133,13 @@ def build_canonical_frontmatter(
                 recording_metadata.system_audio_devices_seen,
             )
 
+    # Tag augmentation for unscheduled meetings (#27). Keep the canonical
+    # meeting/<type> tag (analyzed type stays authoritative) and append
+    # 'unscheduled' so Dataview queries can surface them.
+    event_id = fm.get("event-id", "")
+    if isinstance(event_id, str) and event_id.startswith("unscheduled:"):
+        fm["tags"] = list(fm["tags"]) + ["unscheduled"]
+
     return fm
 
 

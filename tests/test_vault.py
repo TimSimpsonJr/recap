@@ -15,8 +15,10 @@ from recap.models import (
     Participant,
     ProfileStub,
 )
+from recap.artifacts import RecordingMetadata
 from recap.vault import (
     MEETING_RECORD_MARKER,
+    build_canonical_frontmatter,
     write_meeting_note,
     write_profile_stubs,
     find_previous_meeting,
@@ -537,3 +539,62 @@ class TestFindPreviousMeeting:
             exclude_filename="2026-03-16 - Meeting.md",
         )
         assert result == "2026-03-09 - CRLF Meeting"
+
+
+def _stub_meta_and_analysis():
+    """Minimal MeetingMetadata + AnalysisResult for frontmatter tests."""
+    meta = MeetingMetadata(
+        title="Teams call", date=date(2026, 4, 22),
+        participants=[], platform="teams",
+    )
+    analysis = AnalysisResult(
+        speaker_mapping={}, meeting_type="general", summary="s",
+        key_points=[], decisions=[], action_items=[],
+        follow_ups=[], relationship_notes=None,
+        people=[], companies=[],
+    )
+    return meta, analysis
+
+
+def test_canonical_frontmatter_adds_unscheduled_tag(tmp_path):
+    """event-id starting with unscheduled: -> 'unscheduled' tag appended."""
+    meta, analysis = _stub_meta_and_analysis()
+    recording_meta = RecordingMetadata(
+        org="acme", note_path="Acme/Meetings/x.md", title="Teams call",
+        date="2026-04-22", participants=[], platform="teams",
+        event_id="unscheduled:abc123",
+    )
+    fm = build_canonical_frontmatter(
+        metadata=meta, analysis=analysis, duration_seconds=2712,
+        recording_path=pathlib.Path("x.flac"), org="acme", org_subfolder="Acme",
+        recording_metadata=recording_meta,
+    )
+    assert fm["tags"] == ["meeting/general", "unscheduled"]
+    assert fm["event-id"] == "unscheduled:abc123"
+
+
+def test_canonical_frontmatter_keeps_single_tag_for_scheduled():
+    """Real event-id -> no 'unscheduled' tag."""
+    meta, analysis = _stub_meta_and_analysis()
+    recording_meta = RecordingMetadata(
+        org="acme", note_path="Acme/Meetings/x.md", title="Teams call",
+        date="2026-04-22", participants=[], platform="teams",
+        event_id="real-cal-id-123",
+    )
+    fm = build_canonical_frontmatter(
+        metadata=meta, analysis=analysis, duration_seconds=2712,
+        recording_path=pathlib.Path("x.flac"), org="acme", org_subfolder="Acme",
+        recording_metadata=recording_meta,
+    )
+    assert fm["tags"] == ["meeting/general"]
+
+
+def test_canonical_frontmatter_no_unscheduled_tag_without_recording_metadata():
+    """No recording_metadata -> no event-id -> no unscheduled tag."""
+    meta, analysis = _stub_meta_and_analysis()
+    fm = build_canonical_frontmatter(
+        metadata=meta, analysis=analysis, duration_seconds=2712,
+        recording_path=pathlib.Path("x.flac"), org="acme", org_subfolder="Acme",
+    )
+    assert fm["tags"] == ["meeting/general"]
+    assert "event-id" not in fm
