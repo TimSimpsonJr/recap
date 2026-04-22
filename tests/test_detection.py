@@ -109,3 +109,82 @@ def test_exclude_include_are_symmetric():
     assert 123 in det._EXCLUDED_HWNDS
     det.include_hwnd(123)
     assert 123 not in det._EXCLUDED_HWNDS
+
+
+class TestEnumerationInstrumentation:
+    """Pre-regex diagnostic logging for issue #30.
+
+    Surfaces Teams-substring windows that didn't match the platform regex.
+    Without these, a regex-is-the-broken-gate failure is invisible in logs.
+    """
+
+    def test_logs_enumeration_summary_each_poll(self, monkeypatch, caplog):
+        import logging
+        import recap.daemon.recorder.detection as det
+        mock_windows = [
+            (1, "Notepad"),
+            (2, "Microsoft Teams"),
+            (3, "Standup | Microsoft Teams"),
+            (4, "Chrome - Google"),
+        ]
+        monkeypatch.setattr(det, "_enumerate_windows", lambda: mock_windows)
+        monkeypatch.setattr(det.call_state, "is_call_active", lambda h, p: True)
+
+        with caplog.at_level(logging.DEBUG, logger="recap.daemon.recorder.detection"):
+            det.detect_meeting_windows({"teams"})
+
+        summary_lines = [
+            r.getMessage() for r in caplog.records
+            if "window_enumeration" in r.getMessage()
+        ]
+        assert len(summary_lines) == 1, f"expected 1 summary line, got {summary_lines}"
+        line = summary_lines[0]
+        assert "total=4" in line
+        assert "teams_substring_count=2" in line
+        assert "teams_regex_matched_count=1" in line
+
+    def test_logs_teams_candidate_when_substring_matches_but_regex_does_not(
+        self, monkeypatch, caplog,
+    ):
+        import logging
+        import recap.daemon.recorder.detection as det
+        mock_windows = [
+            (1, "Microsoft Teams"),            # idle main window, substring hit, regex miss
+            (2, "Chat | Microsoft Teams"),     # regex hit
+            (3, "Notepad"),                    # unrelated
+        ]
+        monkeypatch.setattr(det, "_enumerate_windows", lambda: mock_windows)
+        monkeypatch.setattr(det.call_state, "is_call_active", lambda h, p: True)
+
+        with caplog.at_level(logging.DEBUG, logger="recap.daemon.recorder.detection"):
+            det.detect_meeting_windows({"teams"})
+
+        candidate_lines = [
+            r.getMessage() for r in caplog.records
+            if "enumerated_teams_candidate" in r.getMessage()
+        ]
+        # Only hwnd=1: substring yes, regex no.
+        assert len(candidate_lines) == 1, f"expected 1 candidate line, got {candidate_lines}"
+        line = candidate_lines[0]
+        assert "hwnd=1" in line
+        assert "regex_matched=false" in line
+        # Title is rendered via %r so it's single-line and unambiguous.
+        assert "title='Microsoft Teams'" in line
+
+    def test_substring_check_is_case_insensitive(self, monkeypatch, caplog):
+        """New Teams variants with lowercase branding still surface as candidates."""
+        import logging
+        import recap.daemon.recorder.detection as det
+        mock_windows = [(1, "microsoft teams (dev)")]
+        monkeypatch.setattr(det, "_enumerate_windows", lambda: mock_windows)
+        monkeypatch.setattr(det.call_state, "is_call_active", lambda h, p: True)
+
+        with caplog.at_level(logging.DEBUG, logger="recap.daemon.recorder.detection"):
+            det.detect_meeting_windows({"teams"})
+
+        messages = [r.getMessage() for r in caplog.records]
+        summary = next(m for m in messages if "window_enumeration" in m)
+        assert "teams_substring_count=1" in summary
+        assert "teams_regex_matched_count=0" in summary
+        candidates = [m for m in messages if "enumerated_teams_candidate" in m]
+        assert len(candidates) == 1

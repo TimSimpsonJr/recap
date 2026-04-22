@@ -1,6 +1,7 @@
 """Meeting window detection via Win32 API."""
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 
@@ -10,6 +11,8 @@ try:
     import win32gui  # type: ignore[import-untyped]
 except Exception:  # pragma: no cover - depends on Windows runtime
     win32gui = None  # type: ignore[assignment]
+
+logger = logging.getLogger(__name__)
 
 
 # Hwnds that failed confirmation and should be skipped on subsequent scans.
@@ -85,7 +88,25 @@ def detect_meeting_windows(
     platforms = enabled_platforms if enabled_platforms is not None else set(MEETING_PATTERNS)
     meetings: list[MeetingWindow] = []
 
+    teams_pattern = MEETING_PATTERNS["teams"]
+    teams_substring_count = 0
+    teams_regex_matched_count = 0
+
     for hwnd, title in windows:
+        has_teams_substring = "teams" in title.lower()
+        teams_regex_match = bool(teams_pattern.search(title))
+        if has_teams_substring:
+            teams_substring_count += 1
+        if teams_regex_match:
+            teams_regex_matched_count += 1
+        # Diagnostic for issue #30: a Teams-looking window that the regex
+        # rejected is the signature of the regex being the broken gate.
+        if has_teams_substring and not teams_regex_match:
+            logger.debug(
+                "enumerated_teams_candidate hwnd=%d regex_matched=false title=%r",
+                hwnd, title,
+            )
+
         if hwnd in _EXCLUDED_HWNDS:
             continue
         for platform in platforms:
@@ -95,6 +116,11 @@ def detect_meeting_windows(
                     continue
                 meetings.append(MeetingWindow(hwnd=hwnd, title=title, platform=platform))
                 break  # one match per window is enough
+
+    logger.debug(
+        "window_enumeration total=%d teams_substring_count=%d teams_regex_matched_count=%d",
+        len(windows), teams_substring_count, teams_regex_matched_count,
+    )
 
     return meetings
 
