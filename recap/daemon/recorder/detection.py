@@ -1,6 +1,7 @@
 """Meeting window detection via Win32 API."""
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass
 
@@ -10,6 +11,8 @@ try:
     import win32gui  # type: ignore[import-untyped]
 except Exception:  # pragma: no cover - depends on Windows runtime
     win32gui = None  # type: ignore[assignment]
+
+logger = logging.getLogger(__name__)
 
 
 # Hwnds that failed confirmation and should be skipped on subsequent scans.
@@ -85,16 +88,60 @@ def detect_meeting_windows(
     platforms = enabled_platforms if enabled_platforms is not None else set(MEETING_PATTERNS)
     meetings: list[MeetingWindow] = []
 
+    # Teams diagnostics only fire when Teams is actually being checked,
+    # otherwise a zoom-only or signal-only run emits misleading teams_*
+    # tallies and candidate lines.
+    teams_diagnostics_enabled = "teams" in platforms
+    teams_pattern = MEETING_PATTERNS["teams"] if teams_diagnostics_enabled else None
+    teams_substring_count = 0
+    teams_regex_matched_count = 0
+
     for hwnd, title in windows:
+        if teams_diagnostics_enabled:
+            has_teams_substring = "teams" in title.lower()
+            teams_regex_match = bool(teams_pattern.search(title))
+            if has_teams_substring:
+                teams_substring_count += 1
+            if teams_regex_match:
+                teams_regex_matched_count += 1
+            # Diagnostic for issue #30: a Teams-looking window that the
+            # regex rejected is the signature of the regex being the
+            # broken gate.
+            if has_teams_substring and not teams_regex_match:
+                logger.debug(
+                    "enumerated_teams_candidate hwnd=%d regex_matched=false title=%r",
+                    hwnd, title,
+                )
+
         if hwnd in _EXCLUDED_HWNDS:
             continue
         for platform in platforms:
             pattern = MEETING_PATTERNS.get(platform)
             if pattern and pattern.search(title):
-                if not call_state.is_call_active(hwnd, platform):
+                active = call_state.is_call_active(hwnd, platform)
+                if not active:
+                    logger.debug(
+                        "detection_gate platform=%s hwnd=%d "
+                        "title_matched=true call_state_active=false "
+                        "outcome=filtered reason=call_state_inactive title=%r",
+                        platform, hwnd, title,
+                    )
                     continue
+                logger.debug(
+                    "detection_gate platform=%s hwnd=%d "
+                    "title_matched=true call_state_active=true "
+                    "outcome=detected title=%r",
+                    platform, hwnd, title,
+                )
                 meetings.append(MeetingWindow(hwnd=hwnd, title=title, platform=platform))
                 break  # one match per window is enough
+
+    if teams_diagnostics_enabled:
+        logger.debug(
+            "window_enumeration total=%d teams_substring_count=%d "
+            "teams_regex_matched_count=%d",
+            len(windows), teams_substring_count, teams_regex_matched_count,
+        )
 
     return meetings
 

@@ -2,11 +2,26 @@
 from __future__ import annotations
 
 import logging
+import os
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
 _LOG_FORMAT = "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
 _LOG_FILENAME = "recap.log"
+
+
+def _resolve_log_level() -> int:
+    """Return the log level from RECAP_LOG_LEVEL, falling back to INFO.
+
+    Unknown values fall back to INFO so a typo in the env var cannot
+    silently disable logging. Known values are the standard logging
+    level names (DEBUG, INFO, WARNING, ERROR, CRITICAL), case-insensitive.
+    """
+    name = os.environ.get("RECAP_LOG_LEVEL", "INFO").upper()
+    level = getattr(logging, name, None)
+    if not isinstance(level, int):
+        return logging.INFO
+    return level
 
 
 def setup_logging(log_dir: Path, retention_days: int) -> None:
@@ -16,11 +31,15 @@ def setup_logging(log_dir: Path, retention_days: int) -> None:
     handler and a stream handler, and purges stale log files that exceed
     *retention_days*.  Safe to call multiple times -- duplicate handlers are
     not added.
+
+    Log level is read from ``RECAP_LOG_LEVEL`` (default INFO). Set
+    ``RECAP_LOG_LEVEL=DEBUG`` to activate diagnostic instrumentation like
+    the Teams-detection logging added for issue #30.
     """
     log_dir.mkdir(parents=True, exist_ok=True)
 
     logger = logging.getLogger("recap")
-    logger.setLevel(logging.INFO)
+    logger.setLevel(_resolve_log_level())
 
     # Idempotency: skip if handlers already attached
     handler_types = {type(h).__name__ for h in logger.handlers}
