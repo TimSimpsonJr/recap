@@ -117,6 +117,111 @@ def test_is_call_active_returns_false_when_no_call_controls():
     assert _is_teams_call_active(root) is False
 
 
+class TestIsTeamsCallActivePropertySearchShortCircuit:
+    """Two-path contract for issue #30:
+
+    - UIA property search HIT -> short-circuit True, skip the walk.
+    - Any other outcome (miss / error / no search API) -> fall back to
+      the manual Control-view walk, OR the results.
+
+    Property search is case-sensitive against exact canonical Names
+    (Leave, Hang up, End call); the walker lowercases and does set
+    membership. Keeping the walk alive for the negative path preserves
+    whatever match variants the walker catches that search misses, and
+    preserves behavior for test doubles without a search API.
+    """
+
+    def test_property_search_hit_short_circuits_walk(self, monkeypatch):
+        import recap.daemon.recorder.call_state as cs
+
+        walk_calls: list[object] = []
+
+        def fake_walk(c):
+            walk_calls.append(c)
+            return False
+
+        monkeypatch.setattr(cs, "_is_teams_call_active_walk", fake_walk)
+
+        # names_that_exist triggers a search HIT on Leave; no walk tree
+        # children at all -- the walk would return False.
+        root = FakeSearchableControl(
+            "WindowControl", "root",
+            names_that_exist={"Leave"},
+        )
+        assert cs._is_teams_call_active(root) is True
+        assert walk_calls == [], (
+            "walk was invoked even though property search returned a hit"
+        )
+
+    def test_property_search_miss_falls_through_to_walk(self, monkeypatch):
+        import recap.daemon.recorder.call_state as cs
+
+        walk_calls: list[object] = []
+
+        def fake_walk(c):
+            walk_calls.append(c)
+            return True
+
+        monkeypatch.setattr(cs, "_is_teams_call_active_walk", fake_walk)
+
+        # Property search returns empty via the uia_property path -- this
+        # is the "negative" we must NOT short-circuit on.
+        root = FakeSearchableControl(
+            "WindowControl", "root",
+            names_that_exist=set(),
+        )
+        assert cs._is_teams_call_active(root) is True
+        assert len(walk_calls) == 1
+
+    def test_both_paths_negative_returns_false(self):
+        import recap.daemon.recorder.call_state as cs
+
+        # Search returns empty; no Leave button in the walk tree either.
+        root = FakeSearchableControl(
+            "WindowControl", "root",
+            names_that_exist=set(),
+            children=[FakeControl("ButtonControl", "Chat")],
+        )
+        assert cs._is_teams_call_active(root) is False
+
+    def test_search_error_falls_back_to_walk(self, monkeypatch):
+        import recap.daemon.recorder.call_state as cs
+
+        walk_calls: list[object] = []
+
+        def fake_walk(c):
+            walk_calls.append(c)
+            return True
+
+        monkeypatch.setattr(cs, "_is_teams_call_active_walk", fake_walk)
+
+        # Search raises -> path=uia_property_error -> must fall back to walk.
+        root = FakeSearchableControl(
+            "WindowControl", "root",
+            search_raises=True,
+        )
+        assert cs._is_teams_call_active(root) is True
+        assert len(walk_calls) == 1
+
+    def test_no_search_api_falls_back_to_walk(self, monkeypatch):
+        """Regression: plain FakeControl without a ButtonControl method
+        must still route through the walker so existing fixtures keep
+        working."""
+        import recap.daemon.recorder.call_state as cs
+
+        walk_calls: list[object] = []
+
+        def fake_walk(c):
+            walk_calls.append(c)
+            return True
+
+        monkeypatch.setattr(cs, "_is_teams_call_active_walk", fake_walk)
+
+        root = FakeControl(children=[FakeControl("ButtonControl", "Leave")])
+        assert cs._is_teams_call_active(root) is True
+        assert len(walk_calls) == 1
+
+
 def test_is_call_active_returns_true_for_unregistered_platform():
     from recap.daemon.recorder.call_state import is_call_active
     assert is_call_active(hwnd=1, platform="signal") is True

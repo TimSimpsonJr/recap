@@ -146,11 +146,35 @@ _TEAMS_WALK_MAX_DEPTH = 15
 
 
 def _is_teams_call_active(control: Any) -> bool:
-    """Return True if a Teams window shows an in-call Leave/Hang up/End call button.
+    """Return True if a Teams window exposes a Leave/Hang up/End call button.
 
-    Also collects the first ~20 ButtonControl names seen during the walk so
-    that when the check returns False a diagnostic log line records what
-    Teams actually exposed. Refs #30.
+    Two-path OR rule (issue #30):
+      - UIA property search HIT on an exact canonical Name ->
+        decisive True; the walk is skipped.
+      - Any other outcome (search miss, error, or no search API) ->
+        fall back to the manual Control-view walk.
+
+    Round-2 evidence: UIA property search at searchDepth=infinite
+    reaches the Leave button in new Teams (TeamsWebView class) where
+    the Control-view walk via GetChildren() stops at browser chrome.
+    But property search is case-sensitive exact-Name, while the walk
+    lowercases and uses set membership, so a search MISS is not a
+    superset negative of the walk. Keep the walk alive for the
+    negative path so case/label variants the walk catches survive.
+    """
+    leave_names, path = _find_leave_buttons_via_uia_search(control)
+    if path == "uia_property" and leave_names:
+        return True
+    return _is_teams_call_active_walk(control)
+
+
+def _is_teams_call_active_walk(control: Any) -> bool:
+    """Manual Control-view tree walk for a Teams Leave button.
+
+    Used as the negative-path fallback under the two-path rule in
+    ``_is_teams_call_active``. Collects the first ~20 ButtonControl
+    names so that when this walk fails a teams_call_state_walk
+    diagnostic log line records what was actually visible.
     """
     buttons_seen: list[str] = []
 
