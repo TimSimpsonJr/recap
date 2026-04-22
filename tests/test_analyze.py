@@ -1,5 +1,6 @@
 """Tests for Claude analysis module."""
 import json
+from datetime import date
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -12,6 +13,59 @@ from recap.models import (
     Utterance,
 )
 from recap.analyze import analyze, _build_prompt, _build_command, _parse_claude_output
+
+
+def _stub_transcript() -> TranscriptResult:
+    return TranscriptResult(
+        utterances=[Utterance(speaker="SPEAKER_00", start=0.0, end=1.0, text="hi")],
+        raw_text="hi",
+        language="en",
+    )
+
+
+def _load_template() -> str:
+    with open("prompts/meeting_analysis.md", encoding="utf-8") as f:
+        return f.read()
+
+
+def test_build_prompt_with_participants_uses_roster_instructions():
+    """Non-empty roster -> participants listed + map-to-roster instruction."""
+    template = _load_template()
+    meta = MeetingMetadata(
+        title="t",
+        date=date(2026, 4, 22),
+        participants=[
+            Participant(name="Alice"),
+            Participant(name="Bob", email="b@ex.com"),
+        ],
+        platform="teams",
+    )
+    prompt = _build_prompt(template, _stub_transcript(), meta)
+    assert "- Alice" in prompt
+    assert "- Bob (b@ex.com)" in prompt
+    assert "map these labels to the participant roster above" in prompt
+    # And the empty-roster wording should NOT appear.
+    assert "No participant roster is available" not in prompt
+
+
+def test_build_prompt_with_empty_roster_uses_no_roster_wording():
+    """Empty roster -> replacement wording; contradictory roster instruction gone."""
+    template = _load_template()
+    meta = MeetingMetadata(
+        title="t",
+        date=date(2026, 4, 22),
+        participants=[],
+        platform="teams",
+    )
+    prompt = _build_prompt(template, _stub_transcript(), meta)
+    # The empty-roster wording must appear.
+    assert "No participant roster is available" in prompt
+    # The contradictory roster instruction must NOT appear.
+    assert "map these labels to the participant roster above" not in prompt
+    # No participant bullets in the roster section (anywhere before the
+    # "## Diarized Transcript" header).
+    before_transcript = prompt.split("## Diarized Transcript")[0]
+    assert "\n- " not in before_transcript
 
 
 @pytest.fixture
@@ -65,13 +119,13 @@ def sample_claude_json() -> dict:
 
 class TestBuildPrompt:
     def test_includes_transcript(self, sample_transcript, sample_metadata):
-        prompt_template = "Roster:\n{{participants}}\n\nTranscript:\n{{transcript}}"
+        prompt_template = "Roster:\n{{roster_section}}\n\n{{transcript_instruction}}\n\nTranscript:\n{{transcript}}"
         prompt = _build_prompt(prompt_template, sample_transcript, sample_metadata)
         assert "SPEAKER_00: Hi Jane" in prompt
         assert "Tim (tim@example.com)" in prompt
 
     def test_includes_all_participants(self, sample_transcript, sample_metadata):
-        prompt_template = "{{participants}}\n{{transcript}}"
+        prompt_template = "{{roster_section}}\n{{transcript_instruction}}\n{{transcript}}"
         prompt = _build_prompt(prompt_template, sample_transcript, sample_metadata)
         assert "Tim" in prompt
         assert "Jane Smith" in prompt
@@ -190,7 +244,7 @@ class TestAnalyze:
         self, mock_sub, sample_transcript, sample_metadata, sample_claude_json, tmp_path
     ):
         prompt_path = tmp_path / "prompt.md"
-        prompt_path.write_text("{{participants}}\n{{transcript}}")
+        prompt_path.write_text("{{roster_section}}\n{{transcript_instruction}}\n{{transcript}}")
 
         mock_proc = MagicMock()
         mock_proc.returncode = 0
@@ -218,7 +272,7 @@ class TestAnalyze:
         self, mock_sleep, mock_sub, sample_transcript, sample_metadata, sample_claude_json, tmp_path
     ):
         prompt_path = tmp_path / "prompt.md"
-        prompt_path.write_text("{{participants}}\n{{transcript}}")
+        prompt_path.write_text("{{roster_section}}\n{{transcript_instruction}}\n{{transcript}}")
 
         fail_proc = MagicMock()
         fail_proc.returncode = 1
@@ -249,7 +303,7 @@ class TestAnalyze:
         self, mock_sleep, mock_sub, sample_transcript, sample_metadata, tmp_path
     ):
         prompt_path = tmp_path / "prompt.md"
-        prompt_path.write_text("{{participants}}\n{{transcript}}")
+        prompt_path.write_text("{{roster_section}}\n{{transcript_instruction}}\n{{transcript}}")
 
         fail_proc = MagicMock()
         fail_proc.returncode = 1
@@ -294,7 +348,7 @@ class TestAnalyzeOllamaBackend:
     ):
         """When backend='ollama', should call ollama instead of claude."""
         prompt_path = tmp_path / "prompt.md"
-        prompt_path.write_text("{{participants}}\n{{transcript}}")
+        prompt_path.write_text("{{roster_section}}\n{{transcript_instruction}}\n{{transcript}}")
 
         mock_proc = MagicMock()
         mock_proc.returncode = 0
@@ -324,7 +378,7 @@ class TestAnalyzeOllamaBackend:
     ):
         """Ollama backend should use the specified model name."""
         prompt_path = tmp_path / "prompt.md"
-        prompt_path.write_text("{{participants}}\n{{transcript}}")
+        prompt_path.write_text("{{roster_section}}\n{{transcript_instruction}}\n{{transcript}}")
 
         mock_proc = MagicMock()
         mock_proc.returncode = 0

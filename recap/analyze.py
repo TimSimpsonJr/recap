@@ -17,18 +17,51 @@ MAX_RETRIES = 3
 ANALYSIS_TIMEOUT_SECONDS = 300
 
 
+_ROSTER_WITH_PARTICIPANTS = """## Participant Roster
+
+The following people were expected in this meeting:
+
+{bullets}"""
+
+_ROSTER_EMPTY = """## Participant Roster
+
+No participant roster is available for this meeting."""
+
+_TRANSCRIPT_INSTRUCTION_WITH_ROSTER = (
+    "The transcript uses speaker labels (SPEAKER_00, SPEAKER_01, etc.) assigned "
+    "by an automated diarization system. Use conversational context (name "
+    "mentions, introductions, role references, topics discussed) to map these "
+    "labels to the participant roster above."
+)
+
+_TRANSCRIPT_INSTRUCTION_NO_ROSTER = (
+    "The transcript uses speaker labels (SPEAKER_00, SPEAKER_01, etc.) assigned "
+    "by an automated diarization system. Only assign a real name if it is "
+    "explicitly established in the transcript (e.g. a self-introduction, "
+    "'Hi, I'm Alice'). Otherwise keep the speaker_mapping value as "
+    "'Unknown Speaker N'."
+)
+
+
 def _build_prompt(
     template: str,
     transcript: TranscriptResult,
     metadata: MeetingMetadata,
 ) -> str:
-    participants_text = "\n".join(
-        f"- {p.name} ({p.email})" if p.email else f"- {p.name}"
-        for p in metadata.participants
-    )
-    transcript_text = transcript.to_labelled_text()
-    prompt = template.replace("{{participants}}", participants_text)
-    prompt = prompt.replace("{{transcript}}", transcript_text)
+    if metadata.participants:
+        bullets = "\n".join(
+            f"- {p.name} ({p.email})" if p.email else f"- {p.name}"
+            for p in metadata.participants
+        )
+        roster_section = _ROSTER_WITH_PARTICIPANTS.format(bullets=bullets)
+        transcript_instruction = _TRANSCRIPT_INSTRUCTION_WITH_ROSTER
+    else:
+        roster_section = _ROSTER_EMPTY
+        transcript_instruction = _TRANSCRIPT_INSTRUCTION_NO_ROSTER
+
+    prompt = template.replace("{{roster_section}}", roster_section)
+    prompt = prompt.replace("{{transcript_instruction}}", transcript_instruction)
+    prompt = prompt.replace("{{transcript}}", transcript.to_labelled_text())
     return prompt
 
 
