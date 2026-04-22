@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Awaitable, Callable
 
@@ -25,6 +26,14 @@ logger = logging.getLogger(__name__)
 
 # Platforms that the detector knows how to inspect.
 _PLATFORMS = ("teams", "zoom", "signal")
+
+# Human-readable titles for unscheduled-meeting synthesis. The keys must
+# mirror ``_PLATFORMS``; unknown platforms fall back to ``"{Titlecase} call"``.
+_PLATFORM_LABELS = {
+    "teams":  "Teams call",
+    "zoom":   "Zoom call",
+    "signal": "Signal call",
+}
 
 _POLL_INTERVAL_SECONDS = 3
 _ARMED_POLL_INTERVAL_SECONDS = 1
@@ -138,6 +147,24 @@ class MeetingDetector:
             logger.debug("Failed to resolve calendar note for event %s", event_id, exc_info=True)
             return ""
 
+    def _synthesize_unscheduled_identity(
+        self, *, org: str, platform: str, captured: datetime,
+    ) -> tuple[str, str, str]:
+        """Return ``(event_id, note_path, title)`` for an unscheduled recording.
+
+        ``captured`` is the single instant that seeds all three values so
+        retries on a persisted sidecar stay stable.
+        """
+        event_id = f"unscheduled:{uuid.uuid4().hex}"
+        title = _PLATFORM_LABELS.get(platform, f"{platform.title()} call")
+        _, subfolder = self._resolve_org_and_subfolder(org)
+        if subfolder is None:
+            return event_id, "", title
+        vault_path = Path(self._config.vault_path)
+        base_name = f"{captured:%Y-%m-%d %H%M} - {title}.md"
+        candidate = subfolder / "Meetings" / base_name
+        return event_id, to_vault_relative(candidate, vault_path), title
+
     def _build_recording_metadata(
         self,
         *,
@@ -149,16 +176,33 @@ class MeetingDetector:
         event_id: str | None = None,
     ) -> RecordingMetadata:
         note_path = self._find_calendar_note(org, event_id)
+        recording_started_at: datetime | None = None
+
+        if not event_id and not note_path:
+            # ``captured`` is UTC-aware. We deliberately don't ``.astimezone()``
+            # to a local zone here: the filename + ``date`` field need to be
+            # deterministic across hosts (tests run in non-UTC zones too), and
+            # downstream display-time formatting can convert to local as needed.
+            captured = datetime.now(timezone.utc)
+            event_id, note_path, title = self._synthesize_unscheduled_identity(
+                org=org, platform=platform, captured=captured,
+            )
+            recording_started_at = captured
+            date_str = captured.date().isoformat()
+        else:
+            date_str = datetime.now().date().isoformat()
+
         return RecordingMetadata(
             org=org,
             note_path=note_path,
             title=title.strip() or "Meeting",
-            date=datetime.now().date().isoformat(),
+            date=date_str,
             participants=participants,
             platform=platform,
             calendar_source=None,
             event_id=event_id,
             meeting_link=meeting_link,
+            recording_started_at=recording_started_at,
         )
 
     def _participants_from_names(self, names: list[str]) -> list[Participant]:
