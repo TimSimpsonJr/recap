@@ -424,6 +424,67 @@ var RecapSettingTab = class extends import_obsidian3.PluginSettingTab {
       contacts: contactsContainer
     });
     void this.renderDaemonLifecycle(daemonContainer);
+    containerEl.createEl("h3", { text: "Daemon launch" });
+    const launchContainer = containerEl.createDiv({
+      cls: "recap-settings-launch"
+    });
+    this.renderLaunchSection(launchContainer);
+  }
+  renderLaunchSection(el) {
+    new import_obsidian3.Setting(el).setName("Auto-start daemon with Obsidian").setDesc(
+      "When enabled, the plugin starts the daemon if it's not already running. Disable if you manage the daemon separately (e.g. via an OS scheduler)."
+    ).addToggle(
+      (t) => t.setValue(this.plugin.settings.autostartEnabled).onChange(async (v) => {
+        this.plugin.settings.autostartEnabled = v;
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian3.Setting(el).setName("Launcher executable").setDesc(
+      "Full path to Python/uv executable or a binary name on PATH. Example: 'uv' or 'C:\\Python312\\python.exe'."
+    ).addText(
+      (t) => t.setPlaceholder("uv").setValue(this.plugin.settings.launcherExecutable).onChange(async (v) => {
+        this.plugin.settings.launcherExecutable = v.trim();
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian3.Setting(el).setName("Launcher arguments").setDesc(
+      "One argument per line. Typical: 'run', 'python', '-m', 'recap.launcher', 'config.yaml'."
+    ).addTextArea((t) => {
+      t.setPlaceholder("run\npython\n-m\nrecap.launcher\nconfig.yaml").setValue(this.plugin.settings.launcherArgs.join("\n")).onChange(async (v) => {
+        this.plugin.settings.launcherArgs = v.split("\n").map((s) => s.trim()).filter((s) => s.length > 0);
+        await this.plugin.saveSettings();
+      });
+      t.inputEl.rows = 6;
+      return t;
+    });
+    new import_obsidian3.Setting(el).setName("Working directory").setDesc(
+      "Usually the Recap repo root. Used as the cwd for the spawned launcher. Example: 'C:\\Users\\you\\Documents\\Projects\\recap'."
+    ).addText(
+      (t) => t.setPlaceholder("C:\\Users\\you\\Documents\\Projects\\recap").setValue(this.plugin.settings.launcherCwd).onChange(async (v) => {
+        this.plugin.settings.launcherCwd = v.trim();
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian3.Setting(el).setName("Launcher log path").setDesc(
+      "Absolute path for launcher.log. Leave blank to use '{vault}/_Recap/.recap/launcher.log'."
+    ).addText(
+      (t) => t.setPlaceholder("(default)").setValue(this.plugin.settings.launcherLogPath).onChange(async (v) => {
+        this.plugin.settings.launcherLogPath = v.trim();
+        await this.plugin.saveSettings();
+      })
+    );
+    new import_obsidian3.Setting(el).setName("Start daemon now").setDesc(
+      "Spawn the launcher immediately using the current settings without waiting for an Obsidian reload. Useful after fixing a configuration error."
+    ).addButton(
+      (b) => b.setButtonText("Start daemon now").setCta().onClick(async () => {
+        const cmds = this.app.commands;
+        if (cmds?.executeCommandById) {
+          cmds.executeCommandById("recap:start-daemon-now");
+        } else {
+          new import_obsidian3.Notice("Recap: 'Start daemon now' command not available. Reload plugin.");
+        }
+      })
+    );
   }
   async loadConfigSections(containers) {
     if (!this.plugin.client) {
@@ -1910,9 +1971,231 @@ var NotificationHistoryModal = class extends import_obsidian8.Modal {
   }
 };
 
+// src/launchSettings.ts
+var DEFAULT_LAUNCH_SETTINGS = {
+  autostartEnabled: true,
+  launcherExecutable: "",
+  launcherArgs: [],
+  launcherCwd: "",
+  launcherLogPath: ""
+};
+
+// src/authToken.ts
+var AUTH_TOKEN_PATH = "_Recap/.recap/auth-token";
+async function readAuthTokenWithRetry(adapter, path = AUTH_TOKEN_PATH, maxAttempts = 3, delayMs = 500) {
+  for (let i = 0; i < maxAttempts; i++) {
+    if (await adapter.exists(path)) {
+      const raw = await adapter.read(path);
+      return raw.trim();
+    }
+    if (i < maxAttempts - 1) {
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+  return "";
+}
+
+// src/daemonLauncher.ts
+async function probeHealth(baseUrl, timeoutMs, fetchImpl = fetch) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetchImpl(`${baseUrl}/health`, {
+      method: "GET",
+      signal: controller.signal
+    });
+    return res.ok;
+  } catch {
+    return false;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+function spawnLauncher(params, spawnFn) {
+  return new Promise((resolve) => {
+    const opts = {
+      cwd: params.cwd,
+      env: { ...process.env, ...params.env },
+      detached: true,
+      stdio: "ignore",
+      windowsHide: true
+    };
+    const child = spawnFn(params.executable, params.args, opts);
+    const onSpawn = () => {
+      child.removeListener("error", onError);
+      child.unref();
+      resolve({ kind: "SPAWNED", child, pid: child.pid });
+    };
+    const onError = (err) => {
+      child.removeListener("spawn", onSpawn);
+      resolve({
+        kind: "ERROR",
+        code: err.code,
+        message: err.message || "spawn failed"
+      });
+    };
+    child.once("spawn", onSpawn);
+    child.once("error", onError);
+  });
+}
+var DEFAULT_POLL_INTERVAL_MS = 500;
+var DEFAULT_POLL_TOTAL_MS = 15e3;
+var PROBE_TIMEOUT_MS = 2e3;
+function pollUntilReady(params) {
+  const {
+    baseUrl,
+    child,
+    intervalMs = DEFAULT_POLL_INTERVAL_MS,
+    totalMs = DEFAULT_POLL_TOTAL_MS,
+    fetchImpl = fetch
+  } = params;
+  return new Promise((resolve) => {
+    let settled = false;
+    const startedAt = Date.now();
+    const finish = (result) => {
+      if (settled)
+        return;
+      settled = true;
+      child.removeListener("exit", onExit);
+      resolve(result);
+    };
+    const onExit = (code, signal) => {
+      finish({ kind: "EXITED", exitCode: code, signal });
+    };
+    child.once("exit", onExit);
+    const tick = async () => {
+      if (settled)
+        return;
+      if (Date.now() - startedAt > totalMs) {
+        finish({ kind: "TIMEOUT" });
+        return;
+      }
+      const ok = await probeHealth(baseUrl, PROBE_TIMEOUT_MS, fetchImpl);
+      if (settled)
+        return;
+      if (ok) {
+        finish({ kind: "READY" });
+        return;
+      }
+      setTimeout(tick, intervalMs);
+    };
+    tick();
+  });
+}
+var INITIAL_PROBE_TIMEOUT_MS = 2e3;
+function isConfigured(s) {
+  return s.launcherExecutable.trim() !== "" && s.launcherArgs.length > 0 && s.launcherCwd.trim() !== "";
+}
+async function runLauncherStateMachine(params) {
+  const {
+    baseUrl,
+    settings,
+    spawnFn,
+    fetchImpl = fetch,
+    intervalMs,
+    totalMs,
+    defaultLogPath = ""
+  } = params;
+  if (await probeHealth(baseUrl, INITIAL_PROBE_TIMEOUT_MS, fetchImpl)) {
+    return { kind: "ALREADY_RUNNING" };
+  }
+  if (!settings.autostartEnabled)
+    return { kind: "DISABLED" };
+  if (!isConfigured(settings))
+    return { kind: "NOT_CONFIGURED" };
+  const logPath = settings.launcherLogPath || defaultLogPath;
+  const spawnResult = await spawnLauncher(
+    {
+      executable: settings.launcherExecutable,
+      args: settings.launcherArgs,
+      cwd: settings.launcherCwd,
+      env: logPath ? { RECAP_LAUNCHER_LOG: logPath } : {}
+    },
+    spawnFn
+  );
+  if (spawnResult.kind === "ERROR") {
+    return {
+      kind: "SPAWN_ERROR",
+      code: spawnResult.code,
+      message: spawnResult.message
+    };
+  }
+  const pollResult = await pollUntilReady({
+    baseUrl,
+    child: spawnResult.child,
+    intervalMs,
+    totalMs,
+    fetchImpl
+  });
+  if (pollResult.kind === "READY") {
+    return { kind: "SPAWNED_AND_READY", pid: spawnResult.pid };
+  }
+  if (pollResult.kind === "EXITED") {
+    return {
+      kind: "EARLY_EXIT",
+      exitCode: pollResult.exitCode,
+      signal: pollResult.signal
+    };
+  }
+  return { kind: "POLL_TIMEOUT", pid: spawnResult.pid, logPath };
+}
+
+// src/daemonLauncherNotices.ts
+function noticeForOutcome(outcome) {
+  switch (outcome.kind) {
+    case "ALREADY_RUNNING":
+      return { notice: null, statusBarOffline: false, shouldRehydrate: true };
+    case "DISABLED":
+      return { notice: null, statusBarOffline: true, shouldRehydrate: false };
+    case "NOT_CONFIGURED":
+      return {
+        notice: "Recap launcher not configured. Open Settings -> Recap -> Daemon launch.",
+        statusBarOffline: true,
+        shouldRehydrate: false
+      };
+    case "SPAWN_ERROR":
+      return {
+        notice: `Recap launcher failed to start: ${outcome.code ?? "error"} ${outcome.message}`,
+        statusBarOffline: true,
+        shouldRehydrate: false
+      };
+    case "EARLY_EXIT": {
+      const codeStr = outcome.exitCode !== null ? String(outcome.exitCode) : "killed";
+      return {
+        notice: `Recap launcher exited with code ${codeStr} before daemon started. launcher.log may not exist if the launcher module itself failed. Verify launcherCwd and launcherExecutable in settings.`,
+        statusBarOffline: true,
+        shouldRehydrate: false
+      };
+    }
+    case "POLL_TIMEOUT":
+      return {
+        notice: `Recap daemon started (launcher pid=${outcome.pid ?? "?"}) but didn't respond within 15s. Check ${outcome.logPath || "launcher.log"}.`,
+        statusBarOffline: true,
+        shouldRehydrate: false
+      };
+    case "SPAWNED_AND_READY":
+      return { notice: null, statusBarOffline: false, shouldRehydrate: true };
+  }
+}
+
+// src/vaultPaths.ts
+function vaultRelativeToConcrete(adapter, vaultRelative) {
+  const getFullPath = adapter.getFullPath;
+  if (typeof getFullPath === "function") {
+    try {
+      return getFullPath.call(adapter, vaultRelative);
+    } catch {
+    }
+  }
+  return vaultRelative;
+}
+
 // src/main.ts
+var nodeRequire = globalThis.require;
+var { spawn } = nodeRequire("child_process");
 var DEFAULT_SETTINGS = {
-  daemonUrl: "http://127.0.0.1:9847"
+  daemonUrl: "http://127.0.0.1:9847",
+  ...DEFAULT_LAUNCH_SETTINGS
 };
 var RecapPlugin = class extends import_obsidian9.Plugin {
   settings = DEFAULT_SETTINGS;
@@ -1945,32 +2228,28 @@ var RecapPlugin = class extends import_obsidian9.Plugin {
         }
       })
     );
-    const token = await this.readAuthToken();
-    if (!token) {
-      new import_obsidian9.Notice("Recap: Could not read daemon auth token. Check _Recap/.recap/auth-token");
-    }
-    if (token) {
-      this.client = new DaemonClient(this.settings.daemonUrl, token);
-      this.notificationHistory.setClient(this.client);
-    }
     const statusBarEl = this.addStatusBarItem();
     this.statusBar = new RecapStatusBar(statusBarEl);
+    const defaultLogPath = vaultRelativeToConcrete(
+      this.app.vault.adapter,
+      "_Recap/.recap/launcher.log"
+    );
+    const outcome = await runLauncherStateMachine({
+      baseUrl: this.settings.daemonUrl,
+      settings: this.settings,
+      spawnFn: spawn,
+      defaultLogPath
+    });
+    const decision = noticeForOutcome(outcome);
+    if (decision.notice)
+      new import_obsidian9.Notice(decision.notice);
+    if (decision.statusBarOffline) {
+      this.statusBar.setOffline();
+    }
     this.renameProcessor = new RenameProcessor(this.app, "_Recap/.recap/rename-queue.json");
     await this.renameProcessor.processQueue();
-    if (this.client) {
-      this.connectWebSocket();
-      try {
-        const status = await this.client.getStatus();
-        this.lastKnownState = status.state;
-        this.statusBar.updateState(status.state, status.recording?.org);
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        new import_obsidian9.Notice(`Recap: initial daemon status fetch failed \u2014 ${msg}`);
-        console.error("Recap:", e);
-        this.statusBar.setOffline();
-      }
-    } else {
-      this.statusBar.setOffline();
+    if (decision.shouldRehydrate) {
+      await this.rehydrateClient();
     }
     this.addCommand({
       id: "start-recording",
@@ -1981,6 +2260,29 @@ var RecapPlugin = class extends import_obsidian9.Plugin {
       id: "stop-recording",
       name: "Stop recording",
       callback: () => this.stopRecordingInteractive()
+    });
+    this.addCommand({
+      id: "start-daemon-now",
+      name: "Start daemon now",
+      callback: async () => {
+        const defaultLogPath2 = vaultRelativeToConcrete(
+          this.app.vault.adapter,
+          "_Recap/.recap/launcher.log"
+        );
+        const outcome2 = await runLauncherStateMachine({
+          baseUrl: this.settings.daemonUrl,
+          settings: { ...this.settings, autostartEnabled: true },
+          spawnFn: spawn,
+          defaultLogPath: defaultLogPath2
+        });
+        const d = noticeForOutcome(outcome2);
+        if (d.notice)
+          new import_obsidian9.Notice(d.notice);
+        if (d.statusBarOffline)
+          this.statusBar?.setOffline();
+        if (d.shouldRehydrate)
+          await this.rehydrateClient();
+      }
     });
     this.addCommand({
       id: "open-dashboard",
@@ -2248,17 +2550,50 @@ var RecapPlugin = class extends import_obsidian9.Plugin {
     }
   }
   async readAuthToken() {
-    const tokenPath = "_Recap/.recap/auth-token";
-    const exists = await this.app.vault.adapter.exists(tokenPath);
-    if (!exists)
-      return "";
     try {
-      return (await this.app.vault.adapter.read(tokenPath)).trim();
+      return await readAuthTokenWithRetry(
+        this.app.vault.adapter,
+        AUTH_TOKEN_PATH,
+        1
+        // single attempt for initial onload; rehydrateClient retries
+      );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       new import_obsidian9.Notice(`Recap: could not read auth token \u2014 ${msg}`);
       console.error("Recap:", e);
       return "";
+    }
+  }
+  /**
+   * Re-read the auth token, rebuild DaemonClient, and reconnect.
+   *
+   * Used after a plugin-spawned daemon start (token file appears AFTER
+   * onload's initial read). Retries a few times because the daemon
+   * writes the token shortly after binding the port.
+   */
+  async rehydrateClient() {
+    const token = await readAuthTokenWithRetry(this.app.vault.adapter);
+    if (!token) {
+      new import_obsidian9.Notice(
+        `Recap: daemon running but auth token not found at ${AUTH_TOKEN_PATH}. Re-pair via tray menu.`
+      );
+      return false;
+    }
+    this.client?.disconnectWebSocket();
+    this.notificationHistory.detach();
+    this.client = new DaemonClient(this.settings.daemonUrl, token);
+    this.notificationHistory.setClient(this.client);
+    this.connectWebSocket();
+    try {
+      const status = await this.client.getStatus();
+      this.lastKnownState = status.state;
+      this.statusBar?.updateState(status.state, status.recording?.org);
+      return true;
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      new import_obsidian9.Notice(`Recap: post-spawn status fetch failed \u2014 ${msg}`);
+      this.statusBar?.setOffline();
+      return false;
     }
   }
   async activateView(viewType) {
