@@ -139,8 +139,31 @@ chrome.tabs.onRemoved.addListener(async (tabId) => {
 });
 
 chrome.alarms.create("recap-health-check", { periodInMinutes: 0.5 });
-chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === "recap-health-check") void findRecapDaemon();
+chrome.alarms.create("recap-roster-refresh", { periodInMinutes: 0.5 });
+
+chrome.alarms.onAlarm.addListener(async (alarm) => {
+  if (alarm.name === "recap-health-check") { void findRecapDaemon(); return; }
+  if (alarm.name === "recap-roster-refresh") { void refreshAllRosters(); return; }
 });
+
+// #29: poll every active meeting tab's content script for its current
+// participant roster and forward to the daemon.
+// LIMITATION: only built-in hosts (Meet/Zoho/tranzpay) receive a
+// content script, so user-added meeting patterns won't refresh here.
+// Teams-via-browser deliberately excluded - v1 known gap.
+async function refreshAllRosters() {
+  for (const [tabId, tab] of activeMeetingTabs) {
+    try {
+      const response = await chrome.tabs.sendMessage(tabId, { type: "recap:get-roster" });
+      if (!response) continue;
+      const participants = (response.participants || []).slice(0, 50);
+      if (participants.length === 0) continue;  // skip empty pushes
+      await notifyRecap("/api/meeting-participants-updated", { tabId, participants });
+    } catch (e) {
+      // Expected on: Teams-via-browser tabs (no content script),
+      // tabs closed mid-message, page reloads. Silent.
+    }
+  }
+}
 
 void findRecapDaemon();
