@@ -286,8 +286,13 @@ class MeetingDetector:
         way auto-record and armed recordings do. Without this, a Signal
         recording continues until silence/max-duration/manual stop even after
         the user closes the Signal window.
+
+        Also arms an empty roster session so that stop-time finalization hooks
+        fire correctly; Signal has no participant enrichment so the roster
+        stays empty and no sidecar rewrite happens.
         """
         self._recording_hwnd = hwnd
+        self._begin_roster_session()
 
     def _begin_roster_session(
         self,
@@ -318,13 +323,19 @@ class MeetingDetector:
         self._recorder.on_after_stop = self._end_roster_session
 
     def _end_roster_session(self) -> None:
-        """Clear detector-owned session state. Registered as
-        Recorder.on_after_stop so it fires on every stop path — API,
-        silence, duration, fatal, extension."""
+        """Clear detector-owned session state and recorder hooks.
+
+        Registered as Recorder.on_after_stop so it fires on every stop
+        path — API, silence, duration, fatal, extension. Clearing the
+        recorder hooks here prevents stale roster.finalize from a previous
+        session firing on a subsequent manual recording (tray/API start)
+        that bypasses _begin_roster_session."""
         self._active_roster = None
         self._extension_recording_tab_id = None
         self._current_browser_platform = None
         self._polls_since_roster_refresh = 0
+        self._recorder.on_before_finalize = None
+        self._recorder.on_after_stop = None
 
     async def handle_extension_meeting_detected(
         self,
@@ -355,7 +366,7 @@ class MeetingDetector:
         )
 
         await self._recorder.start(org, metadata=metadata, detected=True)
-        self._extension_recording_tab_id = tab_id
+        self._begin_roster_session(tab_id=tab_id, browser_platform=platform)
         if self._armed_event is not None:
             self._armed_event = None
         logger.info("Extension-triggered recording started for %s", platform)
@@ -371,7 +382,7 @@ class MeetingDetector:
             return False
 
         await self._recorder.stop()
-        self._extension_recording_tab_id = None
+        # _extension_recording_tab_id cleared by _end_roster_session via Recorder.on_after_stop.
         logger.info("Extension-triggered recording stopped for tab %s", tab_id)
         return True
 
@@ -435,6 +446,15 @@ class MeetingDetector:
                 )
                 await self._recorder.start(org, metadata=metadata, detected=True)
                 self._recording_hwnd = meeting.hwnd
+                initial_source = (
+                    f"{meeting.platform}_uia_detection"
+                    if enriched.get("participants")
+                    else None
+                )
+                self._begin_roster_session(
+                    initial_names=enriched.get("participants", ()),
+                    initial_source=initial_source,
+                )
                 self._armed_event = None  # consumed
                 continue
 
@@ -445,6 +465,15 @@ class MeetingDetector:
                 logger.info("Auto-recording %s meeting (org=%s)", meeting.platform, org)
                 await self._recorder.start(org, metadata=metadata, detected=True)
                 self._recording_hwnd = meeting.hwnd
+                initial_source = (
+                    f"{meeting.platform}_uia_detection"
+                    if enriched.get("participants")
+                    else None
+                )
+                self._begin_roster_session(
+                    initial_names=enriched.get("participants", ()),
+                    initial_source=initial_source,
+                )
             elif behavior == "prompt" and self._on_signal_detected is not None:
                 # Fire-and-track: run the callback as a concurrent task so
                 # the poll loop continues ticking while a slow awaitable
