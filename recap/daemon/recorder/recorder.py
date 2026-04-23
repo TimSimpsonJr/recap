@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
+from dataclasses import replace as _replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable
@@ -19,7 +20,7 @@ from recap.daemon.recorder.silence import SilenceDetector
 from recap.daemon.recorder.state_machine import RecorderState, RecorderStateMachine
 from recap.daemon.streaming.diarizer import StreamingDiarizer
 from recap.daemon.streaming.transcriber import StreamingTranscriber
-from recap.models import TranscriptResult
+from recap.models import Participant, TranscriptResult
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +75,17 @@ class Recorder:
         self.on_max_duration_reached: Callable | None = None
         self.on_recording_stopped: Callable[[Path, str], None] | None = None
         self.on_streaming_segment: Callable[[dict], None] | None = None
+
+        # #29: roster finalization hooks.
+        # on_before_finalize is invoked inside every stop() path before the
+        # sidecar rewrite decision. Detector uses this to merge the accumulated
+        # ParticipantRoster into metadata.participants.
+        # on_after_stop is invoked at end of stop() regardless of rewrite
+        # outcome; detector uses it to clear session state.
+        # Hooks persist across sessions (harmless) and are cleared only when
+        # the next begin-session overwrites them.
+        self.on_before_finalize: Callable[[], list[str]] | None = None
+        self.on_after_stop: Callable[[], None] | None = None
 
     @property
     def is_recording(self) -> bool:
@@ -280,28 +292,68 @@ class Recorder:
             devices_seen = list(self._audio_capture._system_audio_devices_seen)
             self._audio_capture = None
 
-        # Rewrite the sidecar with the accumulated audio warnings +
-        # devices-seen so the pipeline export stage can render them in
-        # the note frontmatter and body callout. Only rewrite if the
-        # initial sidecar was written (normal path), and only on stop
-        # paths where we still have a path + metadata reference.
+        # #29: call finalizer before deciding whether to rewrite. Empty or
+        # unchanged finalized lists do not trigger rewrite; audio warnings
+        # still can.
+        finalized_participants: list[str] | None = None
+        if self.on_before_finalize is not None:
+            try:
+                finalized_participants = self.on_before_finalize()
+            except Exception:
+                logger.warning("Participant finalizer failed", exc_info=True)
+
+        # RecordingMetadata.participants is list[Participant]; the roster
+        # works in list[str]. Compare against the name projection so the
+        # gate only trips when the finalized names actually differ.
+        should_rewrite_for_participants = (
+            finalized_participants is not None
+            and self._current_metadata is not None
+            and finalized_participants
+            != [p.name for p in self._current_metadata.participants]
+        )
+
         if (
             path is not None
             and self._current_metadata is not None
-            and (audio_warnings or devices_seen)
+            and (audio_warnings or devices_seen or should_rewrite_for_participants)
         ):
             try:
                 self._current_metadata.audio_warnings = audio_warnings
                 self._current_metadata.system_audio_devices_seen = devices_seen
+                if should_rewrite_for_participants:
+                    # Preserve existing Participant fields (email, etc.) when
+                    # the finalized roster contains a name that was already
+                    # present under any case form. Casefold-keyed lookup
+                    # matches the ParticipantRoster's dedupe semantics.
+                    # Using dataclasses.replace preserves ALL existing fields,
+                    # not just email.
+                    existing_by_key = {
+                        p.name.casefold(): p
+                        for p in self._current_metadata.participants
+                    }
+                    self._current_metadata.participants = [
+                        _replace(existing_by_key[n.casefold()], name=n)
+                        if n.casefold() in existing_by_key
+                        else Participant(name=n)
+                        for n in finalized_participants or []
+                    ]
                 write_recording_metadata(path, self._current_metadata)
             except OSError:
                 logger.warning(
-                    "Failed to persist audio warnings to sidecar for %s",
-                    path, exc_info=True,
+                    "Failed to persist sidecar for %s", path, exc_info=True,
                 )
 
         # Stop streaming and merge results
         self._stop_streaming()
+
+        # #29: after_stop hook fires once, regardless of rewrite outcome.
+        # Detector uses this to clear ParticipantRoster session state on
+        # every stop path (API, silence, duration, fatal, extension).
+        if self.on_after_stop is not None:
+            try:
+                self.on_after_stop()
+            except Exception:
+                logger.warning("on_after_stop hook failed", exc_info=True)
 
         # Reset silence detector
         if self._silence_detector is not None:
