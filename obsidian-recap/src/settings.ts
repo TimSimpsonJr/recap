@@ -87,6 +87,119 @@ export class RecapSettingTab extends PluginSettingTab {
             contacts: contactsContainer,
         });
         void this.renderDaemonLifecycle(daemonContainer);
+
+        containerEl.createEl("h3", { text: "Daemon launch" });
+        const launchContainer = containerEl.createDiv({
+            cls: "recap-settings-launch",
+        });
+        this.renderLaunchSection(launchContainer);
+    }
+
+    private renderLaunchSection(el: HTMLElement): void {
+        new Setting(el)
+            .setName("Auto-start daemon with Obsidian")
+            .setDesc(
+                "When enabled, the plugin starts the daemon if it's not already "
+                + "running. Disable if you manage the daemon separately (e.g. via "
+                + "an OS scheduler)."
+            )
+            .addToggle(t => t
+                .setValue(this.plugin.settings.autostartEnabled)
+                .onChange(async (v) => {
+                    this.plugin.settings.autostartEnabled = v;
+                    await this.plugin.saveSettings();
+                }),
+            );
+
+        new Setting(el)
+            .setName("Launcher executable")
+            .setDesc(
+                "Full path to Python/uv executable or a binary name on PATH. "
+                + "Example: 'uv' or 'C:\\Python312\\python.exe'."
+            )
+            .addText(t => t
+                .setPlaceholder("uv")
+                .setValue(this.plugin.settings.launcherExecutable)
+                .onChange(async (v) => {
+                    this.plugin.settings.launcherExecutable = v.trim();
+                    await this.plugin.saveSettings();
+                }),
+            );
+
+        new Setting(el)
+            .setName("Launcher arguments")
+            .setDesc(
+                "One argument per line. Typical: 'run', 'python', '-m', "
+                + "'recap.launcher', 'config.yaml'."
+            )
+            .addTextArea(t => {
+                t.setPlaceholder("run\npython\n-m\nrecap.launcher\nconfig.yaml")
+                 .setValue(this.plugin.settings.launcherArgs.join("\n"))
+                 .onChange(async (v) => {
+                     this.plugin.settings.launcherArgs = v.split("\n")
+                         .map(s => s.trim())
+                         .filter(s => s.length > 0);
+                     await this.plugin.saveSettings();
+                 });
+                t.inputEl.rows = 6;
+                return t;
+            });
+
+        new Setting(el)
+            .setName("Working directory")
+            .setDesc(
+                "Usually the Recap repo root. Used as the cwd for the spawned "
+                + "launcher. Example: 'C:\\Users\\you\\Documents\\Projects\\recap'."
+            )
+            .addText(t => t
+                .setPlaceholder("C:\\Users\\you\\Documents\\Projects\\recap")
+                .setValue(this.plugin.settings.launcherCwd)
+                .onChange(async (v) => {
+                    this.plugin.settings.launcherCwd = v.trim();
+                    await this.plugin.saveSettings();
+                }),
+            );
+
+        new Setting(el)
+            .setName("Launcher log path")
+            .setDesc(
+                "Absolute path for launcher.log. Leave blank to use "
+                + "'{vault}/_Recap/.recap/launcher.log'."
+            )
+            .addText(t => t
+                .setPlaceholder("(default)")
+                .setValue(this.plugin.settings.launcherLogPath)
+                .onChange(async (v) => {
+                    this.plugin.settings.launcherLogPath = v.trim();
+                    await this.plugin.saveSettings();
+                }),
+            );
+
+        new Setting(el)
+            .setName("Start daemon now")
+            .setDesc(
+                "Spawn the launcher immediately using the current settings "
+                + "without waiting for an Obsidian reload. Useful after fixing a "
+                + "configuration error."
+            )
+            .addButton(b => b
+                .setButtonText("Start daemon now")
+                .setCta()
+                .onClick(async () => {
+                    // Invoke the registered command. The command id is scoped
+                    // by Obsidian to "{plugin-id}:{command-id}". Plugin id is
+                    // "recap" per obsidian-recap/manifest.json.
+                    interface CommandsLike {
+                        executeCommandById?: (id: string) => boolean;
+                    }
+                    const cmds = (this.app as unknown as { commands?: CommandsLike }).commands;
+                    if (cmds?.executeCommandById) {
+                        cmds.executeCommandById("recap:start-daemon-now");
+                    } else {
+                        new Notice("Recap: 'Start daemon now' command not available. Reload plugin.");
+                    }
+                }),
+            );
     }
 
     private async loadConfigSections(containers: {
