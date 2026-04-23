@@ -401,134 +401,202 @@ git commit -m "feat(#29): extract_zoom_participants UIA walker"
 - Modify: `recap/daemon/recorder/recorder.py` (`__init__`, `stop` method around lines 288-301)
 - Create: `tests/test_recorder_finalize.py`
 
+**Harness reference:** The existing tests in [tests/test_recorder_orchestrator.py](tests/test_recorder_orchestrator.py) show the canonical way to exercise `Recorder.stop()` without spinning up PyAudio. Study `test_stop_persists_audio_warnings_into_sidecar` (lines 149-190) and `test_stop_captures_audio_warnings_after_final_drain_tick` (lines 193-240) — the tests below reuse that exact harness pattern: inject a `MagicMock` as `_audio_capture`, call `write_recording_metadata` to seed the sidecar, drive state machine into `RECORDING`, call `await recorder.stop()`, then `load_recording_metadata` + assert. No full `start()` invocation is needed.
+
 **Step 1: Write failing tests**
 
 Create `tests/test_recorder_finalize.py`:
 
 ```python
-"""Tests for Recorder on_before_finalize / on_after_stop hooks."""
+"""Tests for Recorder on_before_finalize / on_after_stop hooks (#29).
+
+Harness pattern mirrors tests/test_recorder_orchestrator.py —
+inject MagicMock for audio_capture, seed sidecar + state machine,
+call stop(), assert on the loaded sidecar.
+"""
 from __future__ import annotations
 
-import asyncio
-from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
-# Heads-up for the implementer: adjust these imports to match how
-# Recorder is instantiated in existing recorder tests (look at
-# tests/test_recorder.py for the pattern). The hook contract under
-# test is:
-#   1. on_before_finalize is called exactly once per stop(), before
-#      the sidecar rewrite decision.
-#   2. on_after_stop is called exactly once per stop(), AFTER the
-#      rewrite block.
-#   3. Either hook raising must not abort stop.
-#   4. The sidecar is rewritten only if finalizer returned a non-None
-#      list that differs from current metadata.participants.
+from recap.artifacts import (
+    RecordingMetadata,
+    load_recording_metadata,
+    write_recording_metadata,
+)
+from recap.daemon.recorder.recorder import Recorder
 
-# The tests below illustrate the contract. Concrete fixtures should
-# follow tests/test_recorder.py — build a Recorder with stubbed audio
-# capture, streaming, state machine. Use the smallest fake harness
-# that exercises stop().
+
+def _make_recorder_ready_to_stop(
+    tmp_path,
+    *,
+    initial_participants: list[str] | None = None,
+    audio_warnings: list[str] | None = None,
+) -> tuple[Recorder, MagicMock]:
+    """Build a Recorder with a fake audio_capture in RECORDING state,
+    ready for stop(). Returns (recorder, fake_capture)."""
+    recorder = Recorder(recordings_path=tmp_path)
+
+    fake_capture = MagicMock()
+    fake_capture._audio_warnings = list(audio_warnings or [])
+    fake_capture._system_audio_devices_seen = []
+    fake_capture.stop = MagicMock()
+
+    audio_path = tmp_path / "test.flac"
+    audio_path.touch()
+    initial_metadata = RecordingMetadata(
+        org="testorg",
+        note_path="",
+        title="Test",
+        date="2026-04-23",
+        participants=list(initial_participants or []),
+        platform="manual",
+    )
+    write_recording_metadata(audio_path, initial_metadata)
+
+    recorder._audio_capture = fake_capture
+    recorder._current_path = audio_path
+    recorder._current_metadata = initial_metadata
+    recorder.state_machine.detected("testorg")
+    recorder.state_machine.start_recording("testorg")
+
+    return recorder, fake_capture
 
 
 @pytest.mark.asyncio
-async def test_on_before_finalize_called_during_stop(recorder_fixture):
-    called = []
-    recorder_fixture.on_before_finalize = lambda: (called.append("before"), [])[1]
-    await recorder_fixture.start(...)
-    await recorder_fixture.stop()
+async def test_on_before_finalize_called_during_stop(tmp_path):
+    recorder, _ = _make_recorder_ready_to_stop(tmp_path)
+    called: list[str] = []
+
+    def finalizer() -> list[str]:
+        called.append("before")
+        return []
+
+    recorder.on_before_finalize = finalizer
+    await recorder.stop()
     assert called == ["before"]
 
 
 @pytest.mark.asyncio
-async def test_on_after_stop_called_after_before_finalize(recorder_fixture):
-    order = []
-    recorder_fixture.on_before_finalize = lambda: (order.append("before"), [])[1]
-    recorder_fixture.on_after_stop = lambda: order.append("after")
-    await recorder_fixture.start(...)
-    await recorder_fixture.stop()
+async def test_on_after_stop_called_after_before_finalize(tmp_path):
+    recorder, _ = _make_recorder_ready_to_stop(tmp_path)
+    order: list[str] = []
+    recorder.on_before_finalize = lambda: (order.append("before"), [])[1]
+    recorder.on_after_stop = lambda: order.append("after")
+    await recorder.stop()
     assert order == ["before", "after"]
 
 
 @pytest.mark.asyncio
-async def test_finalize_raising_does_not_abort_stop(recorder_fixture, caplog):
-    def boom(): raise RuntimeError("finalize boom")
-    recorder_fixture.on_before_finalize = boom
-    after_called = []
-    recorder_fixture.on_after_stop = lambda: after_called.append(1)
-    await recorder_fixture.start(...)
-    path = await recorder_fixture.stop()
+async def test_finalize_raising_does_not_abort_stop(tmp_path, caplog):
+    recorder, _ = _make_recorder_ready_to_stop(tmp_path)
+
+    def boom() -> list[str]:
+        raise RuntimeError("finalize boom")
+
+    after_called: list[int] = []
+    recorder.on_before_finalize = boom
+    recorder.on_after_stop = lambda: after_called.append(1)
+
+    path = await recorder.stop()
     assert path is not None  # stop completed
-    assert after_called == [1]  # on_after_stop still fired
+    assert after_called == [1]
     assert "Participant finalizer failed" in caplog.text
 
 
 @pytest.mark.asyncio
-async def test_after_stop_raising_does_not_abort_stop(recorder_fixture, caplog):
-    def boom(): raise RuntimeError("after boom")
-    recorder_fixture.on_after_stop = boom
-    await recorder_fixture.start(...)
-    path = await recorder_fixture.stop()
+async def test_after_stop_raising_does_not_abort_stop(tmp_path, caplog):
+    recorder, _ = _make_recorder_ready_to_stop(tmp_path)
+
+    def boom() -> None:
+        raise RuntimeError("after boom")
+
+    recorder.on_after_stop = boom
+    path = await recorder.stop()
     assert path is not None
     assert "on_after_stop hook failed" in caplog.text
 
 
 @pytest.mark.asyncio
-async def test_finalize_empty_list_does_not_rewrite(recorder_fixture, metadata_sidecar_spy):
-    recorder_fixture.on_before_finalize = lambda: []
-    await recorder_fixture.start(...)
-    metadata_sidecar_spy.reset_mock()
-    await recorder_fixture.stop()
-    # No rewrite call beyond the initial one at start().
-    metadata_sidecar_spy.assert_not_called()
+async def test_finalize_empty_list_does_not_rewrite(tmp_path):
+    """Empty finalize output with no audio warnings → no rewrite.
+    Sidecar retains the initial (empty) participants."""
+    recorder, _ = _make_recorder_ready_to_stop(
+        tmp_path, initial_participants=[],
+    )
+    recorder.on_before_finalize = lambda: []
+    await recorder.stop()
+
+    loaded = load_recording_metadata(recorder._current_path or tmp_path / "test.flac")
+    # If no rewrite happens, the sidecar still has the initial empty list.
+    assert loaded is not None
+    assert loaded.participants == []
 
 
 @pytest.mark.asyncio
-async def test_finalize_same_as_initial_does_not_rewrite(
-    recorder_fixture, metadata_sidecar_spy,
-):
+async def test_finalize_same_as_initial_does_not_rewrite(tmp_path):
+    """Finalized list identical to initial → no rewrite. Teams one-shot
+    path relies on this to avoid redundant sidecar writes."""
     initial = ["Alice", "Bob"]
-    # Seed the recording's metadata with the initial list.
-    recorder_fixture._current_metadata.participants = list(initial)
-    recorder_fixture.on_before_finalize = lambda: list(initial)
-    metadata_sidecar_spy.reset_mock()
-    await recorder_fixture.stop()
-    metadata_sidecar_spy.assert_not_called()
+    recorder, _ = _make_recorder_ready_to_stop(
+        tmp_path, initial_participants=initial,
+    )
+    recorder.on_before_finalize = lambda: list(initial)
+    await recorder.stop()
+
+    loaded = load_recording_metadata(tmp_path / "test.flac")
+    assert loaded is not None
+    assert loaded.participants == initial
 
 
 @pytest.mark.asyncio
-async def test_finalize_new_list_rewrites_sidecar(
-    recorder_fixture, metadata_sidecar_spy,
-):
-    recorder_fixture._current_metadata.participants = []
-    recorder_fixture.on_before_finalize = lambda: ["Alice", "Bob"]
-    metadata_sidecar_spy.reset_mock()
-    await recorder_fixture.stop()
-    metadata_sidecar_spy.assert_called_once()
-    written = metadata_sidecar_spy.call_args[0][1]
-    assert written.participants == ["Alice", "Bob"]
+async def test_finalize_new_list_rewrites_sidecar(tmp_path):
+    """Finalized list differs from initial → sidecar rewritten with new list."""
+    recorder, _ = _make_recorder_ready_to_stop(
+        tmp_path, initial_participants=[],
+    )
+    recorder.on_before_finalize = lambda: ["Alice", "Bob"]
+    await recorder.stop()
+
+    loaded = load_recording_metadata(tmp_path / "test.flac")
+    assert loaded is not None
+    assert loaded.participants == ["Alice", "Bob"]
 
 
 @pytest.mark.asyncio
-async def test_audio_warnings_and_participants_single_rewrite(
-    recorder_fixture, metadata_sidecar_spy,
-):
-    recorder_fixture._current_metadata.participants = []
-    recorder_fixture.on_before_finalize = lambda: ["Alice"]
-    # Simulate accumulated audio warning (fixture-specific; mirror
-    # existing audio-warning test patterns).
-    recorder_fixture._audio_capture._audio_warnings = ["test_warning"]
-    metadata_sidecar_spy.reset_mock()
-    await recorder_fixture.stop()
-    # One combined rewrite, not two.
-    metadata_sidecar_spy.assert_called_once()
-    written = metadata_sidecar_spy.call_args[0][1]
-    assert written.participants == ["Alice"]
-    assert "test_warning" in written.audio_warnings
+async def test_audio_warnings_and_participants_single_rewrite(tmp_path):
+    """Both audio_warnings AND new participants → single combined rewrite."""
+    recorder, fake_capture = _make_recorder_ready_to_stop(
+        tmp_path,
+        initial_participants=[],
+        audio_warnings=["test_warning"],
+    )
+    recorder.on_before_finalize = lambda: ["Alice"]
+    await recorder.stop()
+
+    loaded = load_recording_metadata(tmp_path / "test.flac")
+    assert loaded is not None
+    assert loaded.participants == ["Alice"]
+    assert "test_warning" in loaded.audio_warnings
+
+
+@pytest.mark.asyncio
+async def test_no_hooks_registered_leaves_initial_behavior_intact(tmp_path):
+    """No hooks → stop() behaves exactly as pre-#29 (audio_warnings path only)."""
+    recorder, _ = _make_recorder_ready_to_stop(
+        tmp_path,
+        initial_participants=["Pre29"],
+        audio_warnings=["legacy_warning"],
+    )
+    # on_before_finalize and on_after_stop both None.
+    await recorder.stop()
+
+    loaded = load_recording_metadata(tmp_path / "test.flac")
+    assert loaded is not None
+    assert loaded.participants == ["Pre29"]
+    assert "legacy_warning" in loaded.audio_warnings
 ```
-
-**Note to implementer:** The `recorder_fixture` and `metadata_sidecar_spy` are conceptual. Adapt to the patterns already in `tests/test_recorder.py`. If that test file doesn't exist, the first concrete step is to survey how Recorder is tested elsewhere (e.g., integration tests) and build the smallest harness that lets `stop()` run.
 
 **Step 2: Run tests to verify they fail**
 
@@ -1608,17 +1676,22 @@ BUILT_IN_HOSTS: set[str] = {
 EXPECTED_V1_GAPS: set[str] = {"teams.microsoft.com"}
 
 
-def _extract_default_patterns(js_path: Path) -> list[dict[str, str]]:
-    """Parse DEFAULT_MEETING_PATTERNS from a JS file.
+def _extract_default_patterns(js_path: Path, const_name: str) -> list[dict[str, str]]:
+    """Parse a meeting-patterns constant from a JS file.
+
+    The two files use different constant names:
+      - extension/background.js uses DEFAULT_MEETING_PATTERNS
+      - extension/options.js uses DEFAULT_PATTERNS
 
     Fragile by design — the regex breaks if the constant is restructured,
-    which is exactly what these tests want to catch."""
+    which is exactly what these tests want to catch.
+    """
     text = js_path.read_text()
     match = re.search(
-        r"DEFAULT_MEETING_PATTERNS\s*=\s*\[(.*?)\];",
+        rf"{re.escape(const_name)}\s*=\s*\[(.*?)\];",
         text, re.DOTALL,
     )
-    assert match, f"DEFAULT_MEETING_PATTERNS not found in {js_path}"
+    assert match, f"{const_name} not found in {js_path}"
     block = match.group(1)
     entries = re.findall(
         r"\{\s*pattern:\s*\"([^\"]+)\"\s*,\s*platform:\s*\"([^\"]+)\"",
@@ -1628,15 +1701,21 @@ def _extract_default_patterns(js_path: Path) -> list[dict[str, str]]:
 
 
 def test_background_defaults_cover_built_in_hosts():
-    patterns = _extract_default_patterns(EXTENSION_DIR / "background.js")
+    patterns = _extract_default_patterns(
+        EXTENSION_DIR / "background.js", "DEFAULT_MEETING_PATTERNS",
+    )
     hosts = {p["pattern"].split("/")[0] for p in patterns}
     missing = BUILT_IN_HOSTS - hosts
     assert not missing, f"BUILT_IN_HOSTS missing from background.js: {missing}"
 
 
 def test_options_defaults_agree_with_background():
-    bg = _extract_default_patterns(EXTENSION_DIR / "background.js")
-    opts = _extract_default_patterns(EXTENSION_DIR / "options.js")
+    bg = _extract_default_patterns(
+        EXTENSION_DIR / "background.js", "DEFAULT_MEETING_PATTERNS",
+    )
+    opts = _extract_default_patterns(
+        EXTENSION_DIR / "options.js", "DEFAULT_PATTERNS",
+    )
     bg_set = {(p["pattern"], p["platform"]) for p in bg}
     opts_set = {(p["pattern"], p["platform"]) for p in opts}
     # options.js may include a subset (no requirePath/excludeExact extras)
