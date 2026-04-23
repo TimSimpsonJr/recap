@@ -8,13 +8,15 @@ import { LiveTranscriptView, VIEW_LIVE_TRANSCRIPT } from "./views/LiveTranscript
 import { SpeakerCorrectionModal, SpeakerInfo } from "./views/SpeakerCorrectionModal";
 import { RenameProcessor } from "./renameProcessor";
 import { NotificationHistory, NotificationHistoryModal } from "./notificationHistory";
+import { DaemonLaunchSettings, DEFAULT_LAUNCH_SETTINGS } from "./launchSettings";
 
-interface RecapSettings {
+interface RecapSettings extends DaemonLaunchSettings {
     daemonUrl: string;
 }
 
 const DEFAULT_SETTINGS: RecapSettings = {
     daemonUrl: "http://127.0.0.1:9847",
+    ...DEFAULT_LAUNCH_SETTINGS,
 };
 
 export default class RecapPlugin extends Plugin {
