@@ -9,6 +9,7 @@ import { SpeakerCorrectionModal, SpeakerInfo } from "./views/SpeakerCorrectionMo
 import { RenameProcessor } from "./renameProcessor";
 import { NotificationHistory, NotificationHistoryModal } from "./notificationHistory";
 import { DaemonLaunchSettings, DEFAULT_LAUNCH_SETTINGS } from "./launchSettings";
+import { readAuthTokenWithRetry, AUTH_TOKEN_PATH } from "./authToken";
 
 interface RecapSettings extends DaemonLaunchSettings {
     daemonUrl: string;
@@ -426,16 +427,51 @@ export default class RecapPlugin extends Plugin {
     }
 
     private async readAuthToken(): Promise<string> {
-        const tokenPath = "_Recap/.recap/auth-token";
-        const exists = await this.app.vault.adapter.exists(tokenPath);
-        if (!exists) return "";
         try {
-            return (await this.app.vault.adapter.read(tokenPath)).trim();
+            return await readAuthTokenWithRetry(
+                this.app.vault.adapter,
+                AUTH_TOKEN_PATH,
+                1,  // single attempt for initial onload; rehydrateClient retries
+            );
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             new Notice(`Recap: could not read auth token — ${msg}`);
             console.error("Recap:", e);
             return "";
+        }
+    }
+
+    /**
+     * Re-read the auth token, rebuild DaemonClient, and reconnect.
+     *
+     * Used after a plugin-spawned daemon start (token file appears AFTER
+     * onload's initial read). Retries a few times because the daemon
+     * writes the token shortly after binding the port.
+     */
+    async rehydrateClient(): Promise<boolean> {
+        const token = await readAuthTokenWithRetry(this.app.vault.adapter);
+        if (!token) {
+            new Notice(
+                `Recap: daemon running but auth token not found at ${AUTH_TOKEN_PATH}. ` +
+                "Re-pair via tray menu."
+            );
+            return false;
+        }
+        this.client?.disconnectWebSocket();
+        this.notificationHistory.detach();
+        this.client = new DaemonClient(this.settings.daemonUrl, token);
+        this.notificationHistory.setClient(this.client);
+        this.connectWebSocket();
+        try {
+            const status = await this.client.getStatus();
+            this.lastKnownState = status.state;
+            this.statusBar?.updateState(status.state, status.recording?.org);
+            return true;
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            new Notice(`Recap: post-spawn status fetch failed — ${msg}`);
+            this.statusBar?.setOffline();
+            return false;
         }
     }
 
