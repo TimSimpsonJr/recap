@@ -29,11 +29,12 @@ recap/                                        # Python package
     auth.py / credentials.py                  # Token auth + Windows DPAPI credential storage
     logging_setup.py / notifications.py       # Logging; notifications write to EventJournal
     recorder/                                 # Audio capture subsystem
-      recorder.py                             # Recording orchestrator; uses `audio_capture.on_chunk`
+      recorder.py                             # Recording orchestrator; uses `audio_capture.on_chunk`. #29 adds `on_before_finalize` + `on_after_stop` hooks fired on every stop path; field-preserving rewrite via `dataclasses.replace` keeps `Participant.email` across display-form upgrades.
+      roster.py                               # ParticipantRoster ordered-dedupe accumulator (#29); casefold-keyed dict[str,str]; merge() returns bool as future additive seam for WS broadcast
       audio.py                                # WASAPI loopback capture (PyAudioWPatch) via pyflac 3.0 StreamEncoder (no `channels=` kwarg)
-      detector.py                             # Meeting window detector; two-path pruning (stop-monitoring via is_window_alive + end-of-poll prune protecting _recording_hwnd); stop() awaits cancelled poll task; _synthesize_unscheduled_identity(unscheduled:<uuid>, YYYY-MM-DD HHMM - {Platform} call.md, collision resolution)
+      detector.py                             # Meeting window detector; two-path pruning (stop-monitoring via is_window_alive + end-of-poll prune protecting _recording_hwnd); stop() awaits cancelled poll task; _synthesize_unscheduled_identity(unscheduled:<uuid>, YYYY-MM-DD HHMM - {Platform} call.md, collision resolution); #29 adds `_begin_roster_session`/`_end_roster_session` + 30s Zoom UIA periodic refresh (every 10th poll) + `handle_extension_participants_updated` HTTP handler
       detection.py / enrichment.py            # Extension signal receiver + calendar enrichment; _EXCLUDED_HWNDS set + exclude/include helpers + UIA gate in detect_meeting_windows + is_window_alive
-      call_state.py                           # UIA call-state helpers + per-platform checkers (Teams, Zoom); teams checker is two-path: UIA property search hit short-circuits True, else falls back to the manual Control-view walk. Issue #30 round-2 diagnostics (uia_tree_shape, teams_window_identity, teams_leave_button_findall) emit once per hwnd on checker decline
+      call_state.py                           # UIA call-state helpers + per-platform checkers (Teams, Zoom); teams checker is two-path: UIA property search hit short-circuits True, else falls back to the manual Control-view walk. Issue #30 round-2 diagnostics (uia_tree_shape, teams_window_identity, teams_leave_button_findall) emit once per hwnd on checker decline. #29 adds `extract_zoom_participants` mirroring Teams via the shared `_walk_for_participants` helper
       state_machine.py / silence.py / recovery.py  # State transitions, silence auto-stop, crash recovery
       signal_popup.py                         # Manual recording popup; dedicated ThreadPoolExecutor, sticky shutdown flag, outstanding-futures tracking, ttk.Combobox
     calendar/                                 # Calendar integration
@@ -55,7 +56,9 @@ obsidian-recap/                               # Obsidian plugin (TypeScript)
   src/renameProcessor.ts / notificationHistory.ts  # Vault rename handler + daemon-backed notification renderer
   src/views/ / components/ / utils/format.ts  # Views (MeetingListView narrows to org subfolders; LiveTranscriptView; SpeakerCorrectionModal plays `/api/recordings/<stem>/clip`)
 extension/                                    # Chrome/Edge MV3 extension
-  manifest.json / background.js               # Bearer-authed `/api/meeting-*` signaling; authReady promise closes MV3 wake-up race; badge states: connected / AUTH / offline
+  manifest.json                               # v1.1.0 adds content_scripts + host_permissions for Meet/Zoho/tranzpay (#29)
+  background.js                               # Bearer-authed `/api/meeting-*` signaling; authReady promise closes MV3 wake-up race; badge states: connected / AUTH / offline. #29 adds `recap-roster-refresh` alarm (30s) + `refreshAllRosters` relay posting to `/api/meeting-participants-updated`
+  content.js                                  # #29: DOM scrapers (Meet + Zoho) invoked via `recap:get-roster` message from background; selector ladder with empty-fallback
   options.html / options.js                   # Pairing UI (loopback validation + `/bootstrap/token` exchange) + meeting URL patterns
 prompts/                                      # Claude prompt templates (meeting_analysis.md, meeting_briefing.md)
 tests/                                        # Pytest suite (unit tier; integration tier excluded by default via `-m 'not integration'`)
@@ -66,6 +69,8 @@ tests/                                        # Pytest suite (unit tier; integra
   test_phase3_integration.py / test_phase4_integration.py  # End-to-end daemon lifecycle + Phase 4 contracts (pairing, Bearer, events, config, WS)
   test_phase2_integration.py                  # End-to-end: calendar sync -> detection -> pipeline backfill
   test_unscheduled_integration.py             # End-to-end #27 flow: synthesis -> sidecar -> vault -> EventIndex
+  test_unscheduled_enrichment_integration.py  # End-to-end #29: Zoom/Meet/Zoho participant enrichment + Teams regression
+  test_roster.py / test_recorder_finalize.py / test_extension_lockstep.py  # #29 unit tests (ParticipantRoster, Recorder stop hooks, extension manifest/bg/options lockstep)
   test_daemon_config.py                       # DaemonConfig + OrgConfig.resolve_subfolder + org_by_slug helpers
   integration/                                # Phase 7 integration tier (marker `integration`)
     conftest.py                               # Session-scoped Parakeet/NeMo model fixtures + cuda_guard skip
