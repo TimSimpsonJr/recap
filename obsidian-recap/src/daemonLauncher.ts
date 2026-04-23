@@ -98,3 +98,70 @@ export function spawnLauncher(
     child.once("error", onError);
   });
 }
+
+export interface PollParams {
+  baseUrl: string;
+  child: ChildProcess;
+  intervalMs?: number;
+  totalMs?: number;
+  fetchImpl?: FetchLike;
+}
+
+export type PollResult =
+  | { kind: "READY" }
+  | { kind: "EXITED"; exitCode: number | null; signal: NodeJS.Signals | null }
+  | { kind: "TIMEOUT" };
+
+const DEFAULT_POLL_INTERVAL_MS = 500;
+const DEFAULT_POLL_TOTAL_MS = 15000;
+const PROBE_TIMEOUT_MS = 2000;
+
+/**
+ * Poll GET {baseUrl}/health until success, child exit, or overall
+ * timeout. Each individual probe has a 2s fetch timeout; outer loop
+ * retries every {intervalMs} until {totalMs} elapses.
+ *
+ * Concurrently listens for the child's 'exit' event so a pre-launcher
+ * failure (wrong cwd, bad args, Python crash before port bind) returns
+ * EXITED rather than waiting out the full poll window.
+ */
+export function pollUntilReady(params: PollParams): Promise<PollResult> {
+  const {
+    baseUrl, child,
+    intervalMs = DEFAULT_POLL_INTERVAL_MS,
+    totalMs = DEFAULT_POLL_TOTAL_MS,
+    fetchImpl = fetch,
+  } = params;
+
+  return new Promise((resolve) => {
+    let settled = false;
+    const startedAt = Date.now();
+
+    const finish = (result: PollResult) => {
+      if (settled) return;
+      settled = true;
+      child.removeListener("exit", onExit);
+      resolve(result);
+    };
+    const onExit = (code: number | null, signal: NodeJS.Signals | null) => {
+      finish({ kind: "EXITED", exitCode: code, signal });
+    };
+    child.once("exit", onExit);
+
+    const tick = async () => {
+      if (settled) return;
+      if (Date.now() - startedAt > totalMs) {
+        finish({ kind: "TIMEOUT" });
+        return;
+      }
+      const ok = await probeHealth(baseUrl, PROBE_TIMEOUT_MS, fetchImpl);
+      if (settled) return;
+      if (ok) {
+        finish({ kind: "READY" });
+        return;
+      }
+      setTimeout(tick, intervalMs);
+    };
+    tick();
+  });
+}

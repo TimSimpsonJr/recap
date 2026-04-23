@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { EventEmitter } from "events";
-import { probeHealth, spawnLauncher, LaunchResult } from "./daemonLauncher";
+import { probeHealth, spawnLauncher, LaunchResult, pollUntilReady, PollResult } from "./daemonLauncher";
 
 describe("probeHealth", () => {
   it("returns true when /health responds 200 within timeout", async () => {
@@ -118,5 +118,55 @@ describe("spawnLauncher", () => {
         }),
       }),
     );
+  });
+});
+
+describe("pollUntilReady", () => {
+  it("returns READY when /health succeeds within window", async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: false, status: 500 })
+      .mockResolvedValueOnce({ ok: false, status: 500 })
+      .mockResolvedValue({ ok: true, status: 200 });
+    const fakeChild = new FakeChild();
+    const result = await pollUntilReady({
+      baseUrl: "http://127.0.0.1:9847",
+      child: fakeChild as any,
+      intervalMs: 10,
+      totalMs: 1000,
+      fetchImpl: fetchMock as any,
+    });
+    expect(result.kind).toBe("READY");
+    expect(fetchMock.mock.calls.length).toBeGreaterThanOrEqual(3);
+  });
+
+  it("returns EXITED when child emits 'exit' before /health succeeds", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false });
+    const fakeChild = new FakeChild();
+    const promise = pollUntilReady({
+      baseUrl: "http://127.0.0.1:9847",
+      child: fakeChild as any,
+      intervalMs: 10,
+      totalMs: 5000,
+      fetchImpl: fetchMock as any,
+    });
+    queueMicrotask(() => fakeChild.emit("exit", 2, null));
+    const result = await promise;
+    expect(result.kind).toBe("EXITED");
+    if (result.kind === "EXITED") {
+      expect(result.exitCode).toBe(2);
+    }
+  });
+
+  it("returns TIMEOUT when /health never succeeds and child stays alive", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false });
+    const fakeChild = new FakeChild();
+    const result = await pollUntilReady({
+      baseUrl: "http://127.0.0.1:9847",
+      child: fakeChild as any,
+      intervalMs: 10,
+      totalMs: 50,
+      fetchImpl: fetchMock as any,
+    });
+    expect(result.kind).toBe("TIMEOUT");
   });
 });
