@@ -1034,11 +1034,13 @@ class TestRosterSessionLifecycle:
         detector = MeetingDetector(config=mock_config, recorder=_make_recorder_mock())
         detector._begin_roster_session(tab_id=42, browser_platform="google_meet")
         detector._polls_since_roster_refresh = 7
+        detector._recording_hwnd = 999  # simulate an hwnd-based recording having set this
         detector._end_roster_session()
         assert detector._active_roster is None
         assert detector._extension_recording_tab_id is None
         assert detector._current_browser_platform is None
         assert detector._polls_since_roster_refresh == 0
+        assert detector._recording_hwnd is None
 
     def test_end_registered_as_on_after_stop_hook(self, mock_config):
         """_begin_roster_session must register _end_roster_session as
@@ -1051,6 +1053,41 @@ class TestRosterSessionLifecycle:
         mock_recorder.on_after_stop()
         assert detector._active_roster is None
         assert detector._extension_recording_tab_id is None
+
+    @pytest.mark.asyncio
+    async def test_end_clears_recording_hwnd_prevents_cross_session_contamination(
+        self, mock_config,
+    ):
+        """Regression test: a prior hwnd-based recording whose window stays
+        open after stop (e.g., API/silence/duration stop while Zoom client
+        keeps running) must not leak its hwnd into the next recording's
+        Zoom UIA periodic refresh or stop-monitoring. Without clearing
+        _recording_hwnd in _end_roster_session, a later browser or manual
+        recording would inherit the stale hwnd and harvest participants
+        from the wrong meeting. Refs Codex review of commit 631740d."""
+        mock_recorder = _make_recorder_mock()
+        detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
+
+        # Session 1: hwnd-based Zoom recording, ends via API/silence/etc
+        # (not via window-closed path — so the inline clear at _poll_once
+        # doesn't run).
+        detector._tracked_meetings[500] = MeetingWindow(
+            hwnd=500, title="Zoom Meeting", platform="zoom",
+        )
+        detector._recording_hwnd = 500
+        detector._begin_roster_session()
+        # Simulate recorder.stop() firing on_after_stop (as API path would).
+        mock_recorder.on_after_stop()
+
+        # Session 1 teardown must fully clear hwnd.
+        assert detector._recording_hwnd is None, (
+            "Stale _recording_hwnd from session 1 would contaminate session 2"
+        )
+
+        # Session 2: browser recording — does NOT set _recording_hwnd.
+        detector._begin_roster_session(tab_id=77, browser_platform="google_meet")
+        # _recording_hwnd must still be None — no leak from session 1.
+        assert detector._recording_hwnd is None
 
 
 class TestStartPathsUseRoster:

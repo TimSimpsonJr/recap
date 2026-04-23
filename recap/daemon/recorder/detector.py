@@ -331,11 +331,22 @@ class MeetingDetector:
         path — API, silence, duration, fatal, extension. Clearing the
         recorder hooks here prevents stale roster.finalize from a previous
         session firing on a subsequent manual recording (tray/API start)
-        that bypasses _begin_roster_session."""
+        that bypasses _begin_roster_session.
+
+        Also clears ``_recording_hwnd``: the existing stop-monitoring path
+        only clears it when ``is_window_alive`` returns false, so stops
+        triggered by other paths (API, silence, duration, fatal, extension)
+        would leave it pointing at a possibly-still-alive window. The
+        Zoom UIA periodic refresh and window-alive stop check both key
+        off ``_recording_hwnd``, so a stale value lets a later recording
+        harvest participants from the wrong meeting or stop when the old
+        window closes.
+        """
         self._active_roster = None
         self._extension_recording_tab_id = None
         self._current_browser_platform = None
         self._polls_since_roster_refresh = 0
+        self._recording_hwnd = None
         self._recorder.on_before_finalize = None
         self._recorder.on_after_stop = None
 
