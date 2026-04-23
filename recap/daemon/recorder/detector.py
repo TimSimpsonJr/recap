@@ -14,8 +14,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Awaitable, Callable
 
 from recap.artifacts import RecordingMetadata, to_vault_relative
+from recap.daemon.recorder.call_state import extract_zoom_participants
 from recap.daemon.recorder.detection import MeetingWindow, detect_meeting_windows, is_window_alive
-from recap.daemon.recorder.enrichment import enrich_meeting_metadata
+from recap.daemon.recorder.enrichment import enrich_meeting_metadata, match_known_contacts
 from recap.daemon.recorder.roster import ParticipantRoster
 from recap.models import Participant
 
@@ -40,6 +41,7 @@ _PLATFORM_LABELS = {
 _POLL_INTERVAL_SECONDS = 3
 _ARMED_POLL_INTERVAL_SECONDS = 1
 _ARM_TIMEOUT = timedelta(minutes=10)
+_ROSTER_REFRESH_POLLS = 10  # 10 polls * 3s base interval = 30s cadence
 
 
 class MeetingDetector:
@@ -337,6 +339,28 @@ class MeetingDetector:
         self._recorder.on_before_finalize = None
         self._recorder.on_after_stop = None
 
+    async def _refresh_roster_uia(self) -> None:
+        """Platform-dispatched UIA roster refresh during active recording.
+
+        v1 scope: Zoom only. Teams deliberately skipped per issue non-goal
+        'don't change Teams enrichment.' Browser-platform recordings don't
+        have a daemon-side hwnd to walk — their refresh comes over HTTP.
+        """
+        if self._active_roster is None or self._recording_hwnd is None:
+            return
+        meeting = self._tracked_meetings.get(self._recording_hwnd)
+        if meeting is None or meeting.platform != "zoom":
+            return
+        names = extract_zoom_participants(self._recording_hwnd)
+        if not names:
+            return
+        matched = match_known_contacts(names, self._config.known_contacts)
+        self._active_roster.merge(
+            "zoom_uia_periodic",
+            matched,
+            datetime.now().astimezone(),
+        )
+
     async def handle_extension_meeting_detected(
         self,
         *,
@@ -485,6 +509,17 @@ class MeetingDetector:
                 )
                 self._pending_signal_tasks.add(task)
                 task.add_done_callback(self._on_signal_task_done)
+
+        # --- Periodic roster refresh for hwnd-based recordings (Zoom v1) ---
+        if (
+            self._recorder.is_recording
+            and self._recording_hwnd is not None
+            and self._active_roster is not None
+        ):
+            self._polls_since_roster_refresh += 1
+            if self._polls_since_roster_refresh >= _ROSTER_REFRESH_POLLS:
+                self._polls_since_roster_refresh = 0
+                await self._refresh_roster_uia()
 
         # --- End-of-poll prune with active-recording protection ---
         # A UIA flap can make ``detect_meeting_windows`` briefly omit the
