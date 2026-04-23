@@ -1,10 +1,13 @@
 """Tests for detection polling loop."""
 import asyncio
+import re
 import pytest
-from datetime import datetime, timedelta
-from unittest.mock import MagicMock, patch, AsyncMock
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from unittest.mock import MagicMock, Mock, patch, AsyncMock
 from recap.daemon.recorder.detector import MeetingDetector
 from recap.daemon.recorder.detection import MeetingWindow
+from recap.models import Participant
 
 
 def _make_recorder_mock():
@@ -67,7 +70,13 @@ class TestMeetingDetector:
         args, kwargs = mock_recorder.start.call_args
         assert args == ("disbursecloud",)
         assert kwargs["detected"] is True
-        assert kwargs["metadata"].title == "Sprint"
+        # Unscheduled synthesis (Task 3) overrides the enriched window title
+        # with the platform label when there's no calendar event and no
+        # pre-existing note. The window-derived "Sprint" is intentionally
+        # replaced by "Teams call" to avoid PII leaking into filenames.
+        assert kwargs["metadata"].title == "Teams call"
+        assert kwargs["metadata"].event_id is not None
+        assert kwargs["metadata"].event_id.startswith("unscheduled:")
 
     @pytest.mark.asyncio
     async def test_prompt_behavior_calls_callback(self, mock_config):
@@ -749,3 +758,228 @@ class TestOrgSubfolderResolution:
             detector._find_calendar_note("unknown-slug", "evt-1")
 
         assert captured["meetings_dir"] == vault / "Personal" / "Meetings"
+
+
+# ---------------------------------------------------------------------------
+# _resolve_org_and_subfolder helper (Task 2 for unscheduled-meetings)
+# ---------------------------------------------------------------------------
+
+
+def _make_detector_with_org(tmp_path):
+    """Factory: minimal detector where 'acme' org resolves to a subfolder."""
+    org_cfg = Mock()
+    org_cfg.slug = "acme"
+    org_cfg.resolve_subfolder = lambda vault: vault / "Acme"
+
+    config = Mock()
+    config.vault_path = str(tmp_path)
+    config.org_by_slug = lambda slug: org_cfg if slug == "acme" else None
+    config.default_org = org_cfg
+
+    recorder = Mock()
+    return MeetingDetector(config=config, recorder=recorder)
+
+
+def test_resolve_org_and_subfolder_returns_tuple(tmp_path):
+    """Helper returns (OrgConfig, resolved-subfolder-path)."""
+    detector = _make_detector_with_org(tmp_path)
+    org_cfg, subfolder = detector._resolve_org_and_subfolder("acme")
+    assert org_cfg.slug == "acme"
+    assert subfolder == tmp_path / "Acme"
+
+
+def test_resolve_org_and_subfolder_returns_none_when_no_match(tmp_path):
+    """Unknown slug + no default returns (None, None)."""
+    config = Mock()
+    config.vault_path = str(tmp_path)
+    config.org_by_slug = lambda slug: None
+    config.default_org = None
+    detector = MeetingDetector(config=config, recorder=Mock())
+    assert detector._resolve_org_and_subfolder("nonexistent") == (None, None)
+
+
+# ---------------------------------------------------------------------------
+# _build_recording_metadata synthesis (Task 3 for unscheduled-meetings)
+# ---------------------------------------------------------------------------
+
+
+def test_build_recording_metadata_synthesizes_unscheduled_identity(tmp_path, monkeypatch):
+    """No calendar event + no existing note -> synthetic id + precomputed path."""
+    class _FakeDatetime:
+        @staticmethod
+        def now(tz=None):
+            # Simulate a machine where the local wall-clock is 2026-04-22 14:30.
+            # datetime.now() returns naive local; .astimezone() picks up host tz.
+            if tz is None:
+                return datetime(2026, 4, 22, 14, 30, 0)  # naive, represents local wall-clock
+            return datetime(2026, 4, 22, 14, 30, 0, tzinfo=tz)
+
+    import recap.daemon.recorder.detector as det_mod
+    monkeypatch.setattr(det_mod, "datetime", _FakeDatetime)
+
+    detector = _make_detector_with_org(tmp_path)
+    (tmp_path / "Acme" / "Meetings").mkdir(parents=True)
+
+    metadata = detector._build_recording_metadata(
+        org="acme",
+        title="Whatever window said",
+        platform="teams",
+        participants=[],
+        meeting_link="",
+        event_id=None,
+    )
+
+    assert metadata.event_id is not None
+    assert re.fullmatch(r"unscheduled:[0-9a-f]{32}", metadata.event_id)
+    assert metadata.note_path == "Acme/Meetings/2026-04-22 1430 - Teams call.md"
+    assert metadata.recording_started_at is not None
+    assert metadata.title == "Teams call"
+    assert metadata.participants == []
+    assert metadata.meeting_link == ""
+    assert metadata.calendar_source is None
+    assert metadata.platform == "teams"
+    assert metadata.date == "2026-04-22"
+
+
+def test_build_recording_metadata_with_event_id_keeps_calendar_path(tmp_path, monkeypatch):
+    """With an event_id, no synthesis happens (scheduled path unchanged)."""
+    detector = _make_detector_with_org(tmp_path)
+    metadata = detector._build_recording_metadata(
+        org="acme", title="Sprint Planning", platform="teams",
+        participants=[Participant(name="Alice")],
+        meeting_link="https://teams.example/x",
+        event_id="real-calendar-event-id-123",
+    )
+    assert metadata.event_id == "real-calendar-event-id-123"
+    assert not metadata.event_id.startswith("unscheduled:")
+    assert metadata.title == "Sprint Planning"
+    assert metadata.recording_started_at is None
+
+
+def test_build_recording_metadata_platform_label_map(tmp_path, monkeypatch):
+    """Each known platform gets its 'X call' label; unknown falls back to Titlecase + ' call'."""
+    import recap.daemon.recorder.detector as det_mod
+
+    class _FakeDatetime:
+        @staticmethod
+        def now(tz=None):
+            if tz is None:
+                return datetime(2026, 4, 22, 9, 7, 0)
+            return datetime(2026, 4, 22, 9, 7, 0, tzinfo=tz)
+    monkeypatch.setattr(det_mod, "datetime", _FakeDatetime)
+
+    detector = _make_detector_with_org(tmp_path)
+    (tmp_path / "Acme" / "Meetings").mkdir(parents=True)
+
+    for platform, label in [("teams", "Teams call"), ("zoom", "Zoom call"),
+                             ("signal", "Signal call")]:
+        m = detector._build_recording_metadata(
+            org="acme", title="", platform=platform,
+            participants=[], meeting_link="", event_id=None,
+        )
+        assert m.title == label
+        assert f"- {label}.md" in m.note_path
+
+
+def test_build_recording_metadata_collision_appends_suffix(tmp_path, monkeypatch):
+    """Second same-minute Teams call gets '(2)' suffix."""
+    import recap.daemon.recorder.detector as det_mod
+
+    class _FakeDatetime:
+        @staticmethod
+        def now(tz=None):
+            if tz is None:
+                return datetime(2026, 4, 22, 14, 30, 0)
+            return datetime(2026, 4, 22, 14, 30, 0, tzinfo=tz)
+    monkeypatch.setattr(det_mod, "datetime", _FakeDatetime)
+
+    detector = _make_detector_with_org(tmp_path)
+    meetings_dir = tmp_path / "Acme" / "Meetings"
+    meetings_dir.mkdir(parents=True)
+    (meetings_dir / "2026-04-22 1430 - Teams call.md").write_text("stub")
+
+    metadata = detector._build_recording_metadata(
+        org="acme", title="", platform="teams",
+        participants=[], meeting_link="", event_id=None,
+    )
+    assert metadata.note_path == "Acme/Meetings/2026-04-22 1430 - Teams call (2).md"
+
+
+def test_build_recording_metadata_collision_escalates_to_seconds(tmp_path, monkeypatch):
+    """9 pre-existing suffixes -> falls through to HHMMSS timestamp."""
+    import recap.daemon.recorder.detector as det_mod
+
+    class _FakeDatetime:
+        @staticmethod
+        def now(tz=None):
+            if tz is None:
+                return datetime(2026, 4, 22, 14, 30, 45)
+            return datetime(2026, 4, 22, 14, 30, 45, tzinfo=tz)
+    monkeypatch.setattr(det_mod, "datetime", _FakeDatetime)
+
+    detector = _make_detector_with_org(tmp_path)
+    meetings_dir = tmp_path / "Acme" / "Meetings"
+    meetings_dir.mkdir(parents=True)
+    (meetings_dir / "2026-04-22 1430 - Teams call.md").write_text("stub")
+    for n in range(2, 10):
+        (meetings_dir / f"2026-04-22 1430 - Teams call ({n}).md").write_text("stub")
+
+    metadata = detector._build_recording_metadata(
+        org="acme", title="", platform="teams",
+        participants=[], meeting_link="", event_id=None,
+    )
+    assert metadata.note_path == "Acme/Meetings/2026-04-22 143045 - Teams call.md"
+
+
+def test_build_recording_metadata_unknown_platform_label_fallback(tmp_path, monkeypatch):
+    """Platform not in _PLATFORM_LABELS uses Titlecase fallback."""
+    import recap.daemon.recorder.detector as det_mod
+
+    class _FakeDatetime:
+        @staticmethod
+        def now(tz=None):
+            if tz is None:
+                return datetime(2026, 4, 22, 10, 0, 0)
+            return datetime(2026, 4, 22, 10, 0, 0, tzinfo=tz)
+    monkeypatch.setattr(det_mod, "datetime", _FakeDatetime)
+
+    detector = _make_detector_with_org(tmp_path)
+    (tmp_path / "Acme" / "Meetings").mkdir(parents=True)
+
+    metadata = detector._build_recording_metadata(
+        org="acme", title="", platform="meet",
+        participants=[], meeting_link="", event_id=None,
+    )
+    assert metadata.title == "Meet call"
+    assert metadata.note_path == "Acme/Meetings/2026-04-22 1000 - Meet call.md"
+
+
+def test_extension_detection_path_synthesizes_unscheduled(tmp_path, monkeypatch):
+    """`_recording_metadata_from_enriched` inherits synthesis behavior."""
+    import recap.daemon.recorder.detector as det_mod
+
+    class _FakeDatetime:
+        @staticmethod
+        def now(tz=None):
+            if tz is None:
+                return datetime(2026, 4, 22, 16, 15, 0)
+            return datetime(2026, 4, 22, 16, 15, 0, tzinfo=tz)
+    monkeypatch.setattr(det_mod, "datetime", _FakeDatetime)
+
+    detector = _make_detector_with_org(tmp_path)
+    (tmp_path / "Acme" / "Meetings").mkdir(parents=True)
+
+    metadata = detector._recording_metadata_from_enriched(
+        "acme",
+        {"title": "Browser Meeting", "participants": [], "platform": "zoom"},
+        meeting_link="https://zoom.example/42",
+        event_id=None,
+    )
+    assert metadata.event_id is not None
+    assert metadata.event_id.startswith("unscheduled:")
+    assert metadata.title == "Zoom call"
+    assert metadata.note_path == "Acme/Meetings/2026-04-22 1615 - Zoom call.md"
+    assert metadata.meeting_link == "https://zoom.example/42"
+    assert metadata.recording_started_at is not None
+    # Belt-and-braces: the captured instant is timezone-aware.
+    assert metadata.recording_started_at.tzinfo is not None

@@ -15,8 +15,10 @@ from recap.models import (
     Participant,
     ProfileStub,
 )
+from recap.artifacts import RecordingMetadata
 from recap.vault import (
     MEETING_RECORD_MARKER,
+    build_canonical_frontmatter,
     write_meeting_note,
     write_profile_stubs,
     find_previous_meeting,
@@ -537,3 +539,142 @@ class TestFindPreviousMeeting:
             exclude_filename="2026-03-16 - Meeting.md",
         )
         assert result == "2026-03-09 - CRLF Meeting"
+
+
+def _stub_meta_and_analysis():
+    """Minimal MeetingMetadata + AnalysisResult for frontmatter tests."""
+    meta = MeetingMetadata(
+        title="Teams call", date=date(2026, 4, 22),
+        participants=[], platform="teams",
+    )
+    analysis = AnalysisResult(
+        speaker_mapping={}, meeting_type="general", summary="s",
+        key_points=[], decisions=[], action_items=[],
+        follow_ups=[], relationship_notes=None,
+        people=[], companies=[],
+    )
+    return meta, analysis
+
+
+def test_canonical_frontmatter_adds_unscheduled_tag(tmp_path):
+    """event-id starting with unscheduled: -> 'unscheduled' tag appended."""
+    meta, analysis = _stub_meta_and_analysis()
+    recording_meta = RecordingMetadata(
+        org="acme", note_path="Acme/Meetings/x.md", title="Teams call",
+        date="2026-04-22", participants=[], platform="teams",
+        event_id="unscheduled:abc123",
+    )
+    fm = build_canonical_frontmatter(
+        metadata=meta, analysis=analysis, duration_seconds=2712,
+        recording_path=pathlib.Path("x.flac"), org="acme", org_subfolder="Acme",
+        recording_metadata=recording_meta,
+    )
+    assert fm["tags"] == ["meeting/general", "unscheduled"]
+    assert fm["event-id"] == "unscheduled:abc123"
+
+
+def test_canonical_frontmatter_keeps_single_tag_for_scheduled():
+    """Real event-id -> no 'unscheduled' tag."""
+    meta, analysis = _stub_meta_and_analysis()
+    recording_meta = RecordingMetadata(
+        org="acme", note_path="Acme/Meetings/x.md", title="Teams call",
+        date="2026-04-22", participants=[], platform="teams",
+        event_id="real-cal-id-123",
+    )
+    fm = build_canonical_frontmatter(
+        metadata=meta, analysis=analysis, duration_seconds=2712,
+        recording_path=pathlib.Path("x.flac"), org="acme", org_subfolder="Acme",
+        recording_metadata=recording_meta,
+    )
+    assert fm["tags"] == ["meeting/general"]
+
+
+def test_canonical_frontmatter_no_unscheduled_tag_without_recording_metadata():
+    """No recording_metadata -> no event-id -> no unscheduled tag."""
+    meta, analysis = _stub_meta_and_analysis()
+    fm = build_canonical_frontmatter(
+        metadata=meta, analysis=analysis, duration_seconds=2712,
+        recording_path=pathlib.Path("x.flac"), org="acme", org_subfolder="Acme",
+    )
+    assert fm["tags"] == ["meeting/general"]
+    assert "event-id" not in fm
+
+
+from datetime import datetime, timezone
+
+
+def test_canonical_frontmatter_time_range_from_started_at_and_duration():
+    """time = HH:MM-HH:MM derived from recording_started_at + duration."""
+    meta, analysis = _stub_meta_and_analysis()
+    started = datetime(2026, 4, 22, 14, 30, 0, tzinfo=timezone.utc)
+    recording_meta = RecordingMetadata(
+        org="acme", note_path="Acme/Meetings/x.md", title="Teams call",
+        date="2026-04-22", participants=[], platform="teams",
+        event_id="unscheduled:abc",
+        recording_started_at=started,
+    )
+    fm = build_canonical_frontmatter(
+        metadata=meta, analysis=analysis,
+        duration_seconds=2712,  # 45 min 12 s
+        recording_path=pathlib.Path("x.flac"), org="acme",
+        org_subfolder="Acme", recording_metadata=recording_meta,
+    )
+    # 14:30 + 45:12 = 15:15
+    assert fm["time"] == "14:30-15:15"
+
+
+def test_canonical_frontmatter_time_omitted_when_recording_started_at_is_none():
+    """No recording_started_at -> no 'time' key (scheduled path owns it)."""
+    meta, analysis = _stub_meta_and_analysis()
+    recording_meta = RecordingMetadata(
+        org="acme", note_path="Acme/Meetings/x.md", title="Teams call",
+        date="2026-04-22", participants=[], platform="teams",
+        event_id="real-cal-id", recording_started_at=None,
+    )
+    fm = build_canonical_frontmatter(
+        metadata=meta, analysis=analysis, duration_seconds=2712,
+        recording_path=pathlib.Path("x.flac"), org="acme",
+        org_subfolder="Acme", recording_metadata=recording_meta,
+    )
+    assert "time" not in fm
+
+
+def test_canonical_frontmatter_time_degenerate_on_zero_duration():
+    """Zero duration -> valid HH:MM-HH:MM range with start==end."""
+    meta, analysis = _stub_meta_and_analysis()
+    started = datetime(2026, 4, 22, 14, 30, 0, tzinfo=timezone.utc)
+    recording_meta = RecordingMetadata(
+        org="acme", note_path="Acme/Meetings/x.md", title="Teams call",
+        date="2026-04-22", participants=[], platform="teams",
+        event_id="unscheduled:abc",
+        recording_started_at=started,
+    )
+    fm = build_canonical_frontmatter(
+        metadata=meta, analysis=analysis, duration_seconds=0,
+        recording_path=pathlib.Path("x.flac"), org="acme",
+        org_subfolder="Acme", recording_metadata=recording_meta,
+    )
+    # Valid range format, degenerate span — NEVER a bare "14:30".
+    assert fm["time"] == "14:30-14:30"
+
+
+def test_canonical_frontmatter_time_also_set_for_scheduled_when_started_at_present():
+    """Scheduled notes with recording_started_at also get computed time.
+
+    Calendar-owned 'time' at upsert-merge time is preserved by
+    _CALENDAR_OWNED_KEYS; this test just verifies the canonical fm
+    itself carries the computed value.
+    """
+    meta, analysis = _stub_meta_and_analysis()
+    started = datetime(2026, 4, 22, 9, 0, 0, tzinfo=timezone.utc)
+    recording_meta = RecordingMetadata(
+        org="acme", note_path="x.md", title="t", date="2026-04-22",
+        participants=[], platform="teams", event_id="real-cal-123",
+        recording_started_at=started,
+    )
+    fm = build_canonical_frontmatter(
+        metadata=meta, analysis=analysis, duration_seconds=900,  # 15 min
+        recording_path=pathlib.Path("x.flac"), org="acme",
+        org_subfolder="Acme", recording_metadata=recording_meta,
+    )
+    assert fm["time"] == "09:00-09:15"

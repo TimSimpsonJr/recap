@@ -1,14 +1,10 @@
 You are a meeting analyst. Analyze the following meeting transcript and metadata, then produce a structured JSON response.
 
-## Participant Roster
-
-The following people were expected in this meeting:
-
-{{participants}}
+{{roster_section}}
 
 ## Diarized Transcript
 
-The transcript uses speaker labels (SPEAKER_00, SPEAKER_01, etc.) assigned by an automated diarization system. Use conversational context (name mentions, introductions, role references, topics discussed) to map these labels to the participant roster above.
+{{transcript_instruction}}
 
 {{transcript}}
 

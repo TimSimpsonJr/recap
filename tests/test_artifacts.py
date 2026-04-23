@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import pathlib
+from datetime import datetime, timezone
 
 from recap.artifacts import (
     RecordingMetadata,
@@ -145,3 +146,37 @@ class TestRecordingMetadataAudioWarnings:
         assert loaded is not None
         assert loaded.audio_warnings == []
         assert loaded.system_audio_devices_seen == []
+
+
+def test_recording_metadata_has_recording_started_at_field():
+    """New field persists through sidecar serialization round-trip."""
+    ts = datetime(2026, 4, 22, 14, 30, 0, tzinfo=timezone.utc)
+    metadata = RecordingMetadata(
+        org="acme", note_path="Meetings/test.md", title="Test",
+        date="2026-04-22", participants=[], platform="teams",
+        recording_started_at=ts,
+    )
+    assert metadata.recording_started_at == ts
+
+    roundtripped = RecordingMetadata.from_dict(metadata.to_dict())
+    assert roundtripped.recording_started_at == ts
+
+
+def test_recording_metadata_missing_recording_started_at_deserializes_to_none():
+    """Pre-#27 sidecars without the field load cleanly with None."""
+    legacy_sidecar = {
+        "org": "acme", "note_path": "x.md", "title": "Test",
+        "date": "2026-04-22", "participants": [], "platform": "teams",
+        "calendar_source": None, "event_id": None, "meeting_link": "",
+    }
+    metadata = RecordingMetadata.from_dict(legacy_sidecar)
+    assert metadata.recording_started_at is None
+
+
+def test_recording_metadata_default_recording_started_at_is_none():
+    """Default factory omits the field cleanly."""
+    metadata = RecordingMetadata(
+        org="acme", note_path="", title="Test", date="2026-04-22",
+        participants=[], platform="teams",
+    )
+    assert metadata.recording_started_at is None

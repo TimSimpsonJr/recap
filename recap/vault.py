@@ -4,7 +4,7 @@ from __future__ import annotations
 import logging
 import pathlib
 import re
-from datetime import date
+from datetime import date, timedelta
 from typing import TYPE_CHECKING
 
 import yaml
@@ -132,6 +132,25 @@ def build_canonical_frontmatter(
             fm["system-audio-devices-seen"] = list(
                 recording_metadata.system_audio_devices_seen,
             )
+
+    # Time range for notes whose start is known (typically unscheduled
+    # synthesis via #27). Scheduled notes derive 'time' from calendar
+    # sync; it's a calendar-owned field preserved via _merge_frontmatter
+    # when upserting, so we don't block setting it here either.
+    if (
+        recording_metadata is not None
+        and recording_metadata.recording_started_at is not None
+    ):
+        started = recording_metadata.recording_started_at
+        end = started + timedelta(seconds=int(duration_seconds))
+        fm["time"] = f"{started:%H:%M}-{end:%H:%M}"
+
+    # Tag augmentation for unscheduled meetings (#27). Keep the canonical
+    # meeting/<type> tag (analyzed type stays authoritative) and append
+    # 'unscheduled' so Dataview queries can surface them.
+    event_id = fm.get("event-id", "")
+    if isinstance(event_id, str) and event_id.startswith("unscheduled:"):
+        fm["tags"] = list(fm["tags"]) + ["unscheduled"]
 
     return fm
 

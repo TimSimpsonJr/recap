@@ -13,9 +13,9 @@
 recap/                                        # Python package
   __init__.py / __main__.py                   # Package init + CLI entry
   cli.py                                      # CLI argument parsing
-  analyze.py                                  # Claude CLI invocation for meeting analysis
-  artifacts.py                                # RecordingMetadata sidecar + note title/path helpers (resolve_note_path, to_vault_relative)
-  vault.py                                    # Obsidian vault note writer; upsert_note updates EventIndex via _update_index_if_applicable
+  analyze.py                                  # Claude CLI invocation for meeting analysis; {{roster_section}}/{{transcript_instruction}} swap for empty-roster prompts
+  artifacts.py                                # RecordingMetadata sidecar (+ recording_started_at) + note title/path helpers (resolve_note_path, to_vault_relative)
+  vault.py                                    # Obsidian vault note writer; upsert_note updates EventIndex via _update_index_if_applicable; unscheduled tag + time-range derivation from recording_started_at
   models.py / errors.py                       # Shared data models + typed exceptions
   daemon/                                     # Background service
     __main__.py                               # Thin entry: constructs `Daemon(config).start()`
@@ -31,7 +31,7 @@ recap/                                        # Python package
     recorder/                                 # Audio capture subsystem
       recorder.py                             # Recording orchestrator; uses `audio_capture.on_chunk`
       audio.py                                # WASAPI loopback capture (PyAudioWPatch) via pyflac 3.0 StreamEncoder (no `channels=` kwarg)
-      detector.py                             # Meeting window detector; two-path pruning (stop-monitoring via is_window_alive + end-of-poll prune protecting _recording_hwnd); stop() awaits cancelled poll task
+      detector.py                             # Meeting window detector; two-path pruning (stop-monitoring via is_window_alive + end-of-poll prune protecting _recording_hwnd); stop() awaits cancelled poll task; _synthesize_unscheduled_identity(unscheduled:<uuid>, YYYY-MM-DD HHMM - {Platform} call.md, collision resolution)
       detection.py / enrichment.py            # Extension signal receiver + calendar enrichment; _EXCLUDED_HWNDS set + exclude/include helpers + UIA gate in detect_meeting_windows + is_window_alive
       call_state.py                           # UIA call-state helpers + per-platform checkers (Teams, Zoom); teams checker is two-path: UIA property search hit short-circuits True, else falls back to the manual Control-view walk. Issue #30 round-2 diagnostics (uia_tree_shape, teams_window_identity, teams_leave_button_findall) emit once per hwnd on checker decline
       state_machine.py / silence.py / recovery.py  # State transitions, silence auto-stop, crash recovery
@@ -60,6 +60,7 @@ tests/                                        # Pytest suite (unit tier; integra
   test_api_events.py / test_api_config.py / test_clip_endpoint.py  # Phase 4 endpoint tests (journal backfill, config DTO + PATCH, recording clip)
   test_phase3_integration.py / test_phase4_integration.py  # End-to-end daemon lifecycle + Phase 4 contracts (pairing, Bearer, events, config, WS)
   test_phase2_integration.py                  # End-to-end: calendar sync -> detection -> pipeline backfill
+  test_unscheduled_integration.py             # End-to-end #27 flow: synthesis -> sidecar -> vault -> EventIndex
   test_daemon_config.py                       # DaemonConfig + OrgConfig.resolve_subfolder + org_by_slug helpers
   integration/                                # Phase 7 integration tier (marker `integration`)
     conftest.py                               # Session-scoped Parakeet/NeMo model fixtures + cuda_guard skip
@@ -84,5 +85,6 @@ docs/handoffs/                                # Per-phase handoff notes + manual
 - **Org slug vs. subfolder:** `event.org` is the slug for frontmatter identity (`org:`); on-disk path comes from `OrgConfig.resolve_subfolder(vault_path)` in `sync.py`/`scheduler.py`/`recorder/detector.py`. The legacy `sync.org_subfolder()` hardcode is gone.
 - **Vault-relative `note_path`:** canonical form is vault-relative; `artifacts.to_vault_relative` converts and `artifacts.resolve_note_path` accepts legacy absolute or new relative inputs. Both `sync.write_calendar_note` and `vault.build_canonical_frontmatter` (called via `write_meeting_note` from the pipeline) emit matching canonical frontmatter so calendar-seeded and pipeline-upserted notes stay in lockstep.
 - **Speaker clip endpoint:** `/api/recordings/<stem>/clip?speaker=...` resolves `<stem>.flac` first, falls back to `<stem>.m4a` (archive output). Cached at `<recordings_path>/<stem>.clips/<speaker>_<N>s.mp3`; ffmpeg runs via `asyncio.to_thread(subprocess.run, ...)` and journals `clip_extraction_failed` on non-zero exit.
+- **Unscheduled meetings (#27):** `_build_recording_metadata` in `recorder/detector.py` synthesizes `event_id = "unscheduled:<uuid>"`, a precomputed `note_path` under `{org}/Meetings/YYYY-MM-DD HHMM - {Platform} call.md`, and `recording_started_at` (tz-aware). Downstream pipeline + vault + EventIndex see a valid event-id and run their existing calendar-backed codepaths. Vault adds an `unscheduled` tag and a `time: HH:MM-HH:MM` range computed from `recording_started_at + duration_seconds`. Analyze prompt swaps the participant-roster instructions for empty rosters. No retroactive calendar attachment — deferred to #33.
 - `models.py` and `errors.py` are shared across daemon, pipeline, and analysis layers.
 - Tests mirror source structure: `test_daemon_server.py` tests `daemon/server.py`, `test_streaming_*.py` tests `streaming/`, etc.
