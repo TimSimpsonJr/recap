@@ -140,6 +140,38 @@ def extract_teams_participants(hwnd: int) -> list[str] | None:
         return None
 
 
+def extract_zoom_participants(hwnd: int) -> list[str] | None:
+    """Extract participant names from a Zoom window via UI Automation.
+
+    Mirrors ``extract_teams_participants``. Returns a list of display
+    names, or ``None`` on any failure. Must never crash the caller.
+
+    Walks the UIA tree up to ``max_depth=15`` looking for ListItem
+    controls with a non-empty Name property (the Zoom participant
+    panel renders roster items this way).
+    """
+    try:
+        import uiautomation as auto  # type: ignore[import-untyped]
+        if auto is None:
+            return None
+
+        control = auto.ControlFromHandle(hwnd)
+        if not control:
+            logger.debug("UIA: no control for zoom hwnd %s", hwnd)
+            return None
+
+        names: list[str] = []
+        _walk_for_participants(control, names)
+        if not names:
+            logger.debug("UIA: no zoom participant names found for hwnd %s", hwnd)
+            return None
+        return names
+
+    except Exception:
+        logger.debug("UIA zoom extraction failed for hwnd %s", hwnd, exc_info=True)
+        return None
+
+
 _TEAMS_LEAVE_NAMES: set[str] = {"leave", "hang up", "end call"}
 _TEAMS_WALK_BUTTON_CAP = 20
 _TEAMS_WALK_MAX_DEPTH = 15

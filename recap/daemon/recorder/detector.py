@@ -8,13 +8,16 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from collections.abc import Sequence
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Awaitable, Callable
 
 from recap.artifacts import RecordingMetadata, to_vault_relative
+from recap.daemon.recorder.call_state import extract_zoom_participants
 from recap.daemon.recorder.detection import MeetingWindow, detect_meeting_windows, is_window_alive
-from recap.daemon.recorder.enrichment import enrich_meeting_metadata
+from recap.daemon.recorder.enrichment import enrich_meeting_metadata, match_known_contacts
+from recap.daemon.recorder.roster import ParticipantRoster
 from recap.models import Participant
 
 if TYPE_CHECKING:
@@ -38,6 +41,7 @@ _PLATFORM_LABELS = {
 _POLL_INTERVAL_SECONDS = 3
 _ARMED_POLL_INTERVAL_SECONDS = 1
 _ARM_TIMEOUT = timedelta(minutes=10)
+_ROSTER_REFRESH_POLLS = 10  # 10 polls * 3s base interval = 30s cadence
 
 
 class MeetingDetector:
@@ -59,6 +63,14 @@ class MeetingDetector:
         self._armed_event: dict | None = None
         self._recording_hwnd: int | None = None
         self._extension_recording_tab_id: int | None = None
+        # #29: roster accumulator for the currently-active recording. None
+        # when not recording. Set by _begin_roster_session() AFTER
+        # recorder.start() succeeds; cleared by _end_roster_session().
+        self._active_roster: ParticipantRoster | None = None
+        self._polls_since_roster_refresh: int = 0
+        # Captured at browser-path start so periodic refreshes can tag
+        # the merge with "browser_dom_<platform>".
+        self._current_browser_platform: str | None = None
         # In-flight signal-callback tasks (typically the Signal popup).
         # Spawning via ``create_task`` lets the poll loop keep ticking
         # while a callback is awaiting (e.g. the user is staring at the
@@ -276,8 +288,89 @@ class MeetingDetector:
         way auto-record and armed recordings do. Without this, a Signal
         recording continues until silence/max-duration/manual stop even after
         the user closes the Signal window.
+
+        Also arms an empty roster session so that stop-time finalization hooks
+        fire correctly; Signal has no participant enrichment so the roster
+        stays empty and no sidecar rewrite happens.
         """
         self._recording_hwnd = hwnd
+        self._begin_roster_session()
+
+    def _begin_roster_session(
+        self,
+        initial_names: Sequence[str] = (),
+        initial_source: str | None = None,
+        tab_id: int | None = None,
+        browser_platform: str | None = None,
+    ) -> None:
+        """Arm a fresh roster and register stop hooks.
+
+        MUST be called AFTER recorder.start() succeeds so a failed start
+        cannot leak detector session state. Seeds the roster when the
+        caller has a one-shot extraction (e.g. Teams UIA at detection),
+        so finalize() is idempotent when no later merges happen.
+        """
+        roster = ParticipantRoster()
+        if initial_names and initial_source:
+            roster.merge(
+                initial_source,
+                list(initial_names),
+                datetime.now().astimezone(),
+            )
+        self._active_roster = roster
+        self._extension_recording_tab_id = tab_id
+        self._current_browser_platform = browser_platform
+        self._polls_since_roster_refresh = 0
+        self._recorder.on_before_finalize = roster.finalize
+        self._recorder.on_after_stop = self._end_roster_session
+
+    def _end_roster_session(self) -> None:
+        """Clear detector-owned session state and recorder hooks.
+
+        Registered as Recorder.on_after_stop so it fires on every stop
+        path — API, silence, duration, fatal, extension. Clearing the
+        recorder hooks here prevents stale roster.finalize from a previous
+        session firing on a subsequent manual recording (tray/API start)
+        that bypasses _begin_roster_session.
+
+        Also clears ``_recording_hwnd``: the existing stop-monitoring path
+        only clears it when ``is_window_alive`` returns false, so stops
+        triggered by other paths (API, silence, duration, fatal, extension)
+        would leave it pointing at a possibly-still-alive window. The
+        Zoom UIA periodic refresh and window-alive stop check both key
+        off ``_recording_hwnd``, so a stale value lets a later recording
+        harvest participants from the wrong meeting or stop when the old
+        window closes.
+        """
+        self._active_roster = None
+        self._extension_recording_tab_id = None
+        self._current_browser_platform = None
+        self._polls_since_roster_refresh = 0
+        self._recording_hwnd = None
+        self._recorder.on_before_finalize = None
+        self._recorder.on_after_stop = None
+
+    async def _refresh_roster_uia(self) -> None:
+        """Platform-dispatched UIA roster refresh during active recording.
+
+        v1 scope: Zoom only. Teams deliberately skipped per issue non-goal
+        'don't change Teams enrichment.' Browser-platform recordings don't
+        have a daemon-side hwnd to walk — their refresh comes over HTTP.
+        """
+        if self._active_roster is None or self._recording_hwnd is None:
+            return
+        meeting = self._tracked_meetings.get(self._recording_hwnd)
+        if meeting is None or meeting.platform != "zoom":
+            return
+        names = extract_zoom_participants(self._recording_hwnd)
+        if not names:
+            return
+        matched = match_known_contacts(names, self._config.known_contacts)
+        self._active_roster.merge(
+            "zoom_uia_periodic",
+            matched,
+            datetime.now().astimezone(),
+        )
 
     async def handle_extension_meeting_detected(
         self,
@@ -308,7 +401,7 @@ class MeetingDetector:
         )
 
         await self._recorder.start(org, metadata=metadata, detected=True)
-        self._extension_recording_tab_id = tab_id
+        self._begin_roster_session(tab_id=tab_id, browser_platform=platform)
         if self._armed_event is not None:
             self._armed_event = None
         logger.info("Extension-triggered recording started for %s", platform)
@@ -324,8 +417,36 @@ class MeetingDetector:
             return False
 
         await self._recorder.stop()
-        self._extension_recording_tab_id = None
+        # _extension_recording_tab_id cleared by _end_roster_session via Recorder.on_after_stop.
         logger.info("Extension-triggered recording stopped for tab %s", tab_id)
+        return True
+
+    async def handle_extension_participants_updated(
+        self,
+        *,
+        tab_id: int | None,
+        participants: list[str],
+    ) -> bool:
+        """Browser-extension hook for live participant roster refresh.
+
+        Returns True if merged. Returns False (silent drop) for:
+          - no active recording
+          - no roster armed
+          - tab_id missing or mismatched with the current extension recording
+        """
+        if (
+            tab_id is None
+            or tab_id != self._extension_recording_tab_id
+            or self._active_roster is None
+            or not self._recorder.is_recording
+        ):
+            return False
+        platform = self._current_browser_platform or "unknown"
+        source = f"browser_dom_{platform}"
+        matched = match_known_contacts(participants, self._config.known_contacts)
+        self._active_roster.merge(
+            source, matched, datetime.now().astimezone(),
+        )
         return True
 
     # ------------------------------------------------------------------
@@ -388,6 +509,15 @@ class MeetingDetector:
                 )
                 await self._recorder.start(org, metadata=metadata, detected=True)
                 self._recording_hwnd = meeting.hwnd
+                initial_source = (
+                    f"{meeting.platform}_uia_detection"
+                    if enriched.get("participants")
+                    else None
+                )
+                self._begin_roster_session(
+                    initial_names=enriched.get("participants", ()),
+                    initial_source=initial_source,
+                )
                 self._armed_event = None  # consumed
                 continue
 
@@ -398,6 +528,15 @@ class MeetingDetector:
                 logger.info("Auto-recording %s meeting (org=%s)", meeting.platform, org)
                 await self._recorder.start(org, metadata=metadata, detected=True)
                 self._recording_hwnd = meeting.hwnd
+                initial_source = (
+                    f"{meeting.platform}_uia_detection"
+                    if enriched.get("participants")
+                    else None
+                )
+                self._begin_roster_session(
+                    initial_names=enriched.get("participants", ()),
+                    initial_source=initial_source,
+                )
             elif behavior == "prompt" and self._on_signal_detected is not None:
                 # Fire-and-track: run the callback as a concurrent task so
                 # the poll loop continues ticking while a slow awaitable
@@ -409,6 +548,17 @@ class MeetingDetector:
                 )
                 self._pending_signal_tasks.add(task)
                 task.add_done_callback(self._on_signal_task_done)
+
+        # --- Periodic roster refresh for hwnd-based recordings (Zoom v1) ---
+        if (
+            self._recorder.is_recording
+            and self._recording_hwnd is not None
+            and self._active_roster is not None
+        ):
+            self._polls_since_roster_refresh += 1
+            if self._polls_since_roster_refresh >= _ROSTER_REFRESH_POLLS:
+                self._polls_since_roster_refresh = 0
+                await self._refresh_roster_uia()
 
         # --- End-of-poll prune with active-recording protection ---
         # A UIA flap can make ``detect_meeting_windows`` briefly omit the

@@ -918,3 +918,75 @@ class TestTeamsDiagnosticsEmittedOnCheckerDeclined:
         assert not any("uia_tree_shape" in m for m in messages)
         assert not any("teams_window_identity" in m for m in messages)
         assert not any("teams_leave_button_findall" in m for m in messages)
+
+
+class TestExtractZoomParticipants:
+    """Zoom UIA participant extraction - same structural pattern as Teams."""
+
+    def test_returns_names_from_list_items(self, monkeypatch):
+        import recap.daemon.recorder.call_state as cs
+
+        class FakeControl:
+            def __init__(self, control_type, name="", children=()):
+                self.ControlTypeName = control_type
+                self.Name = name
+                self._children = list(children)
+            def GetChildren(self):
+                return self._children
+
+        roster = FakeControl("PaneControl", "Participants", children=[
+            FakeControl("ListItemControl", "Alice"),
+            FakeControl("ListItemControl", "Bob"),
+        ])
+        root = FakeControl("WindowControl", children=[roster])
+
+        class FakeAuto:
+            @staticmethod
+            def ControlFromHandle(hwnd): return root
+
+        monkeypatch.setitem(__import__("sys").modules, "uiautomation", FakeAuto)
+
+        result = cs.extract_zoom_participants(42)
+        assert result == ["Alice", "Bob"]
+
+    def test_returns_none_when_no_participants(self, monkeypatch):
+        import recap.daemon.recorder.call_state as cs
+
+        class FakeControl:
+            ControlTypeName = "WindowControl"
+            Name = ""
+            def GetChildren(self): return []
+
+        class FakeAuto:
+            @staticmethod
+            def ControlFromHandle(hwnd): return FakeControl()
+
+        monkeypatch.setitem(__import__("sys").modules, "uiautomation", FakeAuto)
+        assert cs.extract_zoom_participants(42) is None
+
+    def test_returns_none_on_uia_exception(self, monkeypatch):
+        import recap.daemon.recorder.call_state as cs
+
+        class FakeAuto:
+            @staticmethod
+            def ControlFromHandle(hwnd): raise RuntimeError("UIA boom")
+
+        monkeypatch.setitem(__import__("sys").modules, "uiautomation", FakeAuto)
+        assert cs.extract_zoom_participants(42) is None
+
+    def test_returns_none_when_control_from_handle_returns_none(self, monkeypatch):
+        import recap.daemon.recorder.call_state as cs
+
+        class FakeAuto:
+            @staticmethod
+            def ControlFromHandle(hwnd): return None
+
+        monkeypatch.setitem(__import__("sys").modules, "uiautomation", FakeAuto)
+        assert cs.extract_zoom_participants(42) is None
+
+    def test_returns_none_when_uiautomation_import_fails(self, monkeypatch):
+        import recap.daemon.recorder.call_state as cs
+        import sys
+        # Make `import uiautomation` fail
+        monkeypatch.setitem(sys.modules, "uiautomation", None)
+        assert cs.extract_zoom_participants(42) is None

@@ -983,3 +983,482 @@ def test_extension_detection_path_synthesizes_unscheduled(tmp_path, monkeypatch)
     assert metadata.recording_started_at is not None
     # Belt-and-braces: the captured instant is timezone-aware.
     assert metadata.recording_started_at.tzinfo is not None
+
+
+class TestRosterSessionLifecycle:
+    """Session begin/end contract for the ParticipantRoster (#29)."""
+
+    @pytest.fixture
+    def mock_config(self):
+        config = MagicMock()
+        config.detection.teams.enabled = True
+        config.detection.teams.behavior = "auto-record"
+        config.detection.teams.default_org = "disbursecloud"
+        config.detection.zoom.enabled = True
+        config.detection.zoom.behavior = "auto-record"
+        config.detection.zoom.default_org = "disbursecloud"
+        config.detection.signal.enabled = True
+        config.detection.signal.behavior = "prompt"
+        config.detection.signal.default_org = "personal"
+        config.known_contacts = []
+        return config
+
+    def test_begin_creates_fresh_roster(self, mock_config):
+        detector = MeetingDetector(config=mock_config, recorder=_make_recorder_mock())
+        detector._begin_roster_session()
+        assert detector._active_roster is not None
+        assert detector._active_roster.current() == []
+
+    def test_begin_seeds_from_initial_names(self, mock_config):
+        detector = MeetingDetector(config=mock_config, recorder=_make_recorder_mock())
+        detector._begin_roster_session(
+            initial_names=["Alice", "Bob"],
+            initial_source="teams_uia_detection",
+        )
+        assert detector._active_roster.current() == ["Alice", "Bob"]
+
+    def test_begin_registers_both_recorder_hooks(self, mock_config):
+        mock_recorder = _make_recorder_mock()
+        detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
+        detector._begin_roster_session()
+        assert mock_recorder.on_before_finalize is not None
+        assert mock_recorder.on_after_stop is not None
+
+    def test_begin_stores_tab_id_and_browser_platform(self, mock_config):
+        detector = MeetingDetector(config=mock_config, recorder=_make_recorder_mock())
+        detector._begin_roster_session(tab_id=42, browser_platform="google_meet")
+        assert detector._extension_recording_tab_id == 42
+        assert detector._current_browser_platform == "google_meet"
+
+    def test_end_clears_all_session_state(self, mock_config):
+        detector = MeetingDetector(config=mock_config, recorder=_make_recorder_mock())
+        detector._begin_roster_session(tab_id=42, browser_platform="google_meet")
+        detector._polls_since_roster_refresh = 7
+        detector._recording_hwnd = 999  # simulate an hwnd-based recording having set this
+        detector._end_roster_session()
+        assert detector._active_roster is None
+        assert detector._extension_recording_tab_id is None
+        assert detector._current_browser_platform is None
+        assert detector._polls_since_roster_refresh == 0
+        assert detector._recording_hwnd is None
+
+    def test_end_registered_as_on_after_stop_hook(self, mock_config):
+        """_begin_roster_session must register _end_roster_session as
+        the recorder's on_after_stop hook, so every stop path triggers
+        cleanup — not just detector-initiated stops."""
+        mock_recorder = _make_recorder_mock()
+        detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
+        detector._begin_roster_session(tab_id=5)
+        # Simulate the recorder calling on_after_stop (as it does at end of stop()).
+        mock_recorder.on_after_stop()
+        assert detector._active_roster is None
+        assert detector._extension_recording_tab_id is None
+
+    @pytest.mark.asyncio
+    async def test_end_clears_recording_hwnd_prevents_cross_session_contamination(
+        self, mock_config,
+    ):
+        """Regression test: a prior hwnd-based recording whose window stays
+        open after stop (e.g., API/silence/duration stop while Zoom client
+        keeps running) must not leak its hwnd into the next recording's
+        Zoom UIA periodic refresh or stop-monitoring. Without clearing
+        _recording_hwnd in _end_roster_session, a later browser or manual
+        recording would inherit the stale hwnd and harvest participants
+        from the wrong meeting. Refs Codex review of commit 631740d."""
+        mock_recorder = _make_recorder_mock()
+        detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
+
+        # Session 1: hwnd-based Zoom recording, ends via API/silence/etc
+        # (not via window-closed path — so the inline clear at _poll_once
+        # doesn't run).
+        detector._tracked_meetings[500] = MeetingWindow(
+            hwnd=500, title="Zoom Meeting", platform="zoom",
+        )
+        detector._recording_hwnd = 500
+        detector._begin_roster_session()
+        # Simulate recorder.stop() firing on_after_stop (as API path would).
+        mock_recorder.on_after_stop()
+
+        # Session 1 teardown must fully clear hwnd.
+        assert detector._recording_hwnd is None, (
+            "Stale _recording_hwnd from session 1 would contaminate session 2"
+        )
+
+        # Session 2: browser recording — does NOT set _recording_hwnd.
+        detector._begin_roster_session(tab_id=77, browser_platform="google_meet")
+        # _recording_hwnd must still be None — no leak from session 1.
+        assert detector._recording_hwnd is None
+
+
+class TestStartPathsUseRoster:
+    """Every recorder.start() call site must arm a roster session. #29."""
+
+    @pytest.fixture
+    def mock_config(self):
+        config = MagicMock()
+        config.detection.teams.enabled = True
+        config.detection.teams.behavior = "auto-record"
+        config.detection.teams.default_org = "disbursecloud"
+        config.detection.zoom.enabled = True
+        config.detection.zoom.behavior = "auto-record"
+        config.detection.zoom.default_org = "disbursecloud"
+        config.detection.signal.enabled = True
+        config.detection.signal.behavior = "prompt"
+        config.detection.signal.default_org = "personal"
+        config.known_contacts = []
+        return config
+
+    @pytest.mark.asyncio
+    async def test_auto_record_path_primes_roster_with_enriched_participants(self, mock_config):
+        """Teams auto-record path: enriched["participants"] seeds the roster."""
+        mock_recorder = _make_recorder_mock()
+        detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
+        meeting = MeetingWindow(hwnd=100, title="Standup | Microsoft Teams", platform="teams")
+        with patch("recap.daemon.recorder.detector.detect_meeting_windows", return_value=[meeting]):
+            with patch(
+                "recap.daemon.recorder.detector.enrich_meeting_metadata",
+                return_value={"title": "Standup", "participants": ["Alice", "Bob"], "platform": "teams"},
+            ):
+                await detector._poll_once()
+        assert detector._active_roster is not None
+        assert detector._active_roster.current() == ["Alice", "Bob"]
+
+    @pytest.mark.asyncio
+    async def test_auto_record_zoom_initial_empty_roster(self, mock_config):
+        """Zoom auto-record: no UIA enrichment yet, so initial roster is empty."""
+        mock_recorder = _make_recorder_mock()
+        detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
+        meeting = MeetingWindow(hwnd=200, title="Zoom Meeting", platform="zoom")
+        with patch("recap.daemon.recorder.detector.detect_meeting_windows", return_value=[meeting]):
+            with patch(
+                "recap.daemon.recorder.detector.enrich_meeting_metadata",
+                return_value={"title": "Zoom Meeting", "participants": [], "platform": "zoom"},
+            ):
+                await detector._poll_once()
+        assert detector._active_roster is not None
+        assert detector._active_roster.current() == []
+
+    @pytest.mark.asyncio
+    async def test_begin_session_only_after_successful_start(self, mock_config):
+        """Recorder.start() raising must NOT leak detector session state."""
+        mock_recorder = _make_recorder_mock()
+        mock_recorder.start = AsyncMock(side_effect=RuntimeError("start failed"))
+        detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
+        meeting = MeetingWindow(hwnd=300, title="Zoom Meeting", platform="zoom")
+        with patch("recap.daemon.recorder.detector.detect_meeting_windows", return_value=[meeting]):
+            with patch(
+                "recap.daemon.recorder.detector.enrich_meeting_metadata",
+                return_value={"title": "Zoom Meeting", "participants": [], "platform": "zoom"},
+            ):
+                try:
+                    await detector._poll_once()
+                except Exception:
+                    pass
+        # Failed start must not leak session state.
+        assert detector._active_roster is None
+        assert detector._extension_recording_tab_id is None
+
+    @pytest.mark.asyncio
+    async def test_browser_path_primes_tab_id_and_browser_platform(self, mock_config):
+        mock_recorder = _make_recorder_mock()
+        detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
+        await detector.handle_extension_meeting_detected(
+            platform="google_meet",
+            url="https://meet.google.com/abc-defg-hij",
+            title="Quick Call",
+            tab_id=77,
+        )
+        assert detector._extension_recording_tab_id == 77
+        assert detector._current_browser_platform == "google_meet"
+        assert detector._active_roster is not None
+
+    @pytest.mark.asyncio
+    async def test_signal_mark_active_recording_begins_session(self, mock_config):
+        """Signal popup acceptance calls detector.mark_active_recording(hwnd),
+        which must also arm an (empty) roster session — otherwise stale hooks
+        from a previous recording could fire at Signal's stop time."""
+        mock_recorder = _make_recorder_mock()
+        detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
+        detector.mark_active_recording(hwnd=555)
+        assert detector._active_roster is not None
+        assert detector._active_roster.current() == []
+
+    @pytest.mark.asyncio
+    async def test_end_session_clears_recorder_hooks(self, mock_config):
+        """_end_roster_session must clear recorder.on_before_finalize and
+        on_after_stop to None, so a subsequent manual recording (tray/API
+        start) that bypasses _begin_roster_session doesn't invoke stale
+        roster.finalize from the previous session."""
+        mock_recorder = _make_recorder_mock()
+        detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
+        detector._begin_roster_session()
+        # Hooks are now set.
+        assert mock_recorder.on_before_finalize is not None
+        assert mock_recorder.on_after_stop is not None
+        # End the session.
+        detector._end_roster_session()
+        # Hooks are cleared.
+        assert mock_recorder.on_before_finalize is None
+        assert mock_recorder.on_after_stop is None
+
+    @pytest.mark.asyncio
+    async def test_extension_ended_does_not_double_clear_tab_id(self, mock_config):
+        """handle_extension_meeting_ended no longer sets _extension_recording_tab_id
+        = None directly — cleanup happens via on_after_stop → _end_roster_session.
+        Verify the direct assignment was removed and the cleanup still works."""
+        mock_recorder = _make_recorder_mock()
+        mock_recorder.is_recording = True
+        detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
+        # Simulate an extension-triggered recording is active.
+        detector._begin_roster_session(tab_id=77, browser_platform="google_meet")
+        # Call handle_extension_meeting_ended for matching tab.
+        result = await detector.handle_extension_meeting_ended(tab_id=77)
+        assert result is True
+        # After stop() returns, on_after_stop (registered by _begin_roster_session)
+        # fires — but in this mock test stop is an AsyncMock that doesn't invoke
+        # the hook, so we simulate it explicitly to verify the cleanup path.
+        # (The real integration would exercise this end-to-end.)
+        mock_recorder.on_after_stop()
+        assert detector._extension_recording_tab_id is None
+        assert detector._active_roster is None
+
+
+class TestZoomPeriodicRefresh:
+    """Zoom UIA roster refresh every 30s during active Zoom recording. #29."""
+
+    @pytest.fixture
+    def mock_config(self):
+        config = MagicMock()
+        config.detection.teams.enabled = True
+        config.detection.teams.behavior = "auto-record"
+        config.detection.teams.default_org = "disbursecloud"
+        config.detection.zoom.enabled = True
+        config.detection.zoom.behavior = "auto-record"
+        config.detection.zoom.default_org = "disbursecloud"
+        config.detection.signal.enabled = True
+        config.detection.signal.behavior = "prompt"
+        config.detection.signal.default_org = "personal"
+        config.known_contacts = []
+        return config
+
+    def _setup_active_zoom_recording(self, detector, hwnd=500):
+        """Simulate the post-start state: recording an hwnd-based Zoom meeting.
+        Sets is_recording=True, installs the MeetingWindow in tracked, arms
+        the roster session."""
+        detector._recorder.is_recording = True
+        detector._tracked_meetings[hwnd] = MeetingWindow(
+            hwnd=hwnd, title="Zoom Meeting", platform="zoom",
+        )
+        detector._recording_hwnd = hwnd
+        detector._begin_roster_session()
+
+    @pytest.mark.asyncio
+    async def test_refresh_every_tenth_poll(self, mock_config):
+        """Poll interval is 3s; refresh cadence is every 10 polls (30s)."""
+        mock_recorder = _make_recorder_mock()
+        detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
+        self._setup_active_zoom_recording(detector)
+
+        call_count = 0
+
+        def fake_extract(hwnd):
+            nonlocal call_count
+            call_count += 1
+            return ["Alice"]
+
+        with patch("recap.daemon.recorder.detector.detect_meeting_windows", return_value=[]):
+            with patch("recap.daemon.recorder.detector.extract_zoom_participants", side_effect=fake_extract):
+                with patch("recap.daemon.recorder.detector.is_window_alive", return_value=True):
+                    for _ in range(10):
+                        await detector._poll_once()
+
+        assert call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_off_cycle_polls_skip_uia(self, mock_config):
+        mock_recorder = _make_recorder_mock()
+        detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
+        self._setup_active_zoom_recording(detector)
+
+        called: list[int] = []
+
+        with patch("recap.daemon.recorder.detector.detect_meeting_windows", return_value=[]):
+            with patch(
+                "recap.daemon.recorder.detector.extract_zoom_participants",
+                side_effect=lambda hwnd: called.append(hwnd) or [],
+            ):
+                with patch("recap.daemon.recorder.detector.is_window_alive", return_value=True):
+                    for _ in range(9):
+                        await detector._poll_once()
+
+        assert called == []
+
+    @pytest.mark.asyncio
+    async def test_refresh_merges_into_roster(self, mock_config):
+        mock_recorder = _make_recorder_mock()
+        detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
+        self._setup_active_zoom_recording(detector)
+
+        with patch("recap.daemon.recorder.detector.detect_meeting_windows", return_value=[]):
+            with patch(
+                "recap.daemon.recorder.detector.extract_zoom_participants",
+                return_value=["Dana", "Eve"],
+            ):
+                with patch("recap.daemon.recorder.detector.is_window_alive", return_value=True):
+                    for _ in range(10):
+                        await detector._poll_once()
+
+        assert "Dana" in detector._active_roster.current()
+        assert "Eve" in detector._active_roster.current()
+
+    @pytest.mark.asyncio
+    async def test_refresh_skipped_when_not_recording(self, mock_config):
+        mock_recorder = _make_recorder_mock()
+        mock_recorder.is_recording = False
+        detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
+
+        called: list[int] = []
+
+        with patch("recap.daemon.recorder.detector.detect_meeting_windows", return_value=[]):
+            with patch(
+                "recap.daemon.recorder.detector.extract_zoom_participants",
+                side_effect=lambda hwnd: called.append(hwnd),
+            ):
+                for _ in range(20):
+                    await detector._poll_once()
+
+        assert called == []
+
+    @pytest.mark.asyncio
+    async def test_refresh_skipped_for_non_zoom_platform(self, mock_config):
+        """Teams stays one-shot per issue non-goal. Signal has no hwnd tracked."""
+        mock_recorder = _make_recorder_mock()
+        detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
+        # Simulate active Teams recording (hwnd-based, platform=teams).
+        detector._recorder.is_recording = True
+        detector._tracked_meetings[600] = MeetingWindow(
+            hwnd=600, title="Standup | Microsoft Teams", platform="teams",
+        )
+        detector._recording_hwnd = 600
+        detector._begin_roster_session()
+
+        called: list[int] = []
+
+        with patch("recap.daemon.recorder.detector.detect_meeting_windows", return_value=[]):
+            with patch(
+                "recap.daemon.recorder.detector.extract_zoom_participants",
+                side_effect=lambda hwnd: called.append(hwnd),
+            ):
+                with patch("recap.daemon.recorder.detector.is_window_alive", return_value=True):
+                    for _ in range(10):
+                        await detector._poll_once()
+
+        assert called == []
+
+    @pytest.mark.asyncio
+    async def test_refresh_skipped_when_extract_returns_none(self, mock_config):
+        """When extract_zoom_participants returns None (UIA failure), no merge."""
+        mock_recorder = _make_recorder_mock()
+        detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
+        self._setup_active_zoom_recording(detector)
+
+        with patch("recap.daemon.recorder.detector.detect_meeting_windows", return_value=[]):
+            with patch(
+                "recap.daemon.recorder.detector.extract_zoom_participants",
+                return_value=None,
+            ):
+                with patch("recap.daemon.recorder.detector.is_window_alive", return_value=True):
+                    for _ in range(10):
+                        await detector._poll_once()
+
+        # Roster remains empty since None -> skip merge.
+        assert detector._active_roster.current() == []
+
+
+class TestHandleExtensionParticipantsUpdated:
+    """Detector handler for /api/meeting-participants-updated HTTP pushes. #29."""
+
+    @pytest.fixture
+    def mock_config(self):
+        config = MagicMock()
+        config.detection.teams.enabled = True
+        config.detection.teams.behavior = "auto-record"
+        config.detection.teams.default_org = "disbursecloud"
+        config.detection.zoom.enabled = True
+        config.detection.zoom.behavior = "auto-record"
+        config.detection.zoom.default_org = "disbursecloud"
+        config.detection.signal.enabled = True
+        config.detection.signal.behavior = "prompt"
+        config.detection.signal.default_org = "personal"
+        config.known_contacts = []
+        return config
+
+    @pytest.mark.asyncio
+    async def test_valid_payload_merges_into_roster(self, mock_config):
+        mock_recorder = _make_recorder_mock()
+        mock_recorder.is_recording = True
+        detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
+        detector._begin_roster_session(tab_id=55, browser_platform="google_meet")
+        accepted = await detector.handle_extension_participants_updated(
+            tab_id=55, participants=["Fiona", "Greg"],
+        )
+        assert accepted is True
+        assert "Fiona" in detector._active_roster.current()
+        assert "Greg" in detector._active_roster.current()
+
+    @pytest.mark.asyncio
+    async def test_merge_source_uses_browser_platform(self, mock_config):
+        mock_recorder = _make_recorder_mock()
+        mock_recorder.is_recording = True
+        detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
+        detector._begin_roster_session(tab_id=55, browser_platform="zoho_meet")
+        await detector.handle_extension_participants_updated(
+            tab_id=55, participants=["Henry"],
+        )
+        # Source tag should be "browser_dom_zoho_meet"
+        assert "browser_dom_zoho_meet" in detector._active_roster._last_merge_per_source
+
+    @pytest.mark.asyncio
+    async def test_wrong_tab_id_returns_false(self, mock_config):
+        mock_recorder = _make_recorder_mock()
+        mock_recorder.is_recording = True
+        detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
+        detector._begin_roster_session(tab_id=55, browser_platform="google_meet")
+        accepted = await detector.handle_extension_participants_updated(
+            tab_id=999, participants=["Alice"],
+        )
+        assert accepted is False
+        assert detector._active_roster.current() == []
+
+    @pytest.mark.asyncio
+    async def test_no_active_roster_returns_false(self, mock_config):
+        mock_recorder = _make_recorder_mock()
+        mock_recorder.is_recording = False
+        detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
+        accepted = await detector.handle_extension_participants_updated(
+            tab_id=55, participants=["Alice"],
+        )
+        assert accepted is False
+
+    @pytest.mark.asyncio
+    async def test_not_recording_returns_false(self, mock_config):
+        mock_recorder = _make_recorder_mock()
+        mock_recorder.is_recording = False
+        detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
+        # Even with a roster armed, if not recording we reject.
+        detector._begin_roster_session(tab_id=55)
+        accepted = await detector.handle_extension_participants_updated(
+            tab_id=55, participants=["Alice"],
+        )
+        assert accepted is False
+
+    @pytest.mark.asyncio
+    async def test_none_tab_id_returns_false(self, mock_config):
+        mock_recorder = _make_recorder_mock()
+        mock_recorder.is_recording = True
+        detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
+        detector._begin_roster_session(tab_id=55, browser_platform="google_meet")
+        accepted = await detector.handle_extension_participants_updated(
+            tab_id=None, participants=["Alice"],
+        )
+        assert accepted is False

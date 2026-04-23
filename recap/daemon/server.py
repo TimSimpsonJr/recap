@@ -1045,6 +1045,71 @@ async def _meeting_ended_api(request: web.Request) -> web.Response:
     })
 
 
+async def _meeting_participants_updated_api(request: web.Request) -> web.Response:
+    """Browser-extension hook for live participant roster refresh (#29).
+
+    Validates and normalizes the payload before delegating to the detector.
+    Non-string entries are dropped; oversized lists are truncated at 100.
+    """
+    detector: MeetingDetector | None = request.app.get(_DETECTOR_KEY)
+    if detector is None:
+        return web.json_response({"error": "detector not available"}, status=503)
+
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return web.json_response({"error": "invalid JSON body"}, status=400)
+    except Exception as e:
+        logger.error(
+            "Unexpected error in _meeting_participants_updated_api: %s",
+            e, exc_info=True,
+        )
+        return web.json_response({"error": "internal server error"}, status=500)
+
+    if not isinstance(body, dict):
+        return web.json_response(
+            {"error": "request body must be a JSON object"}, status=400
+        )
+
+    if "tabId" not in body:
+        return web.json_response(
+            {"error": "missing required field: tabId"}, status=400
+        )
+
+    participants_raw = body.get("participants")
+    if not isinstance(participants_raw, list):
+        return web.json_response(
+            {"error": "missing or invalid field: participants (must be a list)"},
+            status=400,
+        )
+
+    # Filter non-string entries first so truncation counts only valid names.
+    participants: list[str] = [p for p in participants_raw if isinstance(p, str)]
+    dropped = len(participants_raw) - len(participants)
+    if dropped:
+        logger.debug(
+            "Dropped %d non-string participant entries on tab %s",
+            dropped, body.get("tabId"),
+        )
+
+    # Truncate oversized lists AFTER filtering so garbage can't displace
+    # valid names.
+    if len(participants) > 100:
+        logger.warning(
+            "Participant list for tab %s truncated from %d to 100 entries",
+            body.get("tabId"), len(participants),
+        )
+        participants = participants[:100]
+
+    accepted = await detector.handle_extension_participants_updated(
+        tab_id=body.get("tabId"),
+        participants=participants,
+    )
+    return web.json_response({
+        "status": "accepted" if accepted else "ignored",
+    })
+
+
 @web.middleware
 async def _cors_middleware(request: web.Request, handler):
     """Add CORS headers so the Obsidian plugin (``app://`` origin) can
@@ -1150,6 +1215,10 @@ def create_app(
     app.router.add_post("/api/disarm", _disarm)
     app.router.add_post("/api/meeting-detected", _meeting_detected_api)
     app.router.add_post("/api/meeting-ended", _meeting_ended_api)
+    app.router.add_post(
+        "/api/meeting-participants-updated",
+        _meeting_participants_updated_api,
+    )
     app.router.add_post("/api/meetings/reprocess", _reprocess)
     app.router.add_post("/api/meetings/speakers", _speakers)
     app.router.add_post("/api/index/rename", _api_index_rename)
