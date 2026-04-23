@@ -275,6 +275,140 @@ class TestApiMeetingEndedAuth:
 
 
 @pytest.mark.asyncio
+class TestApiParticipantsUpdatedEndpoint:
+    """POST /api/meeting-participants-updated — Bearer-authed browser roster push."""
+
+    async def test_returns_401_without_auth(self, client_with_detector):
+        client, _ = client_with_detector
+        resp = await client.post(
+            "/api/meeting-participants-updated",
+            json={"tabId": 1, "participants": ["Alice"]},
+        )
+        assert resp.status == 401
+
+    async def test_missing_tab_id_returns_400(self, client_with_detector):
+        client, _ = client_with_detector
+        resp = await client.post(
+            "/api/meeting-participants-updated",
+            json={"participants": ["Alice"]},
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 400
+
+    async def test_missing_participants_returns_400(self, client_with_detector):
+        client, _ = client_with_detector
+        resp = await client.post(
+            "/api/meeting-participants-updated",
+            json={"tabId": 1},
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 400
+
+    async def test_participants_not_a_list_returns_400(self, client_with_detector):
+        client, _ = client_with_detector
+        resp = await client.post(
+            "/api/meeting-participants-updated",
+            json={"tabId": 1, "participants": "Alice"},
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 400
+
+    async def test_body_not_object_returns_400(self, client_with_detector):
+        client, _ = client_with_detector
+        resp = await client.post(
+            "/api/meeting-participants-updated",
+            json=["not", "an", "object"],
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 400
+
+    async def test_invalid_json_returns_400(self, client_with_detector):
+        client, _ = client_with_detector
+        resp = await client.post(
+            "/api/meeting-participants-updated",
+            data="not json",
+            headers={
+                "Authorization": f"Bearer {AUTH_TOKEN}",
+                "Content-Type": "application/json",
+            },
+        )
+        assert resp.status == 400
+
+    async def test_non_string_entries_filtered(self, client_with_detector):
+        client, mock_detector = client_with_detector
+        captured: dict = {}
+        async def _handler(**kwargs):
+            captured.update(kwargs)
+            return True
+        mock_detector.handle_extension_participants_updated = _handler
+
+        resp = await client.post(
+            "/api/meeting-participants-updated",
+            json={"tabId": 42, "participants": ["Alice", None, {"x": "y"}, 123, "Carol"]},
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 200
+        # Filtered down to only strings.
+        assert captured["participants"] == ["Alice", "Carol"]
+
+    async def test_truncates_at_100(self, client_with_detector, caplog):
+        import logging
+        client, mock_detector = client_with_detector
+        captured: dict = {}
+        async def _handler(**kwargs):
+            captured.update(kwargs)
+            return True
+        mock_detector.handle_extension_participants_updated = _handler
+
+        big = [f"User{i}" for i in range(150)]
+        with caplog.at_level(logging.WARNING):
+            resp = await client.post(
+                "/api/meeting-participants-updated",
+                json={"tabId": 1, "participants": big},
+                headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+            )
+        assert resp.status == 200
+        assert len(captured["participants"]) == 100
+        assert any("truncated" in r.message.lower() for r in caplog.records)
+
+    async def test_returns_ignored_when_handler_returns_false(self, client_with_detector):
+        client, mock_detector = client_with_detector
+        async def _handler(**kwargs): return False
+        mock_detector.handle_extension_participants_updated = _handler
+
+        resp = await client.post(
+            "/api/meeting-participants-updated",
+            json={"tabId": 42, "participants": ["Alice"]},
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["status"] == "ignored"
+
+    async def test_returns_accepted_when_handler_returns_true(self, client_with_detector):
+        client, mock_detector = client_with_detector
+        async def _handler(**kwargs): return True
+        mock_detector.handle_extension_participants_updated = _handler
+
+        resp = await client.post(
+            "/api/meeting-participants-updated",
+            json={"tabId": 42, "participants": ["Alice"]},
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["status"] == "accepted"
+
+    async def test_no_detector_returns_503(self, client):
+        resp = await client.post(
+            "/api/meeting-participants-updated",
+            json={"tabId": 1, "participants": ["Alice"]},
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 503
+
+
+@pytest.mark.asyncio
 class TestLegacyRoutesDeleted:
     """Phase 4: the unauth ``/meeting-detected`` and ``/meeting-ended``
     transitional routes are gone. Only ``/api/meeting-*`` remains.

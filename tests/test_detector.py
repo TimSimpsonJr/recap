@@ -1336,3 +1336,92 @@ class TestZoomPeriodicRefresh:
 
         # Roster remains empty since None -> skip merge.
         assert detector._active_roster.current() == []
+
+
+class TestHandleExtensionParticipantsUpdated:
+    """Detector handler for /api/meeting-participants-updated HTTP pushes. #29."""
+
+    @pytest.fixture
+    def mock_config(self):
+        config = MagicMock()
+        config.detection.teams.enabled = True
+        config.detection.teams.behavior = "auto-record"
+        config.detection.teams.default_org = "disbursecloud"
+        config.detection.zoom.enabled = True
+        config.detection.zoom.behavior = "auto-record"
+        config.detection.zoom.default_org = "disbursecloud"
+        config.detection.signal.enabled = True
+        config.detection.signal.behavior = "prompt"
+        config.detection.signal.default_org = "personal"
+        config.known_contacts = []
+        return config
+
+    @pytest.mark.asyncio
+    async def test_valid_payload_merges_into_roster(self, mock_config):
+        mock_recorder = _make_recorder_mock()
+        mock_recorder.is_recording = True
+        detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
+        detector._begin_roster_session(tab_id=55, browser_platform="google_meet")
+        accepted = await detector.handle_extension_participants_updated(
+            tab_id=55, participants=["Fiona", "Greg"],
+        )
+        assert accepted is True
+        assert "Fiona" in detector._active_roster.current()
+        assert "Greg" in detector._active_roster.current()
+
+    @pytest.mark.asyncio
+    async def test_merge_source_uses_browser_platform(self, mock_config):
+        mock_recorder = _make_recorder_mock()
+        mock_recorder.is_recording = True
+        detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
+        detector._begin_roster_session(tab_id=55, browser_platform="zoho_meet")
+        await detector.handle_extension_participants_updated(
+            tab_id=55, participants=["Henry"],
+        )
+        # Source tag should be "browser_dom_zoho_meet"
+        assert "browser_dom_zoho_meet" in detector._active_roster._last_merge_per_source
+
+    @pytest.mark.asyncio
+    async def test_wrong_tab_id_returns_false(self, mock_config):
+        mock_recorder = _make_recorder_mock()
+        mock_recorder.is_recording = True
+        detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
+        detector._begin_roster_session(tab_id=55, browser_platform="google_meet")
+        accepted = await detector.handle_extension_participants_updated(
+            tab_id=999, participants=["Alice"],
+        )
+        assert accepted is False
+        assert detector._active_roster.current() == []
+
+    @pytest.mark.asyncio
+    async def test_no_active_roster_returns_false(self, mock_config):
+        mock_recorder = _make_recorder_mock()
+        mock_recorder.is_recording = False
+        detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
+        accepted = await detector.handle_extension_participants_updated(
+            tab_id=55, participants=["Alice"],
+        )
+        assert accepted is False
+
+    @pytest.mark.asyncio
+    async def test_not_recording_returns_false(self, mock_config):
+        mock_recorder = _make_recorder_mock()
+        mock_recorder.is_recording = False
+        detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
+        # Even with a roster armed, if not recording we reject.
+        detector._begin_roster_session(tab_id=55)
+        accepted = await detector.handle_extension_participants_updated(
+            tab_id=55, participants=["Alice"],
+        )
+        assert accepted is False
+
+    @pytest.mark.asyncio
+    async def test_none_tab_id_returns_false(self, mock_config):
+        mock_recorder = _make_recorder_mock()
+        mock_recorder.is_recording = True
+        detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
+        detector._begin_roster_session(tab_id=55, browser_platform="google_meet")
+        accepted = await detector.handle_extension_participants_updated(
+            tab_id=None, participants=["Alice"],
+        )
+        assert accepted is False

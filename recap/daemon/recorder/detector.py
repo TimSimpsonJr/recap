@@ -410,6 +410,34 @@ class MeetingDetector:
         logger.info("Extension-triggered recording stopped for tab %s", tab_id)
         return True
 
+    async def handle_extension_participants_updated(
+        self,
+        *,
+        tab_id: int | None,
+        participants: list[str],
+    ) -> bool:
+        """Browser-extension hook for live participant roster refresh.
+
+        Returns True if merged. Returns False (silent drop) for:
+          - no active recording
+          - no roster armed
+          - tab_id missing or mismatched with the current extension recording
+        """
+        if (
+            tab_id is None
+            or tab_id != self._extension_recording_tab_id
+            or self._active_roster is None
+            or not self._recorder.is_recording
+        ):
+            return False
+        platform = self._current_browser_platform or "unknown"
+        source = f"browser_dom_{platform}"
+        matched = match_known_contacts(participants, self._config.known_contacts)
+        self._active_roster.merge(
+            source, matched, datetime.now().astimezone(),
+        )
+        return True
+
     # ------------------------------------------------------------------
     # Polling
     # ------------------------------------------------------------------
