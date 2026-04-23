@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from collections.abc import Sequence
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Awaitable, Callable
@@ -15,6 +16,7 @@ from typing import TYPE_CHECKING, Awaitable, Callable
 from recap.artifacts import RecordingMetadata, to_vault_relative
 from recap.daemon.recorder.detection import MeetingWindow, detect_meeting_windows, is_window_alive
 from recap.daemon.recorder.enrichment import enrich_meeting_metadata
+from recap.daemon.recorder.roster import ParticipantRoster
 from recap.models import Participant
 
 if TYPE_CHECKING:
@@ -59,6 +61,14 @@ class MeetingDetector:
         self._armed_event: dict | None = None
         self._recording_hwnd: int | None = None
         self._extension_recording_tab_id: int | None = None
+        # #29: roster accumulator for the currently-active recording. None
+        # when not recording. Set by _begin_roster_session() AFTER
+        # recorder.start() succeeds; cleared by _end_roster_session().
+        self._active_roster: ParticipantRoster | None = None
+        self._polls_since_roster_refresh: int = 0
+        # Captured at browser-path start so periodic refreshes can tag
+        # the merge with "browser_dom_<platform>".
+        self._current_browser_platform: str | None = None
         # In-flight signal-callback tasks (typically the Signal popup).
         # Spawning via ``create_task`` lets the poll loop keep ticking
         # while a callback is awaiting (e.g. the user is staring at the
@@ -278,6 +288,43 @@ class MeetingDetector:
         the user closes the Signal window.
         """
         self._recording_hwnd = hwnd
+
+    def _begin_roster_session(
+        self,
+        initial_names: Sequence[str] = (),
+        initial_source: str | None = None,
+        tab_id: int | None = None,
+        browser_platform: str | None = None,
+    ) -> None:
+        """Arm a fresh roster and register stop hooks.
+
+        MUST be called AFTER recorder.start() succeeds so a failed start
+        cannot leak detector session state. Seeds the roster when the
+        caller has a one-shot extraction (e.g. Teams UIA at detection),
+        so finalize() is idempotent when no later merges happen.
+        """
+        roster = ParticipantRoster()
+        if initial_names and initial_source:
+            roster.merge(
+                initial_source,
+                list(initial_names),
+                datetime.now().astimezone(),
+            )
+        self._active_roster = roster
+        self._extension_recording_tab_id = tab_id
+        self._current_browser_platform = browser_platform
+        self._polls_since_roster_refresh = 0
+        self._recorder.on_before_finalize = roster.finalize
+        self._recorder.on_after_stop = self._end_roster_session
+
+    def _end_roster_session(self) -> None:
+        """Clear detector-owned session state. Registered as
+        Recorder.on_after_stop so it fires on every stop path — API,
+        silence, duration, fatal, extension."""
+        self._active_roster = None
+        self._extension_recording_tab_id = None
+        self._current_browser_platform = None
+        self._polls_since_roster_refresh = 0
 
     async def handle_extension_meeting_detected(
         self,

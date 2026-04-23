@@ -983,3 +983,71 @@ def test_extension_detection_path_synthesizes_unscheduled(tmp_path, monkeypatch)
     assert metadata.recording_started_at is not None
     # Belt-and-braces: the captured instant is timezone-aware.
     assert metadata.recording_started_at.tzinfo is not None
+
+
+class TestRosterSessionLifecycle:
+    """Session begin/end contract for the ParticipantRoster (#29)."""
+
+    @pytest.fixture
+    def mock_config(self):
+        config = MagicMock()
+        config.detection.teams.enabled = True
+        config.detection.teams.behavior = "auto-record"
+        config.detection.teams.default_org = "disbursecloud"
+        config.detection.zoom.enabled = True
+        config.detection.zoom.behavior = "auto-record"
+        config.detection.zoom.default_org = "disbursecloud"
+        config.detection.signal.enabled = True
+        config.detection.signal.behavior = "prompt"
+        config.detection.signal.default_org = "personal"
+        config.known_contacts = []
+        return config
+
+    def test_begin_creates_fresh_roster(self, mock_config):
+        detector = MeetingDetector(config=mock_config, recorder=_make_recorder_mock())
+        detector._begin_roster_session()
+        assert detector._active_roster is not None
+        assert detector._active_roster.current() == []
+
+    def test_begin_seeds_from_initial_names(self, mock_config):
+        detector = MeetingDetector(config=mock_config, recorder=_make_recorder_mock())
+        detector._begin_roster_session(
+            initial_names=["Alice", "Bob"],
+            initial_source="teams_uia_detection",
+        )
+        assert detector._active_roster.current() == ["Alice", "Bob"]
+
+    def test_begin_registers_both_recorder_hooks(self, mock_config):
+        mock_recorder = _make_recorder_mock()
+        detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
+        detector._begin_roster_session()
+        assert mock_recorder.on_before_finalize is not None
+        assert mock_recorder.on_after_stop is not None
+
+    def test_begin_stores_tab_id_and_browser_platform(self, mock_config):
+        detector = MeetingDetector(config=mock_config, recorder=_make_recorder_mock())
+        detector._begin_roster_session(tab_id=42, browser_platform="google_meet")
+        assert detector._extension_recording_tab_id == 42
+        assert detector._current_browser_platform == "google_meet"
+
+    def test_end_clears_all_session_state(self, mock_config):
+        detector = MeetingDetector(config=mock_config, recorder=_make_recorder_mock())
+        detector._begin_roster_session(tab_id=42, browser_platform="google_meet")
+        detector._polls_since_roster_refresh = 7
+        detector._end_roster_session()
+        assert detector._active_roster is None
+        assert detector._extension_recording_tab_id is None
+        assert detector._current_browser_platform is None
+        assert detector._polls_since_roster_refresh == 0
+
+    def test_end_registered_as_on_after_stop_hook(self, mock_config):
+        """_begin_roster_session must register _end_roster_session as
+        the recorder's on_after_stop hook, so every stop path triggers
+        cleanup — not just detector-initiated stops."""
+        mock_recorder = _make_recorder_mock()
+        detector = MeetingDetector(config=mock_config, recorder=mock_recorder)
+        detector._begin_roster_session(tab_id=5)
+        # Simulate the recorder calling on_after_stop (as it does at end of stop()).
+        mock_recorder.on_after_stop()
+        assert detector._active_roster is None
+        assert detector._extension_recording_tab_id is None
