@@ -7,6 +7,8 @@
  * state machine can be unit-tested without real network or processes.
  */
 
+import type { DaemonLaunchSettings } from "./launchSettings";
+
 /** Injected fetch for testability. */
 export type FetchLike = typeof fetch;
 
@@ -164,4 +166,97 @@ export function pollUntilReady(params: PollParams): Promise<PollResult> {
     };
     tick();
   });
+}
+
+export type LauncherOutcome =
+  | { kind: "ALREADY_RUNNING" }
+  | { kind: "DISABLED" }
+  | { kind: "NOT_CONFIGURED" }
+  | { kind: "SPAWN_ERROR"; code: string | undefined; message: string }
+  | { kind: "EARLY_EXIT"; exitCode: number | null; signal: NodeJS.Signals | null }
+  | { kind: "POLL_TIMEOUT"; pid: number | undefined; logPath: string }
+  | { kind: "SPAWNED_AND_READY"; pid: number | undefined };
+
+export interface RunParams {
+  baseUrl: string;
+  settings: DaemonLaunchSettings;
+  spawnFn: SpawnLike;
+  fetchImpl?: FetchLike;
+  intervalMs?: number;
+  totalMs?: number;
+  /** Fallback log path used when settings.launcherLogPath is empty. */
+  defaultLogPath?: string;
+}
+
+const INITIAL_PROBE_TIMEOUT_MS = 2000;
+
+function isConfigured(s: DaemonLaunchSettings): boolean {
+  return (
+    s.launcherExecutable.trim() !== "" &&
+    s.launcherArgs.length > 0 &&
+    s.launcherCwd.trim() !== ""
+  );
+}
+
+/**
+ * Run the full probe/spawn/poll state machine for plugin-driven autostart.
+ *
+ * 1. Probe /health — if already up, return ALREADY_RUNNING.
+ * 2. Check autostartEnabled — if off, return DISABLED.
+ * 3. Check settings configured — if not, return NOT_CONFIGURED.
+ * 4. Spawn the launcher — if pre-run fails, return SPAWN_ERROR.
+ * 5. Poll /health while concurrently watching for exit.
+ *    - Success: SPAWNED_AND_READY with child pid.
+ *    - Child dies first: EARLY_EXIT (with exit code).
+ *    - Window expires: POLL_TIMEOUT (with pid + log path for diagnosis).
+ */
+export async function runLauncherStateMachine(
+  params: RunParams,
+): Promise<LauncherOutcome> {
+  const {
+    baseUrl, settings, spawnFn,
+    fetchImpl = fetch, intervalMs, totalMs,
+    defaultLogPath = "",
+  } = params;
+
+  if (await probeHealth(baseUrl, INITIAL_PROBE_TIMEOUT_MS, fetchImpl)) {
+    return { kind: "ALREADY_RUNNING" };
+  }
+
+  if (!settings.autostartEnabled) return { kind: "DISABLED" };
+  if (!isConfigured(settings)) return { kind: "NOT_CONFIGURED" };
+
+  const logPath = settings.launcherLogPath || defaultLogPath;
+  const spawnResult = await spawnLauncher(
+    {
+      executable: settings.launcherExecutable,
+      args: settings.launcherArgs,
+      cwd: settings.launcherCwd,
+      env: logPath ? { RECAP_LAUNCHER_LOG: logPath } : {},
+    },
+    spawnFn,
+  );
+  if (spawnResult.kind === "ERROR") {
+    return {
+      kind: "SPAWN_ERROR",
+      code: spawnResult.code,
+      message: spawnResult.message,
+    };
+  }
+
+  const pollResult = await pollUntilReady({
+    baseUrl, child: spawnResult.child,
+    intervalMs, totalMs, fetchImpl,
+  });
+  if (pollResult.kind === "READY") {
+    return { kind: "SPAWNED_AND_READY", pid: spawnResult.pid };
+  }
+  if (pollResult.kind === "EXITED") {
+    return {
+      kind: "EARLY_EXIT",
+      exitCode: pollResult.exitCode,
+      signal: pollResult.signal,
+    };
+  }
+  return { kind: "POLL_TIMEOUT", pid: spawnResult.pid, logPath };
 }

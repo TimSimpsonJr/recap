@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { EventEmitter } from "events";
-import { probeHealth, spawnLauncher, LaunchResult, pollUntilReady, PollResult } from "./daemonLauncher";
+import { probeHealth, spawnLauncher, LaunchResult, pollUntilReady, PollResult, runLauncherStateMachine, LauncherOutcome } from "./daemonLauncher";
+import { DaemonLaunchSettings } from "./launchSettings";
 
 describe("probeHealth", () => {
   it("returns true when /health responds 200 within timeout", async () => {
@@ -168,5 +169,133 @@ describe("pollUntilReady", () => {
       fetchImpl: fetchMock as any,
     });
     expect(result.kind).toBe("TIMEOUT");
+  });
+});
+
+const _settings = (over: Partial<DaemonLaunchSettings> = {}): DaemonLaunchSettings => ({
+  autostartEnabled: true,
+  launcherExecutable: "uv",
+  launcherArgs: ["run", "-m", "recap.launcher", "config.yaml"],
+  launcherCwd: "C:\\repo",
+  launcherLogPath: "C:\\vault\\_Recap\\.recap\\launcher.log",
+  ...over,
+});
+
+describe("runLauncherStateMachine", () => {
+  it("returns ALREADY_RUNNING when /health already succeeds", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200 });
+    const outcome = await runLauncherStateMachine({
+      baseUrl: "http://127.0.0.1:9847",
+      settings: _settings(),
+      spawnFn: vi.fn() as any,
+      fetchImpl: fetchMock as any,
+    });
+    expect(outcome.kind).toBe("ALREADY_RUNNING");
+  });
+
+  it("returns DISABLED when autostartEnabled=false and /health fails", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false });
+    const outcome = await runLauncherStateMachine({
+      baseUrl: "http://127.0.0.1:9847",
+      settings: _settings({ autostartEnabled: false }),
+      spawnFn: vi.fn() as any,
+      fetchImpl: fetchMock as any,
+    });
+    expect(outcome.kind).toBe("DISABLED");
+  });
+
+  it("returns NOT_CONFIGURED when launch fields are empty", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false });
+    const outcome = await runLauncherStateMachine({
+      baseUrl: "http://127.0.0.1:9847",
+      settings: _settings({ launcherExecutable: "", launcherArgs: [] }),
+      spawnFn: vi.fn() as any,
+      fetchImpl: fetchMock as any,
+    });
+    expect(outcome.kind).toBe("NOT_CONFIGURED");
+  });
+
+  it("returns SPAWNED_AND_READY on successful end-to-end path", async () => {
+    let callCount = 0;
+    const fetchMock = vi.fn().mockImplementation(async () => {
+      callCount++;
+      return { ok: callCount > 1 };  // first probe fails, later succeed
+    });
+    const fake = new FakeChild();
+    const spawnFn = vi.fn().mockReturnValue(fake);
+    const promise = runLauncherStateMachine({
+      baseUrl: "http://127.0.0.1:9847",
+      settings: _settings(),
+      spawnFn: spawnFn as any,
+      fetchImpl: fetchMock as any,
+      intervalMs: 10,
+      totalMs: 1000,
+    });
+    // setTimeout(..., 0) (not queueMicrotask) so the orchestrator's initial
+    // probeHealth await chain drains and spawnLauncher registers its listeners
+    // before the event fires.
+    setTimeout(() => fake.emit("spawn"), 0);
+    const outcome = await promise;
+    expect(outcome.kind).toBe("SPAWNED_AND_READY");
+    if (outcome.kind === "SPAWNED_AND_READY") {
+      expect(outcome.pid).toBe(12345);
+    }
+  });
+
+  it("returns SPAWN_ERROR on ENOENT", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false });
+    const fake = new FakeChild();
+    const spawnFn = vi.fn().mockReturnValue(fake);
+    const promise = runLauncherStateMachine({
+      baseUrl: "http://127.0.0.1:9847",
+      settings: _settings({ launcherExecutable: "nonexistent" }),
+      spawnFn: spawnFn as any,
+      fetchImpl: fetchMock as any,
+    });
+    setTimeout(() => {
+      const err = new Error("spawn nonexistent ENOENT");
+      (err as NodeJS.ErrnoException).code = "ENOENT";
+      fake.emit("error", err);
+    }, 0);
+    const outcome = await promise;
+    expect(outcome.kind).toBe("SPAWN_ERROR");
+    if (outcome.kind === "SPAWN_ERROR") {
+      expect(outcome.code).toBe("ENOENT");
+    }
+  });
+
+  it("returns EARLY_EXIT on child exit before /health succeeds", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false });
+    const fake = new FakeChild();
+    const spawnFn = vi.fn().mockReturnValue(fake);
+    const promise = runLauncherStateMachine({
+      baseUrl: "http://127.0.0.1:9847",
+      settings: _settings(),
+      spawnFn: spawnFn as any,
+      fetchImpl: fetchMock as any,
+      intervalMs: 10,
+      totalMs: 5000,
+    });
+    setTimeout(() => fake.emit("spawn"), 0);
+    setTimeout(() => fake.emit("exit", 2, null), 20);
+    const outcome = await promise;
+    expect(outcome.kind).toBe("EARLY_EXIT");
+  });
+
+  it("returns POLL_TIMEOUT when /health never succeeds and child stays alive", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false });
+    const fake = new FakeChild();
+    const spawnFn = vi.fn().mockReturnValue(fake);
+    const promise = runLauncherStateMachine({
+      baseUrl: "http://127.0.0.1:9847",
+      settings: _settings(),
+      spawnFn: spawnFn as any,
+      fetchImpl: fetchMock as any,
+      intervalMs: 10,
+      totalMs: 50,
+    });
+    setTimeout(() => fake.emit("spawn"), 0);
+    const outcome = await promise;
+    expect(outcome.kind).toBe("POLL_TIMEOUT");
   });
 });
