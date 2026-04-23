@@ -10,6 +10,18 @@ import { RenameProcessor } from "./renameProcessor";
 import { NotificationHistory, NotificationHistoryModal } from "./notificationHistory";
 import { DaemonLaunchSettings, DEFAULT_LAUNCH_SETTINGS } from "./launchSettings";
 import { readAuthTokenWithRetry, AUTH_TOKEN_PATH } from "./authToken";
+import { runLauncherStateMachine } from "./daemonLauncher";
+import { noticeForOutcome } from "./daemonLauncherNotices";
+
+// Obsidian plugins run inside Electron so Node built-ins are
+// available via require(). The indirection through a runtime lookup
+// keeps esbuild from trying to bundle "child_process" (a Node
+// built-in not on the filesystem). At runtime Electron's require
+// resolves the module normally.
+const nodeRequire: NodeRequire = (globalThis as unknown as {
+    require: NodeRequire;
+}).require;
+const { spawn } = nodeRequire("child_process") as typeof import("child_process");
 
 interface RecapSettings extends DaemonLaunchSettings {
     daemonUrl: string;
@@ -54,41 +66,35 @@ export default class RecapPlugin extends Plugin {
             }),
         );
 
-        // Read auth token from vault
-        const token = await this.readAuthToken();
-        if (!token) {
-            new Notice("Recap: Could not read daemon auth token. Check _Recap/.recap/auth-token");
-        }
-
-        if (token) {
-            this.client = new DaemonClient(this.settings.daemonUrl, token);
-            this.notificationHistory.setClient(this.client);
-        }
-
-        // Status bar
+        // Status bar (built before state machine so setOffline works)
         const statusBarEl = this.addStatusBarItem();
         this.statusBar = new RecapStatusBar(statusBarEl);
 
-        // Rename processor
+        // Default launcher log path: use vault's _Recap/.recap/launcher.log
+        // unless settings override. Task 9 will extract this to a helper.
+        const defaultLogPath = "_Recap/.recap/launcher.log";
+
+        // Run the probe/spawn/poll state machine before building
+        // DaemonClient. Outcome drives notice + status bar + rehydrate.
+        const outcome = await runLauncherStateMachine({
+            baseUrl: this.settings.daemonUrl,
+            settings: this.settings,
+            spawnFn: spawn as any,
+            defaultLogPath,
+        });
+        const decision = noticeForOutcome(outcome);
+        if (decision.notice) new Notice(decision.notice);
+
+        if (decision.statusBarOffline) {
+            this.statusBar.setOffline();
+        }
+
+        // Rename processor — no dependency on client, safe to run early
         this.renameProcessor = new RenameProcessor(this.app, "_Recap/.recap/rename-queue.json");
         await this.renameProcessor.processQueue();
 
-        // WebSocket connection
-        if (this.client) {
-            this.connectWebSocket();
-            // Initial status fetch
-            try {
-                const status = await this.client.getStatus();
-                this.lastKnownState = status.state;
-                this.statusBar.updateState(status.state, status.recording?.org);
-            } catch (e) {
-                const msg = e instanceof Error ? e.message : String(e);
-                new Notice(`Recap: initial daemon status fetch failed — ${msg}`);
-                console.error("Recap:", e);
-                this.statusBar.setOffline();
-            }
-        } else {
-            this.statusBar.setOffline();
+        if (decision.shouldRehydrate) {
+            await this.rehydrateClient();
         }
 
         // Commands
@@ -102,6 +108,26 @@ export default class RecapPlugin extends Plugin {
             id: "stop-recording",
             name: "Stop recording",
             callback: () => this.stopRecordingInteractive(),
+        });
+
+        // Manual retry of the launcher state machine. Forces
+        // autostartEnabled=true so this works even when the user has
+        // globally disabled autostart — the point of a manual retry.
+        this.addCommand({
+            id: "start-daemon-now",
+            name: "Start daemon now",
+            callback: async () => {
+                const outcome = await runLauncherStateMachine({
+                    baseUrl: this.settings.daemonUrl,
+                    settings: { ...this.settings, autostartEnabled: true },
+                    spawnFn: spawn as any,
+                    defaultLogPath: "_Recap/.recap/launcher.log",
+                });
+                const d = noticeForOutcome(outcome);
+                if (d.notice) new Notice(d.notice);
+                if (d.statusBarOffline) this.statusBar?.setOffline();
+                if (d.shouldRehydrate) await this.rehydrateClient();
+            },
         });
 
         this.addCommand({
