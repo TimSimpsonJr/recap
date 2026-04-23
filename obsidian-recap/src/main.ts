@@ -8,13 +8,29 @@ import { LiveTranscriptView, VIEW_LIVE_TRANSCRIPT } from "./views/LiveTranscript
 import { SpeakerCorrectionModal, SpeakerInfo } from "./views/SpeakerCorrectionModal";
 import { RenameProcessor } from "./renameProcessor";
 import { NotificationHistory, NotificationHistoryModal } from "./notificationHistory";
+import { DaemonLaunchSettings, DEFAULT_LAUNCH_SETTINGS } from "./launchSettings";
+import { readAuthTokenWithRetry, AUTH_TOKEN_PATH } from "./authToken";
+import { runLauncherStateMachine } from "./daemonLauncher";
+import { noticeForOutcome } from "./daemonLauncherNotices";
+import { vaultRelativeToConcrete } from "./vaultPaths";
 
-interface RecapSettings {
+// Obsidian plugins run inside Electron so Node built-ins are
+// available via require(). The indirection through a runtime lookup
+// keeps esbuild from trying to bundle "child_process" (a Node
+// built-in not on the filesystem). At runtime Electron's require
+// resolves the module normally.
+const nodeRequire: NodeRequire = (globalThis as unknown as {
+    require: NodeRequire;
+}).require;
+const { spawn } = nodeRequire("child_process") as typeof import("child_process");
+
+interface RecapSettings extends DaemonLaunchSettings {
     daemonUrl: string;
 }
 
 const DEFAULT_SETTINGS: RecapSettings = {
     daemonUrl: "http://127.0.0.1:9847",
+    ...DEFAULT_LAUNCH_SETTINGS,
 };
 
 export default class RecapPlugin extends Plugin {
@@ -51,41 +67,38 @@ export default class RecapPlugin extends Plugin {
             }),
         );
 
-        // Read auth token from vault
-        const token = await this.readAuthToken();
-        if (!token) {
-            new Notice("Recap: Could not read daemon auth token. Check _Recap/.recap/auth-token");
-        }
-
-        if (token) {
-            this.client = new DaemonClient(this.settings.daemonUrl, token);
-            this.notificationHistory.setClient(this.client);
-        }
-
-        // Status bar
+        // Status bar (built before state machine so setOffline works)
         const statusBarEl = this.addStatusBarItem();
         this.statusBar = new RecapStatusBar(statusBarEl);
 
-        // Rename processor
+        // Default launcher log path: use vault's _Recap/.recap/launcher.log
+        // resolved to the OS-absolute path via Obsidian's adapter.
+        const defaultLogPath = vaultRelativeToConcrete(
+            this.app.vault.adapter,
+            "_Recap/.recap/launcher.log",
+        );
+
+        // Run the probe/spawn/poll state machine before building
+        // DaemonClient. Outcome drives notice + status bar + rehydrate.
+        const outcome = await runLauncherStateMachine({
+            baseUrl: this.settings.daemonUrl,
+            settings: this.settings,
+            spawnFn: spawn as any,
+            defaultLogPath,
+        });
+        const decision = noticeForOutcome(outcome);
+        if (decision.notice) new Notice(decision.notice);
+
+        if (decision.statusBarOffline) {
+            this.statusBar.setOffline();
+        }
+
+        // Rename processor — no dependency on client, safe to run early
         this.renameProcessor = new RenameProcessor(this.app, "_Recap/.recap/rename-queue.json");
         await this.renameProcessor.processQueue();
 
-        // WebSocket connection
-        if (this.client) {
-            this.connectWebSocket();
-            // Initial status fetch
-            try {
-                const status = await this.client.getStatus();
-                this.lastKnownState = status.state;
-                this.statusBar.updateState(status.state, status.recording?.org);
-            } catch (e) {
-                const msg = e instanceof Error ? e.message : String(e);
-                new Notice(`Recap: initial daemon status fetch failed — ${msg}`);
-                console.error("Recap:", e);
-                this.statusBar.setOffline();
-            }
-        } else {
-            this.statusBar.setOffline();
+        if (decision.shouldRehydrate) {
+            await this.rehydrateClient();
         }
 
         // Commands
@@ -99,6 +112,30 @@ export default class RecapPlugin extends Plugin {
             id: "stop-recording",
             name: "Stop recording",
             callback: () => this.stopRecordingInteractive(),
+        });
+
+        // Manual retry of the launcher state machine. Forces
+        // autostartEnabled=true so this works even when the user has
+        // globally disabled autostart — the point of a manual retry.
+        this.addCommand({
+            id: "start-daemon-now",
+            name: "Start daemon now",
+            callback: async () => {
+                const defaultLogPath = vaultRelativeToConcrete(
+                    this.app.vault.adapter,
+                    "_Recap/.recap/launcher.log",
+                );
+                const outcome = await runLauncherStateMachine({
+                    baseUrl: this.settings.daemonUrl,
+                    settings: { ...this.settings, autostartEnabled: true },
+                    spawnFn: spawn as any,
+                    defaultLogPath,
+                });
+                const d = noticeForOutcome(outcome);
+                if (d.notice) new Notice(d.notice);
+                if (d.statusBarOffline) this.statusBar?.setOffline();
+                if (d.shouldRehydrate) await this.rehydrateClient();
+            },
         });
 
         this.addCommand({
@@ -424,16 +461,51 @@ export default class RecapPlugin extends Plugin {
     }
 
     private async readAuthToken(): Promise<string> {
-        const tokenPath = "_Recap/.recap/auth-token";
-        const exists = await this.app.vault.adapter.exists(tokenPath);
-        if (!exists) return "";
         try {
-            return (await this.app.vault.adapter.read(tokenPath)).trim();
+            return await readAuthTokenWithRetry(
+                this.app.vault.adapter,
+                AUTH_TOKEN_PATH,
+                1,  // single attempt for initial onload; rehydrateClient retries
+            );
         } catch (e) {
             const msg = e instanceof Error ? e.message : String(e);
             new Notice(`Recap: could not read auth token — ${msg}`);
             console.error("Recap:", e);
             return "";
+        }
+    }
+
+    /**
+     * Re-read the auth token, rebuild DaemonClient, and reconnect.
+     *
+     * Used after a plugin-spawned daemon start (token file appears AFTER
+     * onload's initial read). Retries a few times because the daemon
+     * writes the token shortly after binding the port.
+     */
+    async rehydrateClient(): Promise<boolean> {
+        const token = await readAuthTokenWithRetry(this.app.vault.adapter);
+        if (!token) {
+            new Notice(
+                `Recap: daemon running but auth token not found at ${AUTH_TOKEN_PATH}. ` +
+                "Re-pair via tray menu."
+            );
+            return false;
+        }
+        this.client?.disconnectWebSocket();
+        this.notificationHistory.detach();
+        this.client = new DaemonClient(this.settings.daemonUrl, token);
+        this.notificationHistory.setClient(this.client);
+        this.connectWebSocket();
+        try {
+            const status = await this.client.getStatus();
+            this.lastKnownState = status.state;
+            this.statusBar?.updateState(status.state, status.recording?.org);
+            return true;
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            new Notice(`Recap: post-spawn status fetch failed — ${msg}`);
+            this.statusBar?.setOffline();
+            return false;
         }
     }
 
