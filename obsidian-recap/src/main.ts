@@ -12,6 +12,7 @@ import { DaemonLaunchSettings, DEFAULT_LAUNCH_SETTINGS } from "./launchSettings"
 import { readAuthTokenWithRetry, AUTH_TOKEN_PATH } from "./authToken";
 import { runLauncherStateMachine } from "./daemonLauncher";
 import { noticeForOutcome } from "./daemonLauncherNotices";
+import { vaultRelativeToConcrete } from "./vaultPaths";
 
 // Obsidian plugins run inside Electron so Node built-ins are
 // available via require(). The indirection through a runtime lookup
@@ -71,8 +72,11 @@ export default class RecapPlugin extends Plugin {
         this.statusBar = new RecapStatusBar(statusBarEl);
 
         // Default launcher log path: use vault's _Recap/.recap/launcher.log
-        // unless settings override. Task 9 will extract this to a helper.
-        const defaultLogPath = "_Recap/.recap/launcher.log";
+        // resolved to the OS-absolute path via Obsidian's adapter.
+        const defaultLogPath = vaultRelativeToConcrete(
+            this.app.vault.adapter,
+            "_Recap/.recap/launcher.log",
+        );
 
         // Run the probe/spawn/poll state machine before building
         // DaemonClient. Outcome drives notice + status bar + rehydrate.
@@ -117,11 +121,15 @@ export default class RecapPlugin extends Plugin {
             id: "start-daemon-now",
             name: "Start daemon now",
             callback: async () => {
+                const defaultLogPath = vaultRelativeToConcrete(
+                    this.app.vault.adapter,
+                    "_Recap/.recap/launcher.log",
+                );
                 const outcome = await runLauncherStateMachine({
                     baseUrl: this.settings.daemonUrl,
                     settings: { ...this.settings, autostartEnabled: true },
                     spawnFn: spawn as any,
-                    defaultLogPath: "_Recap/.recap/launcher.log",
+                    defaultLogPath,
                 });
                 const d = noticeForOutcome(outcome);
                 if (d.notice) new Notice(d.notice);
