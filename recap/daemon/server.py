@@ -278,15 +278,22 @@ def _run_ffmpeg_clip(cmd: list[str]) -> tuple[int, bytes]:
 
 
 async def _api_recording_clip(request: web.Request) -> web.Response:
-    """GET /api/recordings/<stem>/clip?speaker=SPEAKER_xx[&duration=N]
+    """GET /api/recordings/<stem>/clip?speaker_id=SPEAKER_xx[&duration=N]
 
     Returns an MP3 clip of the first utterance attributed to the given
     speaker. Used by the plugin's speaker correction modal so users can
     hear who they're about to rename.
 
+    Accepts either ``speaker_id=`` (preferred; matches the immutable
+    diarized id) or ``speaker=`` (legacy; matches the mutable display
+    label) — at least one is required. Plugin migrates to
+    ``speaker_id`` in Task 16; ``speaker=`` stays supported during the
+    transition.
+
     Stem is regex-validated to block traversal. The clip is cached at
-    ``<recordings_path>/<stem>.clips/<speaker>_<duration>s.mp3`` so
-    repeat requests skip ffmpeg entirely. Any ffmpeg failure is
+    ``<recordings_path>/<stem>.clips/<cache_key>_<duration>s.mp3`` —
+    ``cache_key`` is ``speaker_id`` when supplied so cached clips
+    survive future display-label renames. Any ffmpeg failure is
     journaled as ``clip_extraction_failed`` and returns 500.
     """
     daemon: Daemon = request.app["daemon"]
@@ -294,9 +301,15 @@ async def _api_recording_clip(request: web.Request) -> web.Response:
     if not _STEM_RE.fullmatch(stem):
         return web.json_response({"error": "invalid stem"}, status=400)
 
+    # Accept both speaker_id (new, preferred) and speaker (legacy).
+    # Plugin's DaemonClient migrates to speaker_id in Task 16; the
+    # legacy fallback keeps older callers working during the transition.
+    speaker_id = request.query.get("speaker_id")
     speaker = request.query.get("speaker")
-    if not speaker:
-        return web.json_response({"error": "speaker required"}, status=400)
+    if not speaker_id and not speaker:
+        return web.json_response(
+            {"error": "speaker_id required (or legacy speaker)"}, status=400,
+        )
 
     duration_str = request.query.get("duration", str(_CLIP_DEFAULT_DURATION))
     try:
@@ -339,9 +352,19 @@ async def _api_recording_clip(request: web.Request) -> web.Response:
         return web.json_response({"error": f"transcript read: {e}"}, status=500)
 
     utterances = transcript_data.get("utterances") or []
-    match = next(
-        (u for u in utterances if u.get("speaker") == speaker), None,
-    )
+
+    # Match on either field: speaker_id (preferred, stable across renames)
+    # falls back to u.speaker when pre-#28 transcripts lack the field;
+    # legacy speaker matches the display label directly.
+    def _matches(u: dict) -> bool:
+        u_sid = u.get("speaker_id") or u.get("speaker")
+        if speaker_id and u_sid == speaker_id:
+            return True
+        if speaker and u.get("speaker") == speaker:
+            return True
+        return False
+
+    match = next((u for u in utterances if _matches(u)), None)
     if match is None:
         return web.json_response(
             {"error": "speaker not found in transcript"}, status=404,
@@ -353,8 +376,12 @@ async def _api_recording_clip(request: web.Request) -> web.Response:
     # floor at 0.5s so very short first utterances still produce audio.
     clip_duration = min(float(duration), max(0.5, end - start))
 
+    # Cache key uses speaker_id when provided so clips survive future
+    # display-label renames; falls back to the legacy speaker label for
+    # older callers still sending ?speaker=.
+    cache_key = speaker_id or speaker
     cache_dir = daemon.config.recordings_path / f"{stem}.clips"
-    cache_file = cache_dir / f"{speaker}_{duration}s.mp3"
+    cache_file = cache_dir / f"{cache_key}_{duration}s.mp3"
     if cache_file.exists():
         return web.FileResponse(
             cache_file, headers={"Content-Type": "audio/mpeg"},
@@ -378,7 +405,9 @@ async def _api_recording_clip(request: web.Request) -> web.Response:
             f"ffmpeg exit {returncode}",
             payload={
                 "stem": stem,
-                "speaker": speaker,
+                # Log whichever key identified the speaker in this
+                # request (speaker_id preferred; speaker when legacy).
+                "speaker": cache_key,
                 "returncode": returncode,
                 "stderr": stderr.decode("utf-8", errors="replace")[:500],
             },
