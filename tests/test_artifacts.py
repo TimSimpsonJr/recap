@@ -244,3 +244,85 @@ class TestWriteRecordingMetadataAtomic:
         loaded = load_recording_metadata(audio)
         assert loaded is not None
         assert loaded.title == "Test"
+
+
+class TestRebindRecordingMetadata:
+    """Rewrite sidecar from unscheduled state to bound-event state (#33 Task 2)."""
+
+    def test_rewrites_all_five_fields(self, tmp_path: pathlib.Path):
+        from recap.artifacts import rebind_recording_metadata_to_event
+        audio = tmp_path / "rec.flac"
+        audio.touch()
+        md = _make_metadata()
+        md.event_id = "unscheduled:abc123"
+        md.note_path = "Test/Meetings/original.md"
+        write_recording_metadata(audio, md)
+        rebind_recording_metadata_to_event(
+            audio,
+            event_id="E1",
+            note_path="Test/Meetings/new.md",
+            calendar_source="google",
+            meeting_link="https://meet.google.com/xyz",
+            title="Sprint Planning",
+        )
+        loaded = load_recording_metadata(audio)
+        assert loaded is not None
+        assert loaded.event_id == "E1"
+        assert loaded.note_path == "Test/Meetings/new.md"
+        assert loaded.calendar_source == "google"
+        assert loaded.meeting_link == "https://meet.google.com/xyz"
+        assert loaded.title == "Sprint Planning"
+
+    def test_preserves_other_fields(self, tmp_path: pathlib.Path):
+        """Non-rebound fields (participants, platform, etc.) stay intact."""
+        from recap.artifacts import rebind_recording_metadata_to_event
+        audio = tmp_path / "rec.flac"
+        audio.touch()
+        md = _make_metadata()
+        md.event_id = "unscheduled:abc"
+        write_recording_metadata(audio, md)
+        rebind_recording_metadata_to_event(
+            audio,
+            event_id="E1",
+            note_path="Test/Meetings/new.md",
+            calendar_source="google",
+            meeting_link="",
+            title="T",
+        )
+        loaded = load_recording_metadata(audio)
+        assert loaded is not None
+        assert loaded.participants[0].name == "Alice"
+        assert loaded.platform == "manual"
+
+    def test_raises_on_missing_sidecar(self, tmp_path: pathlib.Path):
+        from recap.artifacts import rebind_recording_metadata_to_event
+        audio = tmp_path / "rec.flac"
+        # no sidecar
+        with pytest.raises(ValueError, match="no sidecar"):
+            rebind_recording_metadata_to_event(
+                audio, event_id="E1", note_path="x", calendar_source=None,
+                meeting_link=None, title=None,
+            )
+
+    def test_none_optional_fields_leave_existing_values(self, tmp_path: pathlib.Path):
+        """Passing None for optional fields keeps the current sidecar value."""
+        from recap.artifacts import rebind_recording_metadata_to_event
+        audio = tmp_path / "rec.flac"
+        audio.touch()
+        md = _make_metadata()
+        md.event_id = "unscheduled:abc"
+        md.calendar_source = "pre-existing"
+        md.meeting_link = "pre-existing-link"
+        md.title = "Pre-existing"
+        write_recording_metadata(audio, md)
+        rebind_recording_metadata_to_event(
+            audio, event_id="E1", note_path="new",
+            calendar_source=None, meeting_link=None, title=None,
+        )
+        loaded = load_recording_metadata(audio)
+        assert loaded is not None
+        assert loaded.event_id == "E1"
+        assert loaded.note_path == "new"
+        assert loaded.calendar_source == "pre-existing"
+        assert loaded.meeting_link == "pre-existing-link"
+        assert loaded.title == "Pre-existing"

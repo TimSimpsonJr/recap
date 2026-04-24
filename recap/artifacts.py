@@ -183,6 +183,42 @@ def load_recording_metadata(audio_path: pathlib.Path) -> RecordingMetadata | Non
     return RecordingMetadata.from_dict(data)
 
 
+def rebind_recording_metadata_to_event(
+    audio_path: pathlib.Path,
+    *,
+    event_id: str,
+    note_path: str,
+    calendar_source: str | None,
+    meeting_link: str | None,
+    title: str | None,
+) -> None:
+    """Rewrite sidecar from unscheduled state to bound-event state.
+
+    Called by the retroactive-bind flow (#33). Source unscheduled sidecar
+    has event_id starting with "unscheduled:"; this helper overwrites it
+    with the real event_id + linked calendar metadata so future
+    reprocesses treat it as scheduled.
+
+    Optional fields (calendar_source, meeting_link, title) leave the
+    existing sidecar value when None. This lets callers skip rewriting
+    a field they don't have fresh data for.
+
+    Raises ValueError if the sidecar does not exist.
+    """
+    rm = load_recording_metadata(audio_path)
+    if rm is None:
+        raise ValueError(f"no sidecar for {audio_path}")
+    rm.event_id = event_id
+    rm.note_path = note_path
+    if calendar_source is not None:
+        rm.calendar_source = calendar_source
+    if meeting_link is not None:
+        rm.meeting_link = meeting_link
+    if title is not None:
+        rm.title = title
+    write_recording_metadata(audio_path, rm)
+
+
 def save_transcript(audio_path: pathlib.Path, transcript: TranscriptResult) -> pathlib.Path:
     path = transcript_path(audio_path)
     path.write_text(json.dumps(transcript.to_dict(), indent=2), encoding="utf-8")
