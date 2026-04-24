@@ -688,7 +688,19 @@ async def _reprocess(request: web.Request) -> web.Response:
 
 
 async def _speakers(request: web.Request) -> web.Response:
-    """POST /api/meetings/speakers — save speaker mapping and reprocess from export."""
+    """POST /api/meetings/speakers — write .speakers.json, apply contact
+    mutations, create People stubs, trigger reprocess from analyze stage.
+
+    Accepts either a ``stem`` (preferred, #28) which the daemon resolves
+    against ``recordings_path``, or a full ``recording_path`` (legacy,
+    pre-#28 plugin clients). Optional ``contact_mutations`` list is
+    applied atomically before the .speakers.json write so
+    ``refresh_config`` runs with the same lock; any ``create`` mutation
+    triggers ``_ensure_people_stub`` so the new contact has a backlinkable
+    People note. After all writes succeed, the pipeline is kicked off
+    from the ``analyze`` stage.
+    """
+    daemon: Daemon = request.app["daemon"]
     trigger = request.app.get(_PIPELINE_TRIGGER_KEY)
     if trigger is None:
         return web.json_response(
@@ -708,31 +720,89 @@ async def _speakers(request: web.Request) -> web.Response:
             {"error": "request body must be a JSON object"}, status=400
         )
 
-    recording_path = body.get("recording_path")
     mapping = body.get("mapping")
-    if not recording_path:
-        return web.json_response(
-            {"error": "missing 'recording_path' field"}, status=400
-        )
     if not mapping or not isinstance(mapping, dict):
         return web.json_response(
             {"error": "missing or invalid 'mapping' field"}, status=400
         )
 
+    # Resolve audio path: prefer stem (new), fall back to legacy recording_path.
     from recap.artifacts import speakers_path
+    from recap.daemon.api_config import _apply_contact_mutations
     from recap.pipeline import validate_from_stage
 
-    # Save speaker mapping alongside the recording
-    rec_path = Path(recording_path)
+    stem = body.get("stem")
+    legacy_path = body.get("recording_path")
+    if stem:
+        rec_path = resolve_recording_path(
+            daemon.config.recordings_path, stem,
+        )
+        if rec_path is None:
+            return web.json_response(
+                {"error": "recording not found"}, status=404
+            )
+    elif legacy_path:
+        rec_path = Path(legacy_path)
+    else:
+        return web.json_response(
+            {"error": "missing 'stem' or 'recording_path' field"}, status=400
+        )
+
     validation_error = validate_from_stage(rec_path, "analyze")
     if validation_error is not None:
         return web.json_response({"error": validation_error}, status=400)
 
+    # Apply contact mutations atomically BEFORE writing speakers.json so
+    # refresh_config() runs with the same lock sequence. Bad shape =>
+    # ValueError => 400; I/O or other failure => 500. Disk unchanged on
+    # ValueError per the Task 10 contract.
+    contact_mutations = body.get("contact_mutations") or []
+    if not isinstance(contact_mutations, list):
+        return web.json_response(
+            {"error": "contact_mutations must be a list"}, status=400
+        )
+    if contact_mutations:
+        try:
+            _apply_contact_mutations(daemon, contact_mutations)
+        except ValueError as e:
+            return web.json_response(
+                {"error": f"contact mutation failed: {e}"}, status=400
+            )
+        except Exception as e:
+            logger.exception("contact mutation failed")
+            return web.json_response(
+                {"error": f"contact mutation failed: {e}"}, status=500
+            )
+        # Propagate the new config to subservices that cached the old one
+        # (e.g. MeetingDetector). See daemon.refresh_config docstring.
+        daemon.refresh_config()
+
+    org = body.get("org", "")
+
+    # Create People stubs for each create mutation so the new contact has
+    # a backlinkable note immediately. Unknown-org ValueError => 400;
+    # any other failure (OSError, etc) => 500.
+    for m in contact_mutations:
+        if isinstance(m, dict) and m.get("action") == "create":
+            name = m.get("name")
+            if not name:
+                continue
+            try:
+                _ensure_people_stub(daemon, org, name)
+            except ValueError as e:
+                return web.json_response(
+                    {"error": f"stub creation failed: {e}"}, status=400
+                )
+            except Exception as e:
+                logger.exception("stub creation failed")
+                return web.json_response(
+                    {"error": f"stub creation failed: {e}"}, status=500
+                )
+
+    # Write .speakers.json keyed by speaker_id alongside the recording.
     speakers_file = speakers_path(rec_path)
     speakers_file.write_text(json.dumps(mapping, indent=2))
     logger.info("Speaker mapping saved: %s", speakers_file)
-
-    org = body.get("org", "")
 
     asyncio.create_task(trigger(rec_path, org, "analyze"))
     return web.json_response({"status": "processing"})
