@@ -161,12 +161,22 @@ var DaemonClient = class {
       org
     });
   }
-  async submitSpeakerCorrections(recordingPath, mapping, org) {
-    await this.post("/api/meetings/speakers", {
-      recording_path: recordingPath,
-      mapping,
-      org
-    });
+  /** Fetch the transcript's distinct ``(speaker_id, display)`` pairs
+   * along with the recording's metadata ``participants`` (names +
+   * optional emails from calendar-sourced entries). Drives the
+   * #28 speaker-correction modal's resolution engine. */
+  async getMeetingSpeakers(stem) {
+    return this.get(
+      `/api/meetings/${encodeURIComponent(stem)}/speakers`
+    );
+  }
+  /** Save a #28-style speaker correction: ``mapping`` keyed by
+   * ``speaker_id`` + atomic ``contact_mutations`` the daemon applies
+   * before reprocess. Supersedes the pre-#28 ``recording_path``-keyed
+   * submit, which has been removed — the daemon still accepts that
+   * shape on the wire for back-compat but no plugin code emits it. */
+  async saveSpeakerCorrections(params) {
+    return this.post("/api/meetings/speakers", params);
   }
   async getOAuthStatus(provider) {
     return this.get(`/api/oauth/${provider}/status`);
@@ -217,17 +227,22 @@ var DaemonClient = class {
   }
   /** URL for streaming. Not used for auth'd fetches (tokens must not
    * land in query strings that could leak through referrers or logs);
-   * see ``fetchSpeakerClip`` for the Bearer-authed variant. */
-  getSpeakerClipUrl(stem, speaker, duration = 5) {
+   * see ``fetchSpeakerClip`` for the Bearer-authed variant.
+   *
+   * Query key is ``speaker_id`` as of #28 — the daemon still accepts
+   * ``speaker`` as a fallback during the transition (Task 9), but
+   * the plugin always sends the stable diarized identity so clip
+   * cache entries survive display relabels. */
+  getSpeakerClipUrl(stem, speakerId, duration = 5) {
     const params = new URLSearchParams({
-      speaker,
+      speaker_id: speakerId,
       duration: String(duration)
     });
     return `${this.baseUrl}/api/recordings/${encodeURIComponent(stem)}/clip?${params.toString()}`;
   }
-  async fetchSpeakerClip(stem, speaker, duration = 5) {
+  async fetchSpeakerClip(stem, speakerId, duration = 5) {
     const resp = await fetch(
-      this.getSpeakerClipUrl(stem, speaker, duration),
+      this.getSpeakerClipUrl(stem, speakerId, duration),
       {
         headers: { "Authorization": `Bearer ${this.token}` }
       }
@@ -1630,26 +1645,170 @@ var LiveTranscriptView = class extends import_obsidian5.ItemView {
 
 // src/views/SpeakerCorrectionModal.ts
 var import_obsidian6 = require("obsidian");
-function stemFromRecordingPath(recordingPath) {
-  const basename = recordingPath.split(/[/\\]/).pop() || recordingPath;
-  return basename.replace(/\.(flac|m4a|aac)$/i, "");
+
+// src/correction/normalize.ts
+var MULTI_WS = /\s+/g;
+var STRIP_PUNCT = /[.,]/g;
+function normalize(text) {
+  let s = text.trim();
+  if (!s)
+    return "";
+  s = s.replace(STRIP_PUNCT, "");
+  s = s.replace(MULTI_WS, " ");
+  return s.toLowerCase().trim();
 }
+
+// src/correction/resolve.ts
+var SPEAKER_ID_RE = /^SPEAKER_\d+$/;
+var UNKNOWN_RE = /^(UNKNOWN|Unknown Speaker.*)$/i;
+var PARENTHETICAL_RE = /\([^)]+\)/;
+function resolve(typed, ctx, options) {
+  const normalized = normalize(typed);
+  if (!normalized)
+    return { kind: "ineligible", reason: "empty", typed };
+  const linked = tryMatches(typed, normalized, ctx);
+  if (linked)
+    return linked;
+  const stripped = typed.replace(PARENTHETICAL_RE, "").trim();
+  if (stripped !== typed && normalize(stripped)) {
+    const retried = tryMatches(stripped, normalize(stripped), ctx);
+    if (retried)
+      return retried;
+  }
+  if (!options?.skipNearMatch) {
+    const near = findNearMatch(normalized, ctx);
+    if (near)
+      return { kind: "near_match_ambiguous", suggestion: near, typed };
+  }
+  const ineligibility = checkIneligibility(typed, normalized, ctx);
+  if (ineligibility)
+    return ineligibility;
+  const participant = ctx.meetingParticipants.find(
+    (p) => normalize(p.name) === normalized && p.email
+  );
+  return { kind: "create_new_contact", name: typed, email: participant?.email ?? void 0 };
+}
+function tryMatches(typed, normalized, ctx) {
+  const participant = ctx.meetingParticipants.find(
+    (p) => normalize(p.name) === normalized && p.email
+  );
+  if (participant?.email) {
+    const byEmail = ctx.knownContacts.find(
+      (c) => c.email?.toLowerCase() === participant.email.toLowerCase()
+    );
+    if (byEmail)
+      return {
+        kind: "link_to_existing",
+        canonical_name: byEmail.name,
+        requires_contact_create: false
+      };
+  }
+  for (const c of ctx.knownContacts) {
+    const candidates = [c.name, c.display_name, ...c.aliases || []];
+    for (const cand of candidates) {
+      if (cand && normalize(cand) === normalized) {
+        return {
+          kind: "link_to_existing",
+          canonical_name: c.name,
+          requires_contact_create: false
+        };
+      }
+    }
+  }
+  const peopleMatch = ctx.peopleNames.find((n) => normalize(n) === normalized);
+  if (peopleMatch) {
+    return {
+      kind: "link_to_existing",
+      canonical_name: peopleMatch,
+      requires_contact_create: true,
+      email: participant?.email ?? void 0
+    };
+  }
+  return null;
+}
+function findNearMatch(normalizedTyped, ctx) {
+  const typedTokens = normalizedTyped.split(" ").filter(Boolean);
+  if (typedTokens.length === 0)
+    return null;
+  const candidates = [
+    ...ctx.knownContacts.map((c) => ({
+      canonical: c.name,
+      names: [c.name, c.display_name, ...c.aliases || []].filter(Boolean)
+    })),
+    ...ctx.peopleNames.map((n) => ({ canonical: n, names: [n] }))
+  ];
+  for (const cand of candidates) {
+    for (const candName of cand.names) {
+      if (initialAwareMatch(typedTokens, normalize(candName).split(" ").filter(Boolean))) {
+        return cand.canonical;
+      }
+    }
+  }
+  return null;
+}
+function initialAwareMatch(typed, candidate) {
+  if (typed.length === 0 || candidate.length === 0)
+    return false;
+  if (typed[0] !== candidate[0])
+    return false;
+  if (typed.length > candidate.length)
+    return false;
+  if (typed.length === candidate.length && typed.every((t, i) => t === candidate[i])) {
+    return false;
+  }
+  for (let i = 1; i < typed.length; i++) {
+    const t = typed[i];
+    const c = candidate[i];
+    if (t === c)
+      continue;
+    if (t.length === 1 && c.startsWith(t))
+      continue;
+    return false;
+  }
+  return true;
+}
+function checkIneligibility(typed, normalized, ctx) {
+  const s = typed.trim();
+  if (!s)
+    return { kind: "ineligible", reason: "empty", typed };
+  if (SPEAKER_ID_RE.test(s))
+    return { kind: "ineligible", reason: "SPEAKER_XX", typed };
+  if (UNKNOWN_RE.test(s))
+    return { kind: "ineligible", reason: "Unknown Speaker", typed };
+  if (PARENTHETICAL_RE.test(s))
+    return { kind: "ineligible", reason: "parenthetical", typed };
+  if (s.includes("/"))
+    return { kind: "ineligible", reason: "multi-person (contains /)", typed };
+  if (ctx.companyNames.some((c) => normalize(c) === normalized)) {
+    return { kind: "ineligible", reason: "matches Company note", typed };
+  }
+  return null;
+}
+
+// src/views/SpeakerCorrectionModal.ts
 var SpeakerCorrectionModal = class extends import_obsidian6.Modal {
   speakers;
   peopleNames;
+  companyNames;
   knownContacts;
-  recordingPath;
+  meetingParticipants;
+  stem;
   org;
+  orgSubfolder;
   client;
-  mapping = {};
+  rows = [];
   objectUrls = [];
-  constructor(app, speakers, peopleNames, knownContacts, recordingPath, org, client) {
+  saveBtn = null;
+  constructor(app, speakers, peopleNames, companyNames, knownContacts, meetingParticipants, stem, org, orgSubfolder, client) {
     super(app);
     this.speakers = speakers;
     this.peopleNames = peopleNames;
+    this.companyNames = companyNames;
     this.knownContacts = knownContacts;
-    this.recordingPath = recordingPath;
+    this.meetingParticipants = meetingParticipants;
+    this.stem = stem;
     this.org = org;
+    this.orgSubfolder = orgSubfolder;
     this.client = client;
   }
   onOpen() {
@@ -1658,104 +1817,233 @@ var SpeakerCorrectionModal = class extends import_obsidian6.Modal {
     contentEl.addClass("recap-speaker-modal");
     contentEl.createEl("h2", { text: "Identify Speakers" });
     contentEl.createEl("p", {
-      text: "The pipeline couldn't match speakers to names. Assign a name to each speaker label:",
+      text: "Assign a name to each speaker. The plugin will suggest links to existing contacts and flag rows that need attention.",
       cls: "setting-item-description"
     });
-    const stem = stemFromRecordingPath(this.recordingPath);
     const datalist = contentEl.createEl("datalist");
     datalist.id = "recap-known-contacts";
     this.populateContactsDatalist(datalist);
     for (const speaker of this.speakers) {
-      const row = contentEl.createDiv({ cls: "recap-speaker-row" });
-      row.createSpan({
-        text: speaker.label,
-        cls: "recap-speaker-label"
-      });
-      const audioEl = row.createEl("audio");
-      audioEl.controls = true;
-      audioEl.preload = "none";
-      audioEl.addClass("recap-speaker-audio");
-      void this.loadClipInto(audioEl, stem, speaker.label, row);
-      const input = row.createEl("input", {
-        type: "text",
-        placeholder: "Enter name...",
-        cls: "recap-speaker-input"
-      });
-      input.setAttribute("list", "recap-known-contacts");
-      input.addEventListener("input", () => {
-        this.mapping[speaker.label] = input.value;
-      });
+      this.renderRow(contentEl, speaker);
     }
     const btnRow = contentEl.createDiv({ cls: "recap-modal-buttons" });
     const cancelBtn = btnRow.createEl("button", { text: "Cancel" });
     cancelBtn.addEventListener("click", () => this.close());
-    const applyBtn = btnRow.createEl("button", {
-      text: "Apply & Redo",
+    const saveBtn = btnRow.createEl("button", {
+      text: "Save & Reprocess",
       cls: "mod-cta"
     });
-    applyBtn.addEventListener("click", async () => {
-      const validMapping = {};
-      for (const [label, name] of Object.entries(this.mapping)) {
-        if (name.trim()) {
-          validMapping[label] = name.trim();
-        }
-      }
-      if (Object.keys(validMapping).length === 0) {
-        new import_obsidian6.Notice("No speakers assigned");
-        return;
-      }
-      try {
-        await this.client.submitSpeakerCorrections(
-          this.recordingPath,
-          validMapping,
-          this.org
-        );
-        new import_obsidian6.Notice(
-          "Speaker corrections submitted \u2014 reprocessing..."
-        );
-        this.close();
-      } catch (e) {
-        const msg = e instanceof Error ? e.message : String(e);
-        new import_obsidian6.Notice(`Recap: submit corrections failed \u2014 ${msg}`);
-        console.error("Recap:", e);
-      }
+    saveBtn.addEventListener("click", () => void this.onSubmit());
+    this.saveBtn = saveBtn;
+    this.refreshSaveButton();
+  }
+  renderRow(parent, speaker) {
+    const row = parent.createDiv({ cls: "recap-speaker-row" });
+    row.createSpan({
+      text: speaker.speaker_id,
+      cls: "recap-speaker-label"
     });
+    const audioEl = row.createEl("audio");
+    audioEl.controls = true;
+    audioEl.preload = "none";
+    audioEl.addClass("recap-speaker-audio");
+    void this.loadClipInto(audioEl, speaker.speaker_id, row);
+    const initialTyped = /^SPEAKER_\d+$/.test(speaker.display) ? "" : speaker.display;
+    const input = row.createEl("input", {
+      type: "text",
+      placeholder: "Enter name...",
+      cls: "recap-speaker-input",
+      value: initialTyped
+    });
+    input.setAttribute("list", "recap-known-contacts");
+    const hintEl = row.createDiv({ cls: "recap-speaker-hint" });
+    const rowState = {
+      speaker_id: speaker.speaker_id,
+      display: speaker.display,
+      typedName: initialTyped,
+      currentPlan: this.computePlan(initialTyped),
+      hintEl,
+      inputEl: input
+    };
+    this.rows.push(rowState);
+    const rerunPlan = () => {
+      rowState.typedName = input.value;
+      rowState.currentPlan = this.computePlan(input.value);
+      this.renderHint(rowState);
+      this.refreshSaveButton();
+    };
+    input.addEventListener("input", rerunPlan);
+    input.addEventListener("blur", rerunPlan);
+    this.renderHint(rowState);
+  }
+  computePlan(typed, options) {
+    if (!typed.trim()) {
+      return { kind: "ineligible", reason: "empty", typed };
+    }
+    const knownContactsForResolve = this.knownContacts.map((c) => ({
+      name: c.name,
+      display_name: c.display_name ?? c.name,
+      aliases: c.aliases,
+      email: c.email
+    }));
+    return resolve(typed, {
+      knownContacts: knownContactsForResolve,
+      peopleNames: this.peopleNames,
+      companyNames: this.companyNames,
+      meetingParticipants: this.meetingParticipants
+    }, options);
+  }
+  renderHint(row) {
+    row.hintEl.empty();
+    row.hintEl.removeClass(
+      "recap-speaker-hint-ok",
+      "recap-speaker-hint-warn",
+      "recap-speaker-hint-error"
+    );
+    const plan = row.currentPlan;
+    switch (plan.kind) {
+      case "link_to_existing": {
+        row.hintEl.addClass("recap-speaker-hint-ok");
+        const suffix = plan.requires_contact_create ? " (will also add contact)" : "";
+        row.hintEl.createSpan({
+          text: `Links to ${plan.canonical_name}${suffix}`
+        });
+        break;
+      }
+      case "create_new_contact": {
+        row.hintEl.addClass("recap-speaker-hint-ok");
+        row.hintEl.createSpan({
+          text: "Will create new contact and People note"
+        });
+        break;
+      }
+      case "near_match_ambiguous": {
+        row.hintEl.addClass("recap-speaker-hint-warn");
+        row.hintEl.createSpan({
+          text: `Did you mean ${plan.suggestion}? `
+        });
+        const useBtn = row.hintEl.createEl("button", {
+          text: "Use existing",
+          cls: "recap-hint-btn"
+        });
+        useBtn.addEventListener("click", () => {
+          row.currentPlan = {
+            kind: "link_to_existing",
+            canonical_name: plan.suggestion,
+            requires_contact_create: false
+          };
+          this.renderHint(row);
+          this.refreshSaveButton();
+        });
+        const newBtn = row.hintEl.createEl("button", {
+          text: "Create new anyway",
+          cls: "recap-hint-btn"
+        });
+        newBtn.addEventListener("click", () => {
+          row.currentPlan = this.computePlan(
+            row.typedName,
+            { skipNearMatch: true }
+          );
+          this.renderHint(row);
+          this.refreshSaveButton();
+        });
+        break;
+      }
+      case "ineligible": {
+        row.hintEl.addClass("recap-speaker-hint-error");
+        const label = plan.reason === "empty" ? "Enter a name to continue" : `Rename required: ${plan.reason}`;
+        row.hintEl.createSpan({ text: label });
+        break;
+      }
+    }
+  }
+  refreshSaveButton() {
+    if (!this.saveBtn)
+      return;
+    const blocked = this.rows.some(
+      (r) => r.currentPlan.kind === "ineligible" || r.currentPlan.kind === "near_match_ambiguous"
+    );
+    this.saveBtn.disabled = blocked;
+  }
+  async onSubmit() {
+    const mapping = {};
+    const contact_mutations = [];
+    for (const row of this.rows) {
+      const plan = row.currentPlan;
+      if (plan.kind === "link_to_existing") {
+        mapping[row.speaker_id] = plan.canonical_name;
+        if (plan.requires_contact_create) {
+          const mutation = {
+            action: "create",
+            name: plan.canonical_name,
+            display_name: plan.canonical_name
+          };
+          if (plan.email)
+            mutation.email = plan.email;
+          contact_mutations.push(mutation);
+        } else if (normalize(row.typedName) !== normalize(plan.canonical_name)) {
+          contact_mutations.push({
+            action: "add_alias",
+            name: plan.canonical_name,
+            alias: row.typedName
+          });
+        }
+      } else if (plan.kind === "create_new_contact") {
+        mapping[row.speaker_id] = plan.name;
+        const mutation = {
+          action: "create",
+          name: plan.name,
+          display_name: plan.name
+        };
+        if (plan.email)
+          mutation.email = plan.email;
+        contact_mutations.push(mutation);
+      }
+    }
+    if (Object.keys(mapping).length === 0) {
+      new import_obsidian6.Notice("No speakers assigned");
+      return;
+    }
+    try {
+      await this.client.saveSpeakerCorrections({
+        stem: this.stem,
+        mapping,
+        contact_mutations,
+        org: this.org
+      });
+      new import_obsidian6.Notice(
+        "Speaker corrections submitted \u2014 reprocessing..."
+      );
+      this.close();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      new import_obsidian6.Notice(`Recap: submit corrections failed \u2014 ${msg}`);
+      console.error("Recap:", e);
+    }
   }
   async populateContactsDatalist(datalist) {
-    const fallback = [
-      .../* @__PURE__ */ new Set([...this.peopleNames, ...this.knownContacts])
-    ].sort();
-    for (const name of fallback) {
+    const combined = /* @__PURE__ */ new Set([
+      ...this.peopleNames
+    ]);
+    for (const c of this.knownContacts) {
+      if (c.name)
+        combined.add(c.name);
+      if (c.display_name)
+        combined.add(c.display_name);
+      for (const alias of c.aliases || []) {
+        if (alias)
+          combined.add(alias);
+      }
+    }
+    for (const name of [...combined].sort()) {
       datalist.createEl("option", { value: name });
     }
-    try {
-      const cfg = await this.client.getConfig();
-      datalist.empty();
-      const combined = /* @__PURE__ */ new Set([
-        ...this.peopleNames,
-        ...this.knownContacts
-      ]);
-      for (const contact of cfg.known_contacts) {
-        if (contact.name)
-          combined.add(contact.name);
-        if (contact.display_name)
-          combined.add(contact.display_name);
-      }
-      for (const name of [...combined].sort()) {
-        datalist.createEl("option", { value: name });
-      }
-    } catch (e) {
-      console.error(
-        "Recap: could not load known contacts for autocomplete:",
-        e
-      );
-    }
   }
-  async loadClipInto(audioEl, stem, speaker, row) {
+  async loadClipInto(audioEl, speakerId, row) {
     try {
       const blob = await this.client.fetchSpeakerClip(
-        stem,
-        speaker,
+        this.stem,
+        speakerId,
         5
       );
       const url = URL.createObjectURL(blob);
@@ -1771,7 +2059,7 @@ var SpeakerCorrectionModal = class extends import_obsidian6.Modal {
       });
       console.error(
         "Recap: fetch clip failed for",
-        speaker,
+        speakerId,
         ":",
         e
       );
@@ -1786,6 +2074,8 @@ var SpeakerCorrectionModal = class extends import_obsidian6.Modal {
       }
     }
     this.objectUrls = [];
+    this.rows = [];
+    this.saveBtn = null;
     this.contentEl.empty();
   }
 };
@@ -2012,7 +2302,7 @@ async function probeHealth(baseUrl, timeoutMs, fetchImpl = fetch) {
   }
 }
 function spawnLauncher(params, spawnFn) {
-  return new Promise((resolve) => {
+  return new Promise((resolve2) => {
     const opts = {
       cwd: params.cwd,
       env: { ...process.env, ...params.env },
@@ -2024,11 +2314,11 @@ function spawnLauncher(params, spawnFn) {
     const onSpawn = () => {
       child.removeListener("error", onError);
       child.unref();
-      resolve({ kind: "SPAWNED", child, pid: child.pid });
+      resolve2({ kind: "SPAWNED", child, pid: child.pid });
     };
     const onError = (err) => {
       child.removeListener("spawn", onSpawn);
-      resolve({
+      resolve2({
         kind: "ERROR",
         code: err.code,
         message: err.message || "spawn failed"
@@ -2049,7 +2339,7 @@ function pollUntilReady(params) {
     totalMs = DEFAULT_POLL_TOTAL_MS,
     fetchImpl = fetch
   } = params;
-  return new Promise((resolve) => {
+  return new Promise((resolve2) => {
     let settled = false;
     const startedAt = Date.now();
     const finish = (result) => {
@@ -2057,7 +2347,7 @@ function pollUntilReady(params) {
         return;
       settled = true;
       child.removeListener("exit", onExit);
-      resolve(result);
+      resolve2(result);
     };
     const onExit = (code, signal) => {
       finish({ kind: "EXITED", exitCode: code, signal });
@@ -2420,37 +2710,64 @@ var RecapPlugin = class extends import_obsidian9.Plugin {
       new import_obsidian9.Notice("Daemon not connected");
       return;
     }
-    const content = await this.app.vault.cachedRead(file);
-    const speakerLabels = [...new Set(
-      content.match(/SPEAKER_\d+/g) || []
-    )];
-    if (speakerLabels.length === 0) {
-      new import_obsidian9.Notice("No unidentified speakers found in this note");
+    const cache = this.app.metadataCache.getFileCache(file);
+    const fm = cache?.frontmatter;
+    const recording = (fm?.recording ?? "").toString().replace(/\[\[|\]\]/g, "");
+    const stem = recording.replace(/\.(flac|m4a|aac)$/i, "");
+    const org = (fm?.org ?? "").toString();
+    const orgSubfolder = (fm?.["org-subfolder"] ?? "").toString();
+    if (!stem) {
+      new import_obsidian9.Notice("No recording in frontmatter");
       return;
     }
-    const peopleFiles = this.app.vault.getMarkdownFiles().filter(
-      (f) => f.path.startsWith("_Recap/") && f.path.includes("/People/")
+    if (!orgSubfolder) {
+      new import_obsidian9.Notice("Missing org-subfolder in frontmatter");
+      return;
+    }
+    let resp;
+    try {
+      resp = await this.client.getMeetingSpeakers(stem);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      new import_obsidian9.Notice(`Could not load speakers: ${msg}`);
+      console.error("Recap:", e);
+      return;
+    }
+    if (resp.speakers.length === 0) {
+      new import_obsidian9.Notice("No speakers in transcript");
+      return;
+    }
+    const peopleNames = this.scanNotesByFolder(`${orgSubfolder}/People`);
+    const companyNames = this.scanNotesByFolder(
+      `${orgSubfolder}/Companies`
     );
-    const peopleNames = peopleFiles.map((f) => f.basename);
-    const cache = this.app.metadataCache.getFileCache(file);
-    const frontmatter = cache?.frontmatter;
-    const recordingPath = frontmatter?.recording?.replace(/\[\[|\]\]/g, "") || "";
-    const org = frontmatter?.org || "";
-    const speakers = speakerLabels.map((label) => ({
-      label,
-      sampleClipPath: ""
-      // TODO: daemon could serve sample clips
+    let knownContacts = [];
+    try {
+      const cfg = await this.client.getConfig();
+      knownContacts = cfg.known_contacts || [];
+    } catch (e) {
+      console.warn("Recap: could not load known contacts", e);
+    }
+    const meetingParticipants = resp.participants.map((p) => ({
+      name: p.name,
+      email: p.email ?? void 0
     }));
     new SpeakerCorrectionModal(
       this.app,
-      speakers,
+      resp.speakers,
       peopleNames,
-      [],
-      // known contacts - could fetch from daemon
-      recordingPath,
+      companyNames,
+      knownContacts,
+      meetingParticipants,
+      stem,
       org,
+      orgSubfolder,
       this.client
     ).open();
+  }
+  scanNotesByFolder(folderPath) {
+    const prefix = folderPath.endsWith("/") ? folderPath : `${folderPath}/`;
+    return this.app.vault.getMarkdownFiles().filter((f) => f.path.startsWith(prefix)).map((f) => f.basename);
   }
   async reprocessMeeting(file) {
     if (!this.client) {

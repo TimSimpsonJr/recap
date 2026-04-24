@@ -251,14 +251,6 @@ export class DaemonClient {
         });
     }
 
-    async submitSpeakerCorrections(recordingPath: string, mapping: Record<string, string>, org: string): Promise<void> {
-        await this.post("/api/meetings/speakers", {
-            recording_path: recordingPath,
-            mapping,
-            org,
-        });
-    }
-
     /** Fetch the transcript's distinct ``(speaker_id, display)`` pairs
      * along with the recording's metadata ``participants`` (names +
      * optional emails from calendar-sourced entries). Drives the
@@ -274,8 +266,9 @@ export class DaemonClient {
 
     /** Save a #28-style speaker correction: ``mapping`` keyed by
      * ``speaker_id`` + atomic ``contact_mutations`` the daemon applies
-     * before reprocess. ``submitSpeakerCorrections`` is the pre-#28
-     * shape and will be removed once the modal rewrite lands. */
+     * before reprocess. Supersedes the pre-#28 ``recording_path``-keyed
+     * submit, which has been removed — the daemon still accepts that
+     * shape on the wire for back-compat but no plugin code emits it. */
     async saveSpeakerCorrections(params: {
         stem: string;
         mapping: Record<string, string>;

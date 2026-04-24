@@ -30,7 +30,11 @@ const SPEAKER_ID_RE = /^SPEAKER_\d+$/;
 const UNKNOWN_RE = /^(UNKNOWN|Unknown Speaker.*)$/i;
 const PARENTHETICAL_RE = /\([^)]+\)/;
 
-export function resolve(typed: string, ctx: ResolutionContext): ResolutionPlan {
+export function resolve(
+    typed: string,
+    ctx: ResolutionContext,
+    options?: {skipNearMatch?: boolean},
+): ResolutionPlan {
     const normalized = normalize(typed);
     if (!normalized) return {kind: "ineligible", reason: "empty", typed};
 
@@ -43,8 +47,10 @@ export function resolve(typed: string, ctx: ResolutionContext): ResolutionPlan {
         if (retried) return retried;
     }
 
-    const near = findNearMatch(normalized, ctx);
-    if (near) return {kind: "near_match_ambiguous", suggestion: near, typed};
+    if (!options?.skipNearMatch) {
+        const near = findNearMatch(normalized, ctx);
+        if (near) return {kind: "near_match_ambiguous", suggestion: near, typed};
+    }
 
     const ineligibility = checkIneligibility(typed, normalized, ctx);
     if (ineligibility) return ineligibility;

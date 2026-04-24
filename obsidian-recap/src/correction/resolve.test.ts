@@ -102,4 +102,30 @@ describe("resolve", () => {
         const r = resolve("Brand New Person", emptyCtx);
         expect(r.kind).toBe("create_new_contact");
     });
+
+    it("skipNearMatch surfaces ineligibility (company collision)", () => {
+        // Without skipNearMatch this would return near_match_ambiguous
+        // (typed "Sean" is an initial-aware prefix of "Sean Mooney").
+        // With skipNearMatch, the near-match layer is bypassed and the
+        // company-collision check in checkIneligibility fires.
+        const r = resolve("Sean", {
+            ...emptyCtx,
+            knownContacts: [{name: "Sean Mooney", display_name: "Sean Mooney"}],
+            companyNames: ["Sean"],
+        }, {skipNearMatch: true});
+        expect(r.kind).toBe("ineligible");
+        if (r.kind === "ineligible") {
+            expect(r.reason).toContain("Company");
+        }
+    });
+
+    it("skipNearMatch allows legitimate create", () => {
+        // Non-near-match typed name flows straight to create_new_contact
+        // even when knownContacts exist.
+        const r = resolve("Totally New Person", {
+            ...emptyCtx,
+            knownContacts: [{name: "Sean Mooney", display_name: "Sean Mooney"}],
+        }, {skipNearMatch: true});
+        expect(r.kind).toBe("create_new_contact");
+    });
 });
