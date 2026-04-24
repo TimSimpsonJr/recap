@@ -139,15 +139,20 @@ def attach_event_to_recording(
             # caller's prior attempt may have crashed mid-bind after the
             # sidecar was rewritten but before the synthetic EventIndex
             # entry / unscheduled note were cleaned up. Discover any such
-            # orphan deterministically by scanning the index for synthetic
-            # entries whose note carries the same `recording` filename.
+            # orphan deterministically by scanning the meetings dir for
+            # unscheduled notes whose frontmatter `recording` matches the
+            # target stub's. Filesystem scan (not EventIndex scan) is
+            # authoritative because the orphan file can outlive its index
+            # entry when `_cleanup_after_bind` crashed between index-remove
+            # and file-unlink.
             target_content = target_path.read_text(encoding="utf-8")
             target_fm = _parse_frontmatter(target_content) or {}
             recording_filename = target_fm.get("recording")
-            synthetic_id, orphan_path = _find_orphan_synthetic_for_recording(
-                daemon,
+            synthetic_id, orphan_path = _find_orphan_unscheduled_note(
                 vault_path=vault_path,
+                meetings_dir=meetings_dir,
                 recording_filename=recording_filename,
+                target_path=target_path,
             )
             cleaned = _cleanup_after_bind(
                 daemon,
@@ -408,42 +413,46 @@ def _cleanup_after_bind(
     return cleaned
 
 
-def _find_orphan_synthetic_for_recording(
-    daemon,
+def _find_orphan_unscheduled_note(
     *,
     vault_path: Path,
+    meetings_dir: Path,
     recording_filename: str | None,
+    target_path: Path,
 ) -> tuple[str | None, Path | None]:
-    """Scan EventIndex for a synthetic (unscheduled:*) entry whose note's
-    `recording` frontmatter field matches *recording_filename*. Returns
+    """Filesystem scan for an orphan unscheduled note whose `recording`
+    frontmatter field matches *recording_filename*. Returns
     ``(synthetic_event_id, absolute_note_path)`` or ``(None, None)`` when
     no orphan is found.
 
-    Used by the retry/no-op branch of the orchestrator to heal partial-
-    success crashes where the sidecar was rebound to the calendar event
-    but the synthetic index entry / unscheduled note never got cleaned.
-    Stale-index healing (entries pointing at deleted notes that are
-    unrelated to the current recording) is the daemon-startup rebuild's
-    job, not this function's.
+    Authoritative for orphan discovery on the retry/no-op path because
+    the filesystem reflects all crash combinations: the orphan file may
+    still be present even when the synthetic EventIndex entry has been
+    cleaned up by a prior crashed retry attempt. (`_cleanup_after_bind`
+    runs index-remove before file-unlink; a crash between the two leaves
+    a file-only orphan that an index-based scan cannot see.)
+
+    *target_path* is the calendar stub the orchestrator is binding to;
+    we exclude it from the scan so the stub itself is never mistaken for
+    an orphan when it carries the same `recording` field.
     """
     if not recording_filename:
         return (None, None)
+    if not meetings_dir.exists():
+        return (None, None)
 
-    for entry in daemon.event_index.all_entries():
-        if not entry.event_id.startswith("unscheduled:"):
-            continue
-        note_abs = vault_path / Path(str(entry.path))
-        if not note_abs.exists():
-            # Cannot verify whether this stale entry matches recording_filename;
-            # skip. Stale-index healing is the daemon-startup rebuild's job, not
-            # the orchestrator's.
+    for note_path in meetings_dir.rglob("*.md"):
+        if note_path == target_path:
             continue
         try:
-            content = note_abs.read_text(encoding="utf-8")
+            content = note_path.read_text(encoding="utf-8")
         except OSError:
             continue
         fm = _parse_frontmatter(content) or {}
+        event_id = fm.get("event-id")
+        if not isinstance(event_id, str) or not event_id.startswith("unscheduled:"):
+            continue
         if fm.get("recording") == recording_filename:
-            return (entry.event_id, note_abs)
+            return (event_id, note_path)
 
     return (None, None)

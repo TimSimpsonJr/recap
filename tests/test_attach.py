@@ -455,6 +455,66 @@ class TestAttachOrchestrationNoOp:
         assert not orphan.exists()
         assert attach_daemon.event_index.lookup("unscheduled:abc") is None
 
+    def test_sidecar_bound_but_orphan_file_remains_after_index_cleanup(self, attach_daemon):
+        """Crash AFTER index cleanup but BEFORE file delete: sidecar is bound,
+        synthetic EventIndex entry is GONE, but the unscheduled note file
+        still exists on disk. Retry must heal by deleting the orphan file --
+        even though the index has nothing for the discovery to scan.
+        """
+        from recap.daemon.recorder.attach import attach_event_to_recording
+        from recap.artifacts import RecordingMetadata, write_recording_metadata
+        from recap.models import Participant
+        import yaml as _yaml
+
+        stub = _seed_calendar_stub(
+            attach_daemon, event_id="E1", title="Sprint Planning",
+            stub_body="## Agenda\n\n",
+        )
+        # Stub already carries `recording: rec.flac` (mid-crash state from a
+        # prior bind that completed steps 6-9 but crashed during step 10/11).
+        stub_fm = {
+            "date": "2026-04-24", "time": "14:00-15:00", "title": "Sprint Planning",
+            "event-id": "E1", "calendar-source": "google",
+            "meeting-link": "https://meet.google.com/xyz", "org": "test",
+            "org-subfolder": "Test", "participants": [], "pipeline-status": "pending",
+            "recording": "rec.flac",
+        }
+        stub.write_text(
+            "---\n" + _yaml.dump(stub_fm, sort_keys=False) + "---\n\n## Agenda\n\n",
+            encoding="utf-8",
+        )
+        # Sidecar already rebound to E1 (step 9 ran successfully).
+        audio = attach_daemon.config.recordings_path / "rec.flac"
+        audio.touch()
+        md = RecordingMetadata(
+            org="test",
+            note_path=str(stub.relative_to(attach_daemon.config.vault_path)).replace("\\", "/"),
+            title="Sprint Planning", date="2026-04-24",
+            participants=[Participant(name="A")], platform="manual",
+        )
+        md.event_id = "E1"
+        write_recording_metadata(audio, md)
+        # Orphan file remains. The synthetic EventIndex entry is GONE
+        # (step 10 ran), but step 11 crashed before unlinking the file.
+        orphan = attach_daemon.config.vault_path / "Test/Meetings/u.md"
+        orphan.write_text("---\n" + _yaml.dump({
+            "event-id": "unscheduled:abc", "org": "test",
+            "org-subfolder": "Test", "date": "2026-04-24", "time": "14:30-15:15",
+            "recording": "rec.flac",
+        }) + "---\n\nOrphan body.", encoding="utf-8")
+        # IMPORTANT: do NOT call attach_daemon.event_index.add for unscheduled:abc.
+        # That's the whole point -- the index entry was already cleaned up.
+
+        result = attach_event_to_recording(
+            daemon=attach_daemon, stem="rec", event_id="E1",
+        )
+        assert result.noop is True
+        assert result.cleanup_performed is True
+        # Orphan file is gone (the heal worked).
+        assert not orphan.exists()
+        # Index still has nothing for unscheduled:abc.
+        assert attach_daemon.event_index.lookup("unscheduled:abc") is None
+
     def test_normal_flow_with_matching_recording_is_noop(self, attach_daemon):
         """Sidecar still synthetic, but target stub already carries the same
         `recording` filename. Mid-crash retry should rebind the sidecar +
