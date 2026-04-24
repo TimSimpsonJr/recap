@@ -724,6 +724,8 @@ class TestMergeFrontmatter:
             "org": "test",
             "org-subfolder": "Test",
             "pipeline-status": "complete",
+            "platform": "teams",
+            "type": "discovery",
             "participants": ["[[Alice]]", "[[Bob]]"],
             "companies": ["[[Acme]]"],
             "duration": "45:00",
@@ -769,6 +771,23 @@ class TestMergeFrontmatter:
         assert "[[Alice]]" in merged["participants"]
         assert "[[Bob]]" in merged["participants"]
         assert "[[Stub Alice]]" not in merged["participants"]
+
+    def test_pipeline_owned_fields_preserved(self):
+        # Regression guard: build_canonical_frontmatter writes platform + type.
+        # Rebind must not silently drop them.
+        from recap.daemon.recorder.attach import _build_merged_frontmatter
+        merged = _build_merged_frontmatter(self._stub_fm(), self._source_fm())
+        assert merged["platform"] == "teams"
+        assert merged["type"] == "discovery"
+
+    def test_stub_user_keys_preserved(self):
+        # User edits on stub frontmatter (e.g. priority) survive rebind even
+        # when the source note doesn't carry the key.
+        from recap.daemon.recorder.attach import _build_merged_frontmatter
+        stub = self._stub_fm()
+        stub["priority"] = "high"
+        merged = _build_merged_frontmatter(stub, self._source_fm())
+        assert merged["priority"] == "high"
 ```
 
 ### Step 6: Run failing tests
@@ -836,33 +855,38 @@ def _merge_bodies(*, stub_body: str, source_body: str) -> str:
 def _build_merged_frontmatter(stub_fm: dict, source_fm: dict) -> dict:
     """Build merged frontmatter per Section 2 Step 7.
 
-    - Calendar keys (event-id, calendar-source, meeting-link, time, date,
-      title, org, org-subfolder) from stub.
-    - Non-calendar keys (participants, companies, duration, recording,
-      audio_warnings, system_audio_devices_seen, recording_started_at)
-      from source.
-    - "unscheduled" tag removed from tags; other tags preserved.
-    - pipeline-status always from source.
+    Two-pass merge: start with the stub's full frontmatter (calendar-owned
+    keys + any user edits), then overlay every pipeline-owned key found on
+    the source unscheduled note. This intentionally preserves stub keys
+    that the source happens to lack (e.g. user-added `priority`) while
+    making sure pipeline-owned fields like `platform` and `type` are not
+    silently dropped during a rebind.
+
+    Pipeline-owned overlay set mirrors `build_canonical_frontmatter` in
+    recap/vault.py: any field that pipeline writes when a meeting note is
+    finalized. Calendar-owned keys (event-id, calendar-source, meeting-link,
+    time, date, title, org, org-subfolder) are NOT overlaid -- the stub is
+    authoritative for those.
+
+    Tags merge as a union with the "unscheduled" tag stripped, since the
+    rebind has, by definition, scheduled the recording.
     """
-    calendar_keys = {
-        "event-id", "calendar-source", "meeting-link", "time",
-        "date", "title", "org", "org-subfolder",
-    }
-    source_overlay_keys = {
-        "participants", "companies", "duration", "recording",
+    pipeline_overlay_keys = {
+        "participants", "companies", "duration",
+        "platform", "type",
+        "recording",
         "audio-warnings", "system-audio-devices-seen",
         "audio_warnings", "system_audio_devices_seen",
         "recording-started-at", "recording_started_at",
+        "pipeline-status",
     }
 
-    merged: dict = {}
-    # Start with stub's calendar-identity keys.
-    for k in calendar_keys:
-        if k in stub_fm:
-            merged[k] = stub_fm[k]
+    # Start with the stub's full frontmatter (calendar identity + any user
+    # edits we don't want to clobber).
+    merged: dict = dict(stub_fm)
 
-    # Overlay source's recording-identity keys.
-    for k in source_overlay_keys:
+    # Overlay every pipeline-owned key the source has.
+    for k in pipeline_overlay_keys:
         if k in source_fm:
             merged[k] = source_fm[k]
 
@@ -876,10 +900,8 @@ def _build_merged_frontmatter(stub_fm: dict, source_fm: dict) -> dict:
                 tags.append(t)
     if tags:
         merged["tags"] = tags
-
-    # pipeline-status always from source.
-    if "pipeline-status" in source_fm:
-        merged["pipeline-status"] = source_fm["pipeline-status"]
+    elif "tags" in merged:
+        del merged["tags"]
 
     return merged
 ```
@@ -890,7 +912,7 @@ def _build_merged_frontmatter(stub_fm: dict, source_fm: dict) -> dict:
 .venv/Scripts/python -m pytest tests/test_attach.py -v --override-ini="addopts="
 ```
 
-Expected: classify (3) + merge_bodies (5) + merge_frontmatter (5) + error types (5) = 18 tests pass. Orchestrator tests not yet written.
+Expected: classify (3) + merge_bodies (5) + merge_frontmatter (7) + error types (5) = 20 tests pass. Orchestrator tests not yet written.
 
 ### Step 9: Write failing tests for the orchestrator
 
@@ -1314,12 +1336,25 @@ def attach_event_to_recording(
     target_rel = target_path.relative_to(vault_path)
     if classification == "noop_candidate":
         if str(sidecar.note_path) == str(target_rel):
-            # No-op path: fire cleanup for orphans.
+            # Idempotent retry: sidecar already points at target. The
+            # caller's prior attempt may have crashed mid-bind after the
+            # sidecar was rewritten but before the synthetic EventIndex
+            # entry / unscheduled note were cleaned up. Discover any such
+            # orphan deterministically by scanning the index for synthetic
+            # entries whose note carries the same `recording` filename.
+            target_content = target_path.read_text(encoding="utf-8")
+            target_fm = _parse_frontmatter(target_content) or {}
+            recording_filename = target_fm.get("recording")
+            synthetic_id, orphan_path = _find_orphan_synthetic_for_recording(
+                daemon,
+                vault_path=vault_path,
+                recording_filename=recording_filename,
+            )
             cleaned = _cleanup_after_bind(
                 daemon,
-                synthetic_id=None,  # sidecar not synthetic here
-                unscheduled_path=None,
-                event_id_to_clear=None,
+                synthetic_id=synthetic_id,
+                unscheduled_path=orphan_path,
+                event_id_to_clear=synthetic_id,
             )
             return AttachResult(
                 status="ok", note_path=str(target_rel),
@@ -1473,6 +1508,44 @@ def _cleanup_after_bind(
         except OSError:
             logger.warning("unscheduled note delete failed", exc_info=True)
     return cleaned
+
+
+def _find_orphan_synthetic_for_recording(
+    daemon,
+    *,
+    vault_path: Path,
+    recording_filename: str | None,
+) -> tuple[str | None, Path | None]:
+    """Scan EventIndex for a synthetic (unscheduled:*) entry whose note's
+    `recording` frontmatter field matches *recording_filename*. Returns
+    ``(synthetic_event_id, absolute_note_path)`` or ``(None, None)`` when
+    no orphan is found.
+
+    Used by the retry/no-op branch of the orchestrator to heal partial-
+    success crashes where the sidecar was rebound to the calendar event
+    but the synthetic index entry / unscheduled note never got cleaned.
+    """
+    if not recording_filename:
+        return (None, None)
+
+    for entry in daemon.event_index.all_entries():
+        if not entry.event_id.startswith("unscheduled:"):
+            continue
+        note_abs = vault_path / Path(str(entry.path))
+        if not note_abs.exists():
+            # Stale index entry pointing at a deleted note: still worth
+            # clearing so callers can heal the index even when the file
+            # half of the cleanup already happened.
+            return (entry.event_id, note_abs)
+        try:
+            content = note_abs.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        fm = _parse_frontmatter(content) or {}
+        if fm.get("recording") == recording_filename:
+            return (entry.event_id, note_abs)
+
+    return (None, None)
 ```
 
 ### Step 12: Run tests
@@ -1667,7 +1740,13 @@ Mirror `tests/test_speaker_correction_integration.py` pattern. Use real `Daemon`
 1. `test_happy_path_bind_unscheduled_to_calendar_event` — seed unscheduled recording + sidecar + unscheduled note + calendar stub with untouched body. POST. Assert merged note on target path; correct frontmatter + pipeline body; NO Pre-Meeting Notes section (stub was empty template); sidecar rewritten; EventIndex has only real entry; unscheduled file gone.
 2. `test_bind_preserves_user_edits_under_pre_meeting_notes` — seed with user-edited stub body. Assert merged note has `## Pre-Meeting Notes` section with preserved content after the pipeline output.
 3. `test_replace_path_overrides_existing_recording` — seed target stub with prior recording (different stem). POST with `replace=True`. Assert stub body overwritten with new recording's pipeline output; old recording's artifacts still on disk (FLAC, transcript, etc.).
-4. `test_retry_after_partial_success_heals_orphans` — pre-seed state that simulates "crash after merged-note-write but before EventIndex cleanup": merged note present, sidecar bound, synthetic EventIndex entry still present, unscheduled file still present. POST again. Assert no-op result with `cleanup_performed=true`; both orphans removed.
+4. `test_retry_after_partial_success_heals_orphans` — pre-seed state that simulates "crash after merged-note-write + sidecar rebind, but before EventIndex/unscheduled-note cleanup":
+   - Merged note present at calendar stub path with `recording: rec.flac` frontmatter and a real `event-id`.
+   - Sidecar already rewritten so `event_id == "E1"` and `note_path == calendar stub`.
+   - **Orphan synthetic note still present** at `Test/Meetings/<old-unscheduled-name>.md`, with frontmatter carrying `event-id: unscheduled:<uuid>` AND `recording: rec.flac` (same filename — this is what the orphan-discovery scan keys on).
+   - **Orphan EventIndex entry** for `unscheduled:<uuid>` pointing at the orphan note.
+   - POST `attach-event` with `event_id=E1`. Assert response is no-op (`noop=true`, `cleanup_performed=true`); after the call the synthetic EventIndex entry is gone AND the orphan note file is gone; the merged calendar-stub note is untouched.
+   - Re-POST a second time and assert `cleanup_performed=false` (already-clean retry stays a clean no-op).
 
 Implementer: reuse the `_seed_unscheduled_recording` and `_seed_calendar_stub` helpers from `test_attach.py` (either via conftest promotion or by duplicating — follow what the #28 tests did).
 
@@ -2077,9 +2156,19 @@ private scanCalendarStubCandidates(
             note_path: file.path,
         });
     }
-    out.sort((a, b) => a.date !== b.date
-        ? a.date.localeCompare(b.date)
-        : a.time.localeCompare(b.time));
+    // Design Section 6 locks "same date first, then by time" within the
+    // +/-1 day window. Sort by absolute day-difference primarily so a
+    // previous-day candidate cannot leapfrog the most-likely same-day
+    // event; fall back to time, then date as a tie-breaker.
+    out.sort((a, b) => {
+        const aDay = new Date(a.date + "T00:00:00Z");
+        const bDay = new Date(b.date + "T00:00:00Z");
+        const aDiff = Math.abs((aDay.getTime() - recordingDay.getTime()) / 86400000);
+        const bDiff = Math.abs((bDay.getTime() - recordingDay.getTime()) / 86400000);
+        if (aDiff !== bDiff) return aDiff - bDiff;
+        if (a.time !== b.time) return a.time.localeCompare(b.time);
+        return a.date.localeCompare(b.date);
+    });
     return out;
 }
 
@@ -2149,50 +2238,127 @@ git commit -m "feat(#33): Link to calendar event command + orchestrator"
 **Files:**
 - Modify: `obsidian-recap/src/views/MeetingListView.ts`
 - Modify: `obsidian-recap/src/components/MeetingRow.ts`
+- Modify: `obsidian-recap/src/main.ts`
 
-### Step 1: Thread a new callback through `MeetingListView`'s deps
+The renderer (`MeetingRow.ts`) currently knows nothing about Obsidian's `Menu` or `TFile`; keeping it that way preserves its testability. The context-menu wiring lives in `MeetingListView`, which already holds `this.app`, `this.deps`, and the file-list rendering loop. `MeetingRow` only needs one new optional field on `MeetingData` so the view can decide whether to show the menu.
 
-Find the constructor of `MeetingListView` (check existing shape). Add a new optional callback prop:
+### Step 1: Add `eventId` to `MeetingData`
+
+Edit `obsidian-recap/src/components/MeetingRow.ts`:
 
 ```typescript
-interface MeetingListViewDeps {
-    // ... existing ...
-    onLinkToCalendar?: (file: TFile) => void;
+export interface MeetingData {
+    path: string;
+    title: string;
+    date: string;
+    time: string;
+    org: string;
+    duration: string;
+    pipelineStatus: string;
+    participants: string[];
+    companies: string[];
+    platform: string;
+    eventId?: string;  // optional: undefined when frontmatter has no event-id
 }
 ```
 
-Plumb the callback from the plugin onload where the view is constructed. Invoke `this.openLinkToCalendarFlow(file)`.
+`renderMeetingRow` itself does NOT change. The signature stays `(container, meeting, onClick, opts?)`.
 
-### Step 2: Render context-menu handler in `MeetingRow`
+### Step 2: Populate `eventId` where rows are built
 
-Add a right-click handler (`contextmenu` event) to the row element:
+Find the loop in `MeetingListView.ts` that builds `MeetingData` from frontmatter (currently around line 318). Add the field next to the existing assignments:
 
 ```typescript
-rowEl.addEventListener("contextmenu", (e) => {
-    e.preventDefault();
-    const menu = new Menu();
-    menu.addItem((item) =>
-        item.setTitle("Link to calendar event")
-            .setIcon("link")
-            .onClick(() => deps.onLinkToCalendar?.(file))
-    );
-    menu.showAtMouseEvent(e);
+const eventId = frontmatter["event-id"];
+this.meetings.push({
+    // ... existing fields ...
+    platform: frontmatter.platform || "",
+    eventId: typeof eventId === "string" ? eventId : undefined,
 });
 ```
 
-Only show the item when the row's note is unscheduled (check frontmatter).
+### Step 3: Extend `MeetingListViewDeps` with the link-to-calendar callback
 
-### Step 3: Build + test
+Edit the `MeetingListViewDeps` interface (currently at line 22):
+
+```typescript
+export interface MeetingListViewDeps {
+    getClient: () => DaemonClient | null;
+    onStartRecording: () => Promise<void>;
+    onStopRecording: () => Promise<void>;
+    onLinkToCalendar: (file: TFile) => void;  // NEW
+}
+```
+
+Make this REQUIRED, not optional. The plugin always wires the same handler at construction time and the absence-as-feature-flag pattern just hides bugs.
+
+### Step 4: Attach the context-menu handler at the row-render call site
+
+The view has two render call sites (`renderRows` around line 403 and `renderRowsWithDivider` around line 425). Both call `renderMeetingRow(...)` and discard the returned row element. Capture it and attach a `contextmenu` listener that opens the menu only when the row is unscheduled.
+
+Replace each `renderMeetingRow(...)` call with:
+
+```typescript
+const rowEl = renderMeetingRow(
+    this.listContainer!, row,
+    (path) => this.openMeeting(path),
+    { isPast: row.isPast },
+);
+this.attachContextMenu(rowEl, row);
+```
+
+Then add the helper method on `MeetingListView`:
+
+```typescript
+import { Menu, TFile } from "obsidian";
+
+private attachContextMenu(rowEl: HTMLElement, meeting: MeetingData): void {
+    if (!meeting.eventId?.startsWith("unscheduled:")) return;
+    rowEl.addEventListener("contextmenu", (e) => {
+        e.preventDefault();
+        const file = this.app.vault.getAbstractFileByPath(meeting.path);
+        if (!(file instanceof TFile)) return;
+        const menu = new Menu();
+        menu.addItem((item) =>
+            item.setTitle("Link to calendar event")
+                .setIcon("link")
+                .onClick(() => this.deps.onLinkToCalendar(file)),
+        );
+        menu.showAtMouseEvent(e);
+    });
+}
+```
+
+### Step 5: Wire the callback in `main.ts`
+
+Find where `MeetingListView` is instantiated (search for `new MeetingListView(` or where `MeetingListViewDeps` is assembled — typically inside `registerView` in `onload`). Add the callback to the deps object:
+
+```typescript
+this.registerView(VIEW_TYPE_MEETING_LIST, (leaf) => new MeetingListView(leaf, {
+    getClient: () => this.client,
+    onStartRecording: () => this.startRecording(),
+    onStopRecording: () => this.stopRecording(),
+    onLinkToCalendar: (file) => this.openLinkToCalendarFlow(file),  // NEW
+}));
+```
+
+`openLinkToCalendarFlow` is already added in Task 11.
+
+### Step 6: Build + test
 
 ```
 cd obsidian-recap && npm run build && npm test
 ```
 
-### Step 4: Commit
+Expected: build succeeds; vitest still green (no new tests required for this task — the visible behavior is exercised by the manual acceptance checklist).
+
+### Step 7: Commit
 
 ```
 cd ..
-git add obsidian-recap/src/views/MeetingListView.ts obsidian-recap/src/components/MeetingRow.ts
+git add obsidian-recap/src/components/MeetingRow.ts \
+        obsidian-recap/src/views/MeetingListView.ts \
+        obsidian-recap/src/main.ts
 git commit -m "feat(#33): MeetingRow context-menu entry for Link to calendar event"
 ```
 
