@@ -86,8 +86,6 @@ def attach_event_to_recording(
     Raises AttachAlreadyBoundError, AttachConflictError, AttachNotFoundError,
     or ValueError on failure. Retry-safe via cleanup-on-no-op.
     """
-    import json
-    import yaml
     from recap.artifacts import (
         load_recording_metadata, rebind_recording_metadata_to_event,
         resolve_recording_path,
@@ -153,7 +151,6 @@ def attach_event_to_recording(
             )
             cleaned = _cleanup_after_bind(
                 daemon,
-                synthetic_id=synthetic_id,
                 unscheduled_path=orphan_path,
                 event_id_to_clear=synthetic_id,
             )
@@ -188,7 +185,6 @@ def attach_event_to_recording(
             # Idempotent no-op: bind was already applied.
             cleaned = _cleanup_after_bind(
                 daemon,
-                synthetic_id=sidecar.event_id,
                 unscheduled_path=source_abs,
                 event_id_to_clear=sidecar.event_id,
             )
@@ -245,7 +241,6 @@ def attach_event_to_recording(
     # Step 10-11: Cleanup.
     cleaned = _cleanup_after_bind(
         daemon,
-        synthetic_id=sidecar.event_id,
         unscheduled_path=source_abs,
         event_id_to_clear=sidecar.event_id,
     )
@@ -393,7 +388,6 @@ def _date_diff_days(d1: str, d2: str) -> int:
 def _cleanup_after_bind(
     daemon,
     *,
-    synthetic_id: str | None,
     unscheduled_path: Path | None,
     event_id_to_clear: str | None,
 ) -> bool:
@@ -428,6 +422,9 @@ def _find_orphan_synthetic_for_recording(
     Used by the retry/no-op branch of the orchestrator to heal partial-
     success crashes where the sidecar was rebound to the calendar event
     but the synthetic index entry / unscheduled note never got cleaned.
+    Stale-index healing (entries pointing at deleted notes that are
+    unrelated to the current recording) is the daemon-startup rebuild's
+    job, not this function's.
     """
     if not recording_filename:
         return (None, None)
@@ -437,10 +434,10 @@ def _find_orphan_synthetic_for_recording(
             continue
         note_abs = vault_path / Path(str(entry.path))
         if not note_abs.exists():
-            # Stale index entry pointing at a deleted note: still worth
-            # clearing so callers can heal the index even when the file
-            # half of the cleanup already happened.
-            return (entry.event_id, note_abs)
+            # Cannot verify whether this stale entry matches recording_filename;
+            # skip. Stale-index healing is the daemon-startup rebuild's job, not
+            # the orchestrator's.
+            continue
         try:
             content = note_abs.read_text(encoding="utf-8")
         except OSError:

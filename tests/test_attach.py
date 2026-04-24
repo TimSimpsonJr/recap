@@ -455,6 +455,49 @@ class TestAttachOrchestrationNoOp:
         assert not orphan.exists()
         assert attach_daemon.event_index.lookup("unscheduled:abc") is None
 
+    def test_normal_flow_with_matching_recording_is_noop(self, attach_daemon):
+        """Sidecar still synthetic, but target stub already carries the same
+        `recording` filename. Mid-crash retry should rebind the sidecar +
+        fire cleanup, not redo the merge write.
+        """
+        from recap.daemon.recorder.attach import attach_event_to_recording
+        from recap.artifacts import load_recording_metadata
+        import yaml
+
+        audio = _seed_unscheduled_recording(
+            attach_daemon, stem="rec", event_id="unscheduled:abc",
+            note_path="Test/Meetings/u.md", body="# Source body",
+        )
+        # Stub already carries `recording: rec.flac` (mid-crash state).
+        vault = attach_daemon.config.vault_path
+        stub_path = Path("Test/Meetings/2026-04-24 - sprint.md")
+        fm = {
+            "date": "2026-04-24", "time": "14:00-15:00", "title": "Sprint",
+            "event-id": "E1", "calendar-source": "google",
+            "meeting-link": "https://meet.google.com/x",
+            "org": "test", "org-subfolder": "Test",
+            "recording": "rec.flac",  # already merged from a prior crashed attempt
+            "pipeline-status": "complete",
+        }
+        (vault / stub_path).write_text(
+            "---\n" + yaml.dump(fm, sort_keys=False) + "---\n\n## Agenda\n\n",
+            encoding="utf-8",
+        )
+        attach_daemon.event_index.add("E1", stub_path, "test")
+
+        result = attach_event_to_recording(
+            daemon=attach_daemon, stem="rec", event_id="E1",
+        )
+        assert result.noop is True
+        assert result.cleanup_performed is True
+        # Sidecar should now point at E1 (rebind ran).
+        loaded = load_recording_metadata(audio)
+        assert loaded is not None
+        assert loaded.event_id == "E1"
+        # Unscheduled note + synthetic index entry both cleaned up.
+        assert not (vault / "Test/Meetings/u.md").exists()
+        assert attach_daemon.event_index.lookup("unscheduled:abc") is None
+
 
 class TestAttachOrchestrationErrors:
     def test_synthetic_event_id_raises(self, attach_daemon):
@@ -579,9 +622,60 @@ class TestAttachOrchestrationErrors:
         assert "rec-new.flac" in content
 
     def test_cross_org_bind_refused(self, attach_daemon):
-        """Stub in a different org raises ValueError cross_org_bind_refused."""
-        # For this test, seed source in org 'test' but stub's frontmatter
-        # manually set to org 'other'. Orchestrator should 400.
-        # Implementer: setup details depend on how org_config resolves;
-        # may need to register a second org in the fixture.
-        pass
+        """Orchestrator refuses to bind across orgs."""
+        from recap.daemon.recorder.attach import attach_event_to_recording
+        import yaml
+
+        _seed_unscheduled_recording(
+            attach_daemon, stem="rec", event_id="unscheduled:abc",
+            note_path="Test/Meetings/u.md", body="body",
+        )
+        # Hand-rolled cross-org stub: org "other" in frontmatter, but path under
+        # the test org's Meetings dir so find_note_by_event_id resolves it.
+        vault = attach_daemon.config.vault_path
+        stub_path = Path("Test/Meetings/2026-04-24 - cross.md")
+        fm = {
+            "date": "2026-04-24", "time": "14:00-15:00", "title": "Cross",
+            "event-id": "E1", "calendar-source": "google",
+            "meeting-link": "", "org": "other", "org-subfolder": "Other",
+            "pipeline-status": "pending",
+        }
+        (vault / stub_path).write_text(
+            "---\n" + yaml.dump(fm, sort_keys=False) + "---\n\n## Agenda\n\n",
+            encoding="utf-8",
+        )
+        attach_daemon.event_index.add("E1", stub_path, "other")
+
+        with pytest.raises(ValueError, match="cross_org_bind_refused"):
+            attach_event_to_recording(
+                daemon=attach_daemon, stem="rec", event_id="E1",
+            )
+
+    def test_date_out_of_window(self, attach_daemon):
+        """Orchestrator refuses bind when source/target dates are >+/- 1 day apart."""
+        from recap.daemon.recorder.attach import attach_event_to_recording
+        import yaml
+
+        _seed_unscheduled_recording(
+            attach_daemon, stem="rec", event_id="unscheduled:abc",
+            note_path="Test/Meetings/u.md", body="body",
+        )
+        vault = attach_daemon.config.vault_path
+        stub_path = Path("Test/Meetings/2026-04-26 - far.md")
+        fm = {
+            "date": "2026-04-26",  # 2 days after source's 2026-04-24
+            "time": "14:00-15:00", "title": "Far",
+            "event-id": "E1", "calendar-source": "google",
+            "meeting-link": "", "org": "test", "org-subfolder": "Test",
+            "pipeline-status": "pending",
+        }
+        (vault / stub_path).write_text(
+            "---\n" + yaml.dump(fm, sort_keys=False) + "---\n\n## Agenda\n\n",
+            encoding="utf-8",
+        )
+        attach_daemon.event_index.add("E1", stub_path, "test")
+
+        with pytest.raises(ValueError, match="date_out_of_window"):
+            attach_event_to_recording(
+                daemon=attach_daemon, stem="rec", event_id="E1",
+            )
