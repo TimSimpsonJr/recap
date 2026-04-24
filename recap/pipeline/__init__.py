@@ -198,13 +198,20 @@ def _has_real_speakers(transcript: TranscriptResult) -> bool:
 def _apply_speaker_mapping(
     transcript: TranscriptResult, mapping: dict[str, str],
 ) -> TranscriptResult:
-    """Return a copy of *transcript* with speaker labels replaced per *mapping*."""
+    """Return a copy of *transcript* with mutable display labels rewritten
+    per *mapping*. Mapping keys are speaker_id values; mapping values are
+    the new display labels. speaker_id is preserved on every utterance.
+
+    Legacy .speakers.json files keyed by display label silently no-op
+    because their keys won't match speaker_id values. First post-#28 save
+    rewrites the file keyed by speaker_id.
+    """
     from recap.models import Utterance
 
     new_utterances = [
         Utterance(
             speaker_id=u.speaker_id,
-            speaker=mapping.get(u.speaker, u.speaker),
+            speaker=mapping.get(u.speaker_id, u.speaker),
             start=u.start,
             end=u.end,
             text=u.text,
