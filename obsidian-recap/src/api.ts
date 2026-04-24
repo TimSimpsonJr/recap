@@ -86,6 +86,14 @@ export interface PatchConfigResponse {
     restart_required: boolean;
 }
 
+// Atomic contact mutations sent alongside a speaker-correction save.
+// ``create`` minted a brand-new known_contacts entry (and, server-side,
+// a People note stub); ``add_alias`` folded a typed name onto an
+// existing canonical contact. See design doc Section 4.5.
+export type ContactMutation =
+    | {action: "create"; name: string; display_name: string; email?: string}
+    | {action: "add_alias"; name: string; alias: string};
+
 export class DaemonClient {
     private baseUrl: string;
     private token: string;
@@ -251,6 +259,32 @@ export class DaemonClient {
         });
     }
 
+    /** Fetch the transcript's distinct ``(speaker_id, display)`` pairs
+     * along with the recording's metadata ``participants`` (names +
+     * optional emails from calendar-sourced entries). Drives the
+     * #28 speaker-correction modal's resolution engine. */
+    async getMeetingSpeakers(stem: string): Promise<{
+        speakers: Array<{speaker_id: string; display: string}>;
+        participants: Array<{name: string; email: string | null}>;
+    }> {
+        return this.get(
+            `/api/meetings/${encodeURIComponent(stem)}/speakers`,
+        );
+    }
+
+    /** Save a #28-style speaker correction: ``mapping`` keyed by
+     * ``speaker_id`` + atomic ``contact_mutations`` the daemon applies
+     * before reprocess. ``submitSpeakerCorrections`` is the pre-#28
+     * shape and will be removed once the modal rewrite lands. */
+    async saveSpeakerCorrections(params: {
+        stem: string;
+        mapping: Record<string, string>;
+        contact_mutations: ContactMutation[];
+        org: string;
+    }): Promise<{status: string}> {
+        return this.post("/api/meetings/speakers", params);
+    }
+
     async getOAuthStatus(provider: string): Promise<{ connected: boolean; provider: string }> {
         return this.get(`/api/oauth/${provider}/status`);
     }
@@ -306,12 +340,17 @@ export class DaemonClient {
 
     /** URL for streaming. Not used for auth'd fetches (tokens must not
      * land in query strings that could leak through referrers or logs);
-     * see ``fetchSpeakerClip`` for the Bearer-authed variant. */
+     * see ``fetchSpeakerClip`` for the Bearer-authed variant.
+     *
+     * Query key is ``speaker_id`` as of #28 — the daemon still accepts
+     * ``speaker`` as a fallback during the transition (Task 9), but
+     * the plugin always sends the stable diarized identity so clip
+     * cache entries survive display relabels. */
     getSpeakerClipUrl(
-        stem: string, speaker: string, duration = 5,
+        stem: string, speakerId: string, duration = 5,
     ): string {
         const params = new URLSearchParams({
-            speaker, duration: String(duration),
+            speaker_id: speakerId, duration: String(duration),
         });
         return `${this.baseUrl}/api/recordings/${
             encodeURIComponent(stem)
@@ -319,10 +358,10 @@ export class DaemonClient {
     }
 
     async fetchSpeakerClip(
-        stem: string, speaker: string, duration = 5,
+        stem: string, speakerId: string, duration = 5,
     ): Promise<Blob> {
         const resp = await fetch(
-            this.getSpeakerClipUrl(stem, speaker, duration),
+            this.getSpeakerClipUrl(stem, speakerId, duration),
             {
                 headers: { "Authorization": `Bearer ${this.token}` },
             },
