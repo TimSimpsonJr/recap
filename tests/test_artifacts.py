@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import pathlib
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from unittest.mock import patch
+
+import pytest
 
 from recap.artifacts import (
     RecordingMetadata,
@@ -180,3 +183,64 @@ def test_recording_metadata_default_recording_started_at_is_none():
         participants=[], platform="teams",
     )
     assert metadata.recording_started_at is None
+
+
+def _make_metadata() -> RecordingMetadata:
+    return RecordingMetadata(
+        org="testorg",
+        note_path="Test/Meetings/test.md",
+        title="Test",
+        date=date(2026, 4, 24).isoformat(),
+        participants=[Participant(name="Alice")],
+        platform="manual",
+    )
+
+
+class TestWriteRecordingMetadataAtomic:
+    """Tests for RecordingMetadata sidecar atomic write (#33 Task 1)."""
+
+    def test_roundtrip_unchanged(self, tmp_path: pathlib.Path):
+        """Atomic write must not break read-after-write."""
+        audio = tmp_path / "rec.flac"
+        audio.touch()
+        md = _make_metadata()
+        write_recording_metadata(audio, md)
+        loaded = load_recording_metadata(audio)
+        assert loaded is not None
+        assert loaded.title == md.title
+        assert loaded.participants[0].name == "Alice"
+
+    def test_temp_file_does_not_remain_on_success(self, tmp_path: pathlib.Path):
+        audio = tmp_path / "rec.flac"
+        audio.touch()
+        write_recording_metadata(audio, _make_metadata())
+        tmps = list(tmp_path.glob("*.tmp"))
+        assert tmps == []
+
+    def test_temp_file_cleaned_up_on_oserror(self, tmp_path: pathlib.Path):
+        """If os.replace fails, the temp file must not be left behind."""
+        audio = tmp_path / "rec.flac"
+        audio.touch()
+        with patch("os.replace", side_effect=OSError("simulated replace fail")):
+            with pytest.raises(OSError):
+                write_recording_metadata(audio, _make_metadata())
+        tmps = list(tmp_path.glob("*.tmp"))
+        assert tmps == []
+
+    def test_partial_write_does_not_corrupt_existing(self, tmp_path: pathlib.Path):
+        """Existing sidecar is not corrupted if the write fails mid-flight."""
+        audio = tmp_path / "rec.flac"
+        audio.touch()
+        # Seed an initial good sidecar.
+        good = _make_metadata()
+        write_recording_metadata(audio, good)
+        # Attempt a failing write.
+        bad = _make_metadata()
+        bad.title = "Bad"
+        with patch("os.replace", side_effect=OSError("simulated")):
+            with pytest.raises(OSError):
+                write_recording_metadata(audio, bad)
+        # Original content still readable.
+        loaded = load_recording_metadata(audio)
+        assert loaded is not None
+        assert loaded.title == "Test"

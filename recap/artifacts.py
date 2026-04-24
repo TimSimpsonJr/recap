@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import re
 from dataclasses import dataclass, field
@@ -149,8 +150,28 @@ def resolve_recording_path(
 
 
 def write_recording_metadata(audio_path: pathlib.Path, metadata: RecordingMetadata) -> pathlib.Path:
+    """Write the sidecar atomically (temp + os.replace).
+
+    Upgraded from direct write in #33 because the retroactive-bind flow
+    requires crash-safe sidecar rewrites. Pre-existing callers (recorder
+    start, #29 on_before_finalize, pipeline reprocess) get stronger
+    crash semantics for free.
+    """
     path = metadata_path(audio_path)
-    path.write_text(json.dumps(metadata.to_dict(), indent=2), encoding="utf-8")
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    try:
+        tmp_path.write_text(
+            json.dumps(metadata.to_dict(), indent=2),
+            encoding="utf-8",
+        )
+        os.replace(tmp_path, path)
+    except OSError:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+        raise
     return path
 
 
