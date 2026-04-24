@@ -1,6 +1,7 @@
 """Tests for vault writing module."""
 import pathlib
 from datetime import date
+from unittest.mock import patch
 
 import pytest
 import yaml
@@ -22,6 +23,7 @@ from recap.vault import (
     write_meeting_note,
     write_profile_stubs,
     find_previous_meeting,
+    _atomic_write_note,
     _format_action_item,
     _format_duration,
     slugify,
@@ -683,11 +685,6 @@ def test_canonical_frontmatter_time_also_set_for_scheduled_when_started_at_prese
 # ---------------------------------------------------------------------------
 # Tests for _atomic_write_note helper (#33 Task 3)
 # ---------------------------------------------------------------------------
-
-
-from unittest.mock import patch
-
-from recap.vault import _atomic_write_note
 
 
 class TestAtomicWriteNote:
