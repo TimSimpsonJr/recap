@@ -58,6 +58,7 @@ class TestMeetingMetadata:
 class TestUtterance:
     def test_create(self):
         u = Utterance(
+            speaker_id="SPEAKER_00",
             speaker="SPEAKER_00",
             start=0.0,
             end=5.2,
@@ -70,8 +71,8 @@ class TestUtterance:
 class TestTranscriptResult:
     def test_create(self):
         utterances = [
-            Utterance(speaker="SPEAKER_00", start=0.0, end=3.0, text="Hello."),
-            Utterance(speaker="SPEAKER_01", start=3.5, end=7.0, text="Hi there."),
+            Utterance(speaker_id="SPEAKER_00", speaker="SPEAKER_00", start=0.0, end=3.0, text="Hello."),
+            Utterance(speaker_id="SPEAKER_01", speaker="SPEAKER_01", start=3.5, end=7.0, text="Hi there."),
         ]
         result = TranscriptResult(
             utterances=utterances,
@@ -83,8 +84,8 @@ class TestTranscriptResult:
 
     def test_to_labelled_text(self):
         utterances = [
-            Utterance(speaker="SPEAKER_00", start=0.0, end=3.0, text="Hello."),
-            Utterance(speaker="SPEAKER_01", start=3.5, end=7.0, text="Hi there."),
+            Utterance(speaker_id="SPEAKER_00", speaker="SPEAKER_00", start=0.0, end=3.0, text="Hello."),
+            Utterance(speaker_id="SPEAKER_01", speaker="SPEAKER_01", start=3.5, end=7.0, text="Hi there."),
         ]
         result = TranscriptResult(
             utterances=utterances,
@@ -94,6 +95,66 @@ class TestTranscriptResult:
         text = result.to_labelled_text()
         assert "SPEAKER_00: Hello." in text
         assert "SPEAKER_01: Hi there." in text
+
+
+class TestUtteranceSchema:
+    """Utterance.speaker_id stable identity + backfill migration (#28)."""
+
+    def test_from_dict_backfills_speaker_id_when_missing(self):
+        from recap.models import Utterance
+        u = Utterance.from_dict({
+            "speaker": "SPEAKER_00",
+            "start": 0.0, "end": 1.0, "text": "hi",
+        })
+        assert u.speaker_id == "SPEAKER_00"
+        assert u.speaker == "SPEAKER_00"
+
+    def test_from_dict_preserves_explicit_speaker_id(self):
+        from recap.models import Utterance
+        u = Utterance.from_dict({
+            "speaker_id": "SPEAKER_00",
+            "speaker": "Alice",
+            "start": 0.0, "end": 1.0, "text": "hi",
+        })
+        assert u.speaker_id == "SPEAKER_00"
+        assert u.speaker == "Alice"
+
+    def test_to_dict_roundtrip_contains_both_fields(self):
+        from recap.models import Utterance
+        u = Utterance(
+            speaker_id="SPEAKER_00", speaker="Alice",
+            start=0.0, end=1.0, text="hi",
+        )
+        d = u.to_dict()
+        assert d["speaker_id"] == "SPEAKER_00"
+        assert d["speaker"] == "Alice"
+
+    def test_transcript_result_from_dict_delegates_to_utterance(self):
+        from recap.models import TranscriptResult
+        t = TranscriptResult.from_dict({
+            "utterances": [
+                {"speaker": "SPEAKER_00", "start": 0, "end": 1, "text": "a"},
+                {"speaker": "SPEAKER_01", "start": 1, "end": 2, "text": "b"},
+            ],
+            "raw_text": "a b",
+            "language": "en",
+        })
+        assert t.utterances[0].speaker_id == "SPEAKER_00"
+        assert t.utterances[1].speaker_id == "SPEAKER_01"
+
+    def test_legacy_transcript_all_backfill(self):
+        """Transcript with no speaker_id fields anywhere -> every utterance
+        backfills speaker_id=speaker."""
+        from recap.models import TranscriptResult
+        t = TranscriptResult.from_dict({
+            "utterances": [
+                {"speaker": "Alice", "start": 0, "end": 1, "text": "hi"},
+                {"speaker": "Bob", "start": 1, "end": 2, "text": "hey"},
+            ],
+            "raw_text": "hi hey", "language": "en",
+        })
+        assert [u.speaker_id for u in t.utterances] == ["Alice", "Bob"]
+        assert [u.speaker for u in t.utterances] == ["Alice", "Bob"]
 
 
 class TestAnalysisResult:

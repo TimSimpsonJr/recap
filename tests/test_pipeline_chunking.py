@@ -56,13 +56,13 @@ def test_plan_windows_rejects_invalid_params():
 
 def test_offset_utterances_shifts_timestamps():
     window_utts = [
-        Utterance(speaker="UNKNOWN", start=0.5, end=2.0, text="hello"),
-        Utterance(speaker="UNKNOWN", start=5.0, end=7.5, text="world"),
+        Utterance(speaker_id="UNKNOWN", speaker="UNKNOWN", start=0.5, end=2.0, text="hello"),
+        Utterance(speaker_id="UNKNOWN", speaker="UNKNOWN", start=5.0, end=7.5, text="world"),
     ]
     result = offset_utterances(window_utts, window_start_s=110.0)
     assert result == [
-        Utterance(speaker="UNKNOWN", start=110.5, end=112.0, text="hello"),
-        Utterance(speaker="UNKNOWN", start=115.0, end=117.5, text="world"),
+        Utterance(speaker_id="UNKNOWN", speaker="UNKNOWN", start=110.5, end=112.0, text="hello"),
+        Utterance(speaker_id="UNKNOWN", speaker="UNKNOWN", start=115.0, end=117.5, text="world"),
     ]
 
 
@@ -76,14 +76,14 @@ def test_merge_drops_duplicate_in_overlap_zone():
     # Utterance "overlap-b" has center at 118 -> belongs to window 1.
     # Window 2's duplicates of these two should be dropped.
     w1 = [
-        Utterance(speaker="UNKNOWN", start=5.0, end=10.0, text="early"),
-        Utterance(speaker="UNKNOWN", start=113.0, end=117.0, text="overlap-a"),
-        Utterance(speaker="UNKNOWN", start=116.0, end=120.0, text="overlap-b"),
+        Utterance(speaker_id="UNKNOWN", speaker="UNKNOWN", start=5.0, end=10.0, text="early"),
+        Utterance(speaker_id="UNKNOWN", speaker="UNKNOWN", start=113.0, end=117.0, text="overlap-a"),
+        Utterance(speaker_id="UNKNOWN", speaker="UNKNOWN", start=116.0, end=120.0, text="overlap-b"),
     ]
     w2 = [
-        Utterance(speaker="UNKNOWN", start=113.0, end=117.0, text="overlap-a"),
-        Utterance(speaker="UNKNOWN", start=116.0, end=120.0, text="overlap-b"),
-        Utterance(speaker="UNKNOWN", start=125.0, end=130.0, text="late"),
+        Utterance(speaker_id="UNKNOWN", speaker="UNKNOWN", start=113.0, end=117.0, text="overlap-a"),
+        Utterance(speaker_id="UNKNOWN", speaker="UNKNOWN", start=116.0, end=120.0, text="overlap-b"),
+        Utterance(speaker_id="UNKNOWN", speaker="UNKNOWN", start=125.0, end=130.0, text="late"),
     ]
     merged = merge_overlapping_windows(
         prior=w1,
@@ -98,7 +98,7 @@ def test_merge_drops_duplicate_in_overlap_zone():
 def test_merge_keeps_later_side_when_center_falls_in_later_window():
     # For center-in-overlap-goes-to-prior behavior, verify prior keeps its own
     # even when later is empty.
-    w1 = [Utterance("UNKNOWN", 115.0, 118.0, "only-in-prior")]
+    w1 = [Utterance("UNKNOWN", "UNKNOWN",115.0, 118.0, "only-in-prior")]
     w2: list[Utterance] = []
     merged = merge_overlapping_windows(
         prior=w1, later=w2, overlap_start_s=110.0, overlap_end_s=120.0,
@@ -107,18 +107,18 @@ def test_merge_keeps_later_side_when_center_falls_in_later_window():
 
 
 def test_merge_empty_later_returns_prior():
-    w1 = [Utterance("UNKNOWN", 0.0, 5.0, "a")]
+    w1 = [Utterance("UNKNOWN", "UNKNOWN",0.0, 5.0, "a")]
     assert merge_overlapping_windows(w1, [], 0.0, 10.0) == w1
 
 
 def test_merge_result_is_monotonic():
     w1 = [
-        Utterance("UNKNOWN", 0.0, 5.0, "a"),
-        Utterance("UNKNOWN", 113.0, 118.0, "b"),
+        Utterance("UNKNOWN", "UNKNOWN",0.0, 5.0, "a"),
+        Utterance("UNKNOWN", "UNKNOWN",113.0, 118.0, "b"),
     ]
     w2 = [
-        Utterance("UNKNOWN", 113.0, 118.0, "b"),
-        Utterance("UNKNOWN", 125.0, 130.0, "c"),
+        Utterance("UNKNOWN", "UNKNOWN",113.0, 118.0, "b"),
+        Utterance("UNKNOWN", "UNKNOWN",125.0, 130.0, "c"),
     ]
     merged = merge_overlapping_windows(w1, w2, 110.0, 120.0)
     for i in range(1, len(merged)):
@@ -130,12 +130,12 @@ def test_merge_drops_later_overlap_despite_timestamp_jitter():
     overlapping windows. The dedup rule must drop later's overlap utterance
     based on center position alone, not exact (start, end, text) match."""
     w1 = [
-        Utterance("UNKNOWN", 113.0, 117.0, "hello world"),
+        Utterance("UNKNOWN", "UNKNOWN",113.0, 117.0, "hello world"),
     ]
     w2 = [
         # Same phrase, jittered endpoints — NOT an exact-key match of w1's.
-        Utterance("UNKNOWN", 113.4, 117.3, "hello world"),
-        Utterance("UNKNOWN", 125.0, 130.0, "late"),
+        Utterance("UNKNOWN", "UNKNOWN",113.4, 117.3, "hello world"),
+        Utterance("UNKNOWN", "UNKNOWN",125.0, 130.0, "late"),
     ]
     merged = merge_overlapping_windows(w1, w2, 110.0, 120.0)
     # The jittered duplicate must be dropped; only prior's version survives.
@@ -160,12 +160,12 @@ def test_merge_collapses_same_start_across_window_boundary():
     """
     prior = [
         # Center=1548.6, in overlap [1540, 1550]. KEPT by positional rule.
-        Utterance("UNKNOWN", 1547.52, 1549.68,
+        Utterance("UNKNOWN", "UNKNOWN",1547.52, 1549.68,
                   "So now we need to, you know, that."),
     ]
     later = [
         # Same start, longer end. Center=1551.32, PAST overlap → KEPT.
-        Utterance("UNKNOWN", 1547.52, 1555.12,
+        Utterance("UNKNOWN", "UNKNOWN",1547.52, 1555.12,
                   "So now we need to, you know, that's something we're working on."),
     ]
     merged = merge_overlapping_windows(prior, later, 1540.0, 1550.0)
@@ -182,14 +182,14 @@ def test_merge_output_monotonic_when_later_utterance_straddles_boundary():
     whose start falls inside it must not break the monotonicity invariant."""
     w1 = [
         # Prior's last utterance — center in overlap, start near overlap end.
-        Utterance("UNKNOWN", 118.0, 120.5, "tail"),
+        Utterance("UNKNOWN", "UNKNOWN",118.0, 120.5, "tail"),
     ]
     w2 = [
         # Jittered duplicate of "tail" — center in overlap → dropped.
-        Utterance("UNKNOWN", 117.5, 120.8, "tail"),
+        Utterance("UNKNOWN", "UNKNOWN",117.5, 120.8, "tail"),
         # Long new utterance that starts inside the overlap zone but whose
         # center (121.0) is past overlap_end_s=120.0 → kept in later.
-        Utterance("UNKNOWN", 117.0, 125.0, "new thing"),
+        Utterance("UNKNOWN", "UNKNOWN",117.0, 125.0, "new thing"),
     ]
     merged = merge_overlapping_windows(w1, w2, 110.0, 120.0)
     starts = [u.start for u in merged]

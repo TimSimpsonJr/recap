@@ -36,8 +36,8 @@ def mock_metadata():
 def mock_transcript():
     return TranscriptResult(
         utterances=[
-            Utterance(speaker="SPEAKER_00", start=0.0, end=5.0, text="Hello"),
-            Utterance(speaker="SPEAKER_01", start=5.0, end=10.0, text="Hi"),
+            Utterance(speaker_id="SPEAKER_00", speaker="SPEAKER_00", start=0.0, end=5.0, text="Hello"),
+            Utterance(speaker_id="SPEAKER_01", speaker="SPEAKER_01", start=5.0, end=10.0, text="Hi"),
         ],
         raw_text="Hello Hi",
         language="en",
@@ -137,8 +137,8 @@ class TestStageOrder:
 
         diarized = TranscriptResult(
             utterances=[
-                Utterance(speaker="SPK_0", start=0.0, end=5.0, text="Hello"),
-                Utterance(speaker="SPK_1", start=5.0, end=10.0, text="Hi"),
+                Utterance(speaker_id="SPK_0", speaker="SPK_0", start=0.0, end=5.0, text="Hello"),
+                Utterance(speaker_id="SPK_1", speaker="SPK_1", start=5.0, end=10.0, text="Hi"),
             ],
             raw_text="Hello Hi",
             language="en",
@@ -185,8 +185,8 @@ class TestStreamingTranscript:
     ):
         streaming = TranscriptResult(
             utterances=[
-                Utterance(speaker="Tim", start=0.0, end=5.0, text="Hello"),
-                Utterance(speaker="Jane", start=5.0, end=10.0, text="Hi"),
+                Utterance(speaker_id="Tim", speaker="Tim", start=0.0, end=5.0, text="Hello"),
+                Utterance(speaker_id="Jane", speaker="Jane", start=5.0, end=10.0, text="Hi"),
             ],
             raw_text="Hello Hi",
             language="en",
@@ -225,13 +225,13 @@ class TestStreamingTranscript:
         """If streaming transcript has only UNKNOWN speakers, do NOT skip transcribe."""
         streaming = TranscriptResult(
             utterances=[
-                Utterance(speaker="UNKNOWN", start=0.0, end=5.0, text="Hello"),
+                Utterance(speaker_id="UNKNOWN", speaker="UNKNOWN", start=0.0, end=5.0, text="Hello"),
             ],
             raw_text="Hello",
             language="en",
         )
         diarized = TranscriptResult(
-            utterances=[Utterance(speaker="SPK_0", start=0.0, end=5.0, text="Hello")],
+            utterances=[Utterance(speaker_id="SPK_0", speaker="SPK_0", start=0.0, end=5.0, text="Hello")],
             raw_text="Hello",
             language="en",
         )
@@ -268,7 +268,7 @@ class TestStatusTracking:
         pipeline_config, vault_path,
     ):
         diarized = TranscriptResult(
-            utterances=[Utterance(speaker="SPK_0", start=0.0, end=5.0, text="Hello")],
+            utterances=[Utterance(speaker_id="SPK_0", speaker="SPK_0", start=0.0, end=5.0, text="Hello")],
             raw_text="Hello",
             language="en",
         )
@@ -341,7 +341,7 @@ class TestFailureStatus:
         self, audio_file, mock_metadata, mock_transcript, pipeline_config, vault_path,
     ):
         diarized = TranscriptResult(
-            utterances=[Utterance(speaker="SPK_0", start=0.0, end=5.0, text="Hello")],
+            utterances=[Utterance(speaker_id="SPK_0", speaker="SPK_0", start=0.0, end=5.0, text="Hello")],
             raw_text="Hello",
             language="en",
         )
@@ -423,7 +423,7 @@ class TestReturnValue:
         pipeline_config, vault_path, expected_note_path,
     ):
         diarized = TranscriptResult(
-            utterances=[Utterance(speaker="SPK_0", start=0.0, end=5.0, text="Hello")],
+            utterances=[Utterance(speaker_id="SPK_0", speaker="SPK_0", start=0.0, end=5.0, text="Hello")],
             raw_text="Hello",
             language="en",
         )
@@ -467,7 +467,7 @@ def test_run_pipeline_export_writes_canonical_frontmatter(tmp_path, monkeypatch)
     audio_path.touch()
 
     transcript = TranscriptResult(
-        utterances=[Utterance(speaker="Alice", start=0.0, end=1.0, text="hi")],
+        utterances=[Utterance(speaker_id="Alice", speaker="Alice", start=0.0, end=1.0, text="hi")],
         raw_text="hi", language="en",
     )
     save_transcript(audio_path, transcript)
@@ -543,7 +543,7 @@ def test_run_pipeline_against_calendar_seeded_note_backfills_frontmatter(tmp_pat
     audio_path.touch()
 
     transcript = TranscriptResult(
-        utterances=[Utterance(speaker="Alice", start=0.0, end=1.0, text="hi")],
+        utterances=[Utterance(speaker_id="Alice", speaker="Alice", start=0.0, end=1.0, text="hi")],
         raw_text="hi", language="en",
     )
     save_transcript(audio_path, transcript)
@@ -670,7 +670,7 @@ def test_run_pipeline_creates_new_note_with_calendar_fields_from_recording_metad
     audio_path.touch()
 
     transcript = TranscriptResult(
-        utterances=[Utterance(speaker="Alice", start=0.0, end=1.0, text="hi")],
+        utterances=[Utterance(speaker_id="Alice", speaker="Alice", start=0.0, end=1.0, text="hi")],
         raw_text="hi", language="en",
     )
     save_transcript(audio_path, transcript)
@@ -747,7 +747,7 @@ def test_run_pipeline_writes_vault_relative_note_path(tmp_path):
     audio_path = tmp_path / "2026-04-14-140000-d.flac"
     audio_path.touch()
     save_transcript(audio_path, TranscriptResult(
-        utterances=[Utterance(speaker="Alice", start=0, end=1, text="hi")],
+        utterances=[Utterance(speaker_id="Alice", speaker="Alice", start=0, end=1, text="hi")],
         raw_text="hi", language="en",
     ))
     save_analysis(audio_path, AnalysisResult(
@@ -797,7 +797,7 @@ def test_run_pipeline_reads_legacy_absolute_note_path(tmp_path):
     audio_path = tmp_path / "rec.flac"
     audio_path.touch()
     save_transcript(audio_path, TranscriptResult(
-        utterances=[Utterance(speaker="A", start=0, end=1, text="hi")],
+        utterances=[Utterance(speaker_id="A", speaker="A", start=0, end=1, text="hi")],
         raw_text="hi", language="en",
     ))
     save_analysis(audio_path, AnalysisResult(

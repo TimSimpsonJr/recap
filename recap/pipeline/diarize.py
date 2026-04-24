@@ -131,6 +131,7 @@ def assign_speakers(
 
         new_utterances.append(
             Utterance(
+                speaker_id=best_speaker,
                 speaker=best_speaker,
                 start=utt.start,
                 end=utt.end,

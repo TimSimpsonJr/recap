@@ -117,8 +117,8 @@ def _make_analysis(
 def _make_transcript() -> TranscriptResult:
     return TranscriptResult(
         utterances=[
-            Utterance(speaker="Alex", start=1.0, end=4.0, text="Welcome to sprint planning."),
-            Utterance(speaker="Bri", start=4.5, end=7.0, text="Let's start with the priorities."),
+            Utterance(speaker_id="Alex", speaker="Alex", start=1.0, end=4.0, text="Welcome to sprint planning."),
+            Utterance(speaker_id="Bri", speaker="Bri", start=4.5, end=7.0, text="Let's start with the priorities."),
         ],
         raw_text="Welcome to sprint planning. Let's start with the priorities.",
         language="en",

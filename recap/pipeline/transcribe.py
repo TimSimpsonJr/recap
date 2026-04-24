@@ -93,6 +93,7 @@ def _hypothesis_to_utterances(hyp) -> list[Utterance]:
         segments = []
     return [
         Utterance(
+            speaker_id="UNKNOWN",
             speaker="UNKNOWN",
             start=seg["start"],
             end=seg["end"],
@@ -107,6 +108,7 @@ def _save_transcript_json(path: Path, result: TranscriptResult) -> None:
     data = {
         "utterances": [
             {
+                "speaker_id": u.speaker_id,
                 "speaker": u.speaker,
                 "start": u.start,
                 "end": u.end,

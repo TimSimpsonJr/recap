@@ -203,6 +203,7 @@ def _apply_speaker_mapping(
 
     new_utterances = [
         Utterance(
+            speaker_id=u.speaker_id,
             speaker=mapping.get(u.speaker, u.speaker),
             start=u.start,
             end=u.end,

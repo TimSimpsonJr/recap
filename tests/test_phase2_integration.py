@@ -57,7 +57,7 @@ def test_calendar_event_flow_to_pipeline_with_index(tmp_path):
     save_transcript(
         audio_path,
         TranscriptResult(
-            utterances=[Utterance(speaker="Alice", start=0, end=1, text="hi")],
+            utterances=[Utterance(speaker_id="Alice", speaker="Alice", start=0, end=1, text="hi")],
             raw_text="hi",
             language="en",
         ),
