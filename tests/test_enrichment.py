@@ -5,6 +5,7 @@ from recap.daemon.recorder.enrichment import (
     match_known_contacts,
     enrich_meeting_metadata,
 )
+from recap.models import Participant
 
 
 class TestKnownContactMatching:
@@ -13,29 +14,101 @@ class TestKnownContactMatching:
             KnownContact(name="Jane Smith", display_name="Jane Smith"),
             KnownContact(name="Bob Lee", display_name="Bob L."),
         ]
-        result = match_known_contacts(["Jane Smith", "Bob L."], contacts)
-        assert result == ["Jane Smith", "Bob Lee"]
+        observed = [Participant(name="Jane Smith"), Participant(name="Bob L.")]
+        result = match_known_contacts(observed, contacts)
+        assert [p.name for p in result] == ["Jane Smith", "Bob Lee"]
 
     def test_returns_original_for_no_match(self):
         contacts = [
             KnownContact(name="Jane Smith", display_name="Jane Smith"),
         ]
-        result = match_known_contacts(["Unknown Person"], contacts)
-        assert result == ["Unknown Person"]
+        result = match_known_contacts([Participant(name="Unknown Person")], contacts)
+        assert [p.name for p in result] == ["Unknown Person"]
 
     def test_empty_contacts_returns_originals(self):
-        result = match_known_contacts(["Alice", "Bob"], [])
-        assert result == ["Alice", "Bob"]
+        observed = [Participant(name="Alice"), Participant(name="Bob")]
+        result = match_known_contacts(observed, [])
+        assert [p.name for p in result] == ["Alice", "Bob"]
 
     def test_case_insensitive(self):
         contacts = [KnownContact(name="Jane Smith", display_name="jane smith")]
-        result = match_known_contacts(["Jane Smith"], contacts)
-        assert result == ["Jane Smith"]  # returns canonical name
+        result = match_known_contacts([Participant(name="Jane Smith")], contacts)
+        assert [p.name for p in result] == ["Jane Smith"]  # returns canonical name
 
     def test_empty_display_names(self):
         contacts = [KnownContact(name="Jane", display_name="Jane")]
         result = match_known_contacts([], contacts)
         assert result == []
+
+
+class TestMatchKnownContactsEmailFirst:
+    def test_email_match_wins_over_name(self):
+        contacts = [
+            KnownContact(name="Alice Smith", display_name="Alice Smith",
+                         email="alice@x.com"),
+            KnownContact(name="Bob", display_name="Bob"),
+        ]
+        observed = [Participant(name="Bob", email="alice@x.com")]
+        result = match_known_contacts(observed, contacts)
+        assert result[0].name == "Alice Smith"
+
+    def test_case_insensitive_email_match(self):
+        contacts = [KnownContact(name="Alice", display_name="Alice",
+                                 email="ALICE@X.COM")]
+        observed = [Participant(name="nobody", email="alice@x.com")]
+        result = match_known_contacts(observed, contacts)
+        assert result[0].name == "Alice"
+
+
+class TestMatchKnownContactsAliases:
+    def test_alias_match_returns_canonical_name(self):
+        contacts = [KnownContact(
+            name="Sean Mooney", display_name="Sean Mooney",
+            aliases=["Sean M.", "Sean"],
+        )]
+        observed = [Participant(name="Sean M.", email=None)]
+        result = match_known_contacts(observed, contacts)
+        assert result[0].name == "Sean Mooney"
+
+    def test_normalized_alias_match(self):
+        """Alias matching uses _normalize (casefold + strip + collapse)."""
+        contacts = [KnownContact(
+            name="Sean Mooney", display_name="Sean Mooney",
+            aliases=["Sean M."],
+        )]
+        observed = [Participant(name="sean m", email=None)]  # no period, lowercase
+        result = match_known_contacts(observed, contacts)
+        assert result[0].name == "Sean Mooney"
+
+    def test_empty_alias_does_not_match_empty_input(self):
+        """Empty fields must be skipped when building the lookup index."""
+        contacts = [KnownContact(
+            name="Alice", display_name="Alice",
+            aliases=["", "   "],  # garbage entries
+        )]
+        observed = [Participant(name="", email=None)]
+        result = match_known_contacts(observed, contacts)
+        # No false match on empty string.
+        assert result[0].name == ""
+
+
+class TestMatchKnownContactsPassthrough:
+    def test_no_match_returns_unchanged(self):
+        observed = [Participant(name="Unknown", email=None)]
+        result = match_known_contacts(observed, [])
+        assert result[0].name == "Unknown"
+
+    def test_preserves_email_from_observed_when_match_has_none(self):
+        contacts = [KnownContact(name="Alice", display_name="Alice")]
+        observed = [Participant(name="Alice", email="alice@x.com")]
+        result = match_known_contacts(observed, contacts)
+        assert result[0].email == "alice@x.com"
+
+    def test_preserves_email_from_contact_when_observed_has_none(self):
+        contacts = [KnownContact(name="Alice", display_name="Alice", email="alice@x.com")]
+        observed = [Participant(name="Alice", email=None)]
+        result = match_known_contacts(observed, contacts)
+        assert result[0].email == "alice@x.com"
 
 
 class TestEnrichMeetingMetadata:

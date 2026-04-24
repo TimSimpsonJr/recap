@@ -365,10 +365,12 @@ class MeetingDetector:
         names = extract_zoom_participants(self._recording_hwnd)
         if not names:
             return
-        matched = match_known_contacts(names, self._config.known_contacts)
+        as_participants = [Participant(name=n) for n in names]
+        matched = match_known_contacts(as_participants, self._config.known_contacts)
+        matched_names = [p.name for p in matched]
         self._active_roster.merge(
             "zoom_uia_periodic",
-            matched,
+            matched_names,
             datetime.now().astimezone(),
         )
 
@@ -443,9 +445,11 @@ class MeetingDetector:
             return False
         platform = self._current_browser_platform or "unknown"
         source = f"browser_dom_{platform}"
-        matched = match_known_contacts(participants, self._config.known_contacts)
+        as_participants = [Participant(name=n) for n in participants]
+        matched = match_known_contacts(as_participants, self._config.known_contacts)
+        matched_names = [p.name for p in matched]
         self._active_roster.merge(
-            source, matched, datetime.now().astimezone(),
+            source, matched_names, datetime.now().astimezone(),
         )
         return True
 
