@@ -41,4 +41,5 @@ def build_runtime_config(
         max_retries=config.pipeline.max_retries,
         prompt_template_path=None,
         status_dir=config.vault_path / "_Recap" / ".recap" / "status",
+        known_contacts=config.known_contacts,
     )

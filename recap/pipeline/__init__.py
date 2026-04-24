@@ -6,7 +6,7 @@ import logging
 import pathlib
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -22,9 +22,10 @@ from recap.artifacts import (
     transcript_path,
     write_recording_metadata,
 )
+from recap.daemon.config import KnownContact
 from recap.errors import is_oom_error, map_error
 from recap.identity import _is_eligible_person_label
-from recap.models import AnalysisResult, MeetingMetadata, TranscriptResult
+from recap.models import AnalysisResult, MeetingMetadata, Participant, TranscriptResult
 
 if TYPE_CHECKING:
     from recap.daemon.calendar.index import EventIndex
@@ -54,6 +55,11 @@ class PipelineRuntimeConfig:
     max_retries: int = 0
     prompt_template_path: pathlib.Path | None = None
     status_dir: pathlib.Path | None = None
+    # #28 Task 13: live known_contacts for reprocess re-canonicalization.
+    # Empty in the CLI path (no daemon config); populated by build_runtime_config
+    # in the daemon path. Used by _build_effective_participants when reprocessing
+    # a meeting so newly-added aliases/emails apply to the current meeting.
+    known_contacts: list[KnownContact] = field(default_factory=list)
 
 
 # ---------------------------------------------------------------------------
@@ -263,6 +269,45 @@ def _maybe_apply_first_pass_relabel(
         sp_path.write_text(json.dumps({sid: eligible[0].name}, indent=2))
     except OSError:
         logger.warning("first-pass relabel disk write failed", exc_info=True)
+
+
+def _build_effective_participants(
+    metadata: MeetingMetadata,
+    transcript: TranscriptResult,
+    known_contacts: list[KnownContact],
+) -> list[Participant]:
+    """Union of re-canonicalized enrichment participants + correction-derived
+    speaker display labels from transcript, in deterministic first-seen order.
+
+    Re-canonicalization uses live known_contacts so aliases/emails added
+    during correction affect the current meeting's frontmatter. Sidecar
+    remains untouched; result is ephemeral (caller builds a replace()
+    on MeetingMetadata).
+
+    Daemon-level eligibility (via _is_eligible_person_label) filters out
+    SPEAKER_XX, UNKNOWN, parenthetical-containing, empty -- plugin adds
+    Company-collision and multi-person guards in the save-time resolver.
+    """
+    from recap.daemon.recorder.enrichment import match_known_contacts
+
+    # Step 1: Re-canonicalize enrichment participants against live contacts.
+    canonical = match_known_contacts(metadata.participants, known_contacts)
+
+    # Step 2: Union, first-seen order; enrichment first, correction second.
+    result: list[Participant] = []
+    seen: set[str] = set()
+    for p in canonical:
+        if p.name not in seen:
+            result.append(p)
+            seen.add(p.name)
+    for u in transcript.utterances:
+        if u.speaker in seen:
+            continue
+        if not _is_eligible_person_label(u.speaker):
+            continue
+        result.append(Participant(name=u.speaker, email=None))
+        seen.add(u.speaker)
+    return result
 
 
 def _resolve_note_path(
@@ -531,6 +576,20 @@ def run_pipeline(
             logger.warning("Failed to load speaker mapping: %s", exc)
 
     # ------------------------------------------------------------------
+    # Build effective_participants for reprocess:
+    # union of re-canonicalized enrichment + correction-derived speakers.
+    # Sidecar untouched; analyze + export see the ephemeral metadata.
+    # ------------------------------------------------------------------
+    if transcript is not None:
+        from dataclasses import replace
+        effective_participants = _build_effective_participants(
+            metadata, transcript, config.known_contacts,
+        )
+        effective_metadata = replace(metadata, participants=effective_participants)
+    else:
+        effective_metadata = metadata
+
+    # ------------------------------------------------------------------
     # 3. Analyze
     # ------------------------------------------------------------------
     analysis: AnalysisResult | None = None
@@ -540,7 +599,7 @@ def run_pipeline(
         def do_analyze():
             return analyze(
                 transcript=transcript,
-                metadata=metadata,
+                metadata=effective_metadata,
                 prompt_path=prompt_path,
                 backend=config.llm_backend,
                 ollama_model=config.ollama_model,
@@ -562,12 +621,12 @@ def run_pipeline(
 
         def do_export():
             previous = find_previous_meeting(
-                participant_names=[p.name for p in metadata.participants],
+                participant_names=[p.name for p in effective_metadata.participants],
                 meetings_dir=meetings_dir,
                 exclude_filename=note_filename,
             )
             written = write_meeting_note(
-                metadata=metadata,
+                metadata=effective_metadata,
                 analysis=analysis,
                 duration_seconds=duration,
                 recording_path=recording_reference_path,
