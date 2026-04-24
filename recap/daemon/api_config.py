@@ -534,3 +534,103 @@ def validate_yaml_doc(doc: CommentedMap) -> None:
     """
     from recap.daemon.config import parse_daemon_config_dict
     parse_daemon_config_dict(_to_plain_dict(doc))
+
+
+def _apply_contact_mutations(daemon, mutations: list[dict]) -> None:
+    """Apply contact mutations (create new, add alias) atomically to
+    config.yaml via ruamel round-trip.
+
+    Each mutation is one of:
+      {"action": "create", "name": str, "display_name": str, "email"?: str}
+      {"action": "add_alias", "name": str, "alias": str}
+
+    Guarantees:
+      - File write is atomic (temp + os.replace).
+      - Steps 1-3 (load, stage, validate) never touch disk if they raise.
+      - End-to-end apply+refresh is NOT atomic: refresh_config() in
+        Task 11 lives outside this function. Task 14's POST handler
+        calls both in sequence.
+      - ruamel round-trip preserves comments and user custom fields
+        (matches /api/config PATCH behavior).
+
+    Raises:
+      ValueError on invalid mutation shape, unknown action, or
+      add_alias target not found. Disk is not modified on raise.
+      OSError on file I/O failure (from load/write).
+    """
+    import os  # for os.replace
+
+    with daemon.config_lock:
+        # 1. Load via ruamel (preserves comments + custom fields).
+        doc = load_yaml_doc(daemon.config_path)
+
+        # 2. Stage mutations in memory.
+        contacts = doc.get("known-contacts")
+        if contacts is None:
+            contacts = CommentedSeq()
+            doc["known-contacts"] = contacts
+
+        for m in mutations:
+            if not isinstance(m, dict):
+                raise ValueError(f"mutation must be a dict: {m!r}")
+            action = m.get("action")
+            if action == "create":
+                if "name" not in m:
+                    raise ValueError(
+                        f"create mutation missing 'name': {m!r}",
+                    )
+                if "display_name" not in m:
+                    raise ValueError(
+                        f"create mutation missing 'display_name': {m!r}",
+                    )
+                # Idempotent: skip if name already exists so retries are safe.
+                if any(c.get("name") == m["name"] for c in contacts):
+                    continue
+                entry = CommentedMap()
+                entry["name"] = m["name"]
+                entry["display-name"] = m["display_name"]
+                if m.get("email"):
+                    entry["email"] = m["email"]
+                contacts.append(entry)
+            elif action == "add_alias":
+                if "name" not in m or "alias" not in m:
+                    raise ValueError(
+                        f"add_alias mutation missing 'name' or 'alias': {m!r}",
+                    )
+                target = None
+                for c in contacts:
+                    if c.get("name") == m["name"]:
+                        target = c
+                        break
+                if target is None:
+                    raise ValueError(
+                        f"add_alias target not found: {m['name']!r}",
+                    )
+                aliases = target.get("aliases")
+                if aliases is None:
+                    aliases = CommentedSeq()
+                    target["aliases"] = aliases
+                if m["alias"] not in aliases:
+                    aliases.append(m["alias"])
+            else:
+                raise ValueError(f"unknown mutation action: {action!r}")
+
+        # 3. Validate the mutated doc via existing canonical validator.
+        #    Raises ValueError if the final shape would fail next-restart parse.
+        validate_yaml_doc(doc)
+
+        # 4. Atomic write (tmp + os.replace), mirroring /api/config PATCH pattern.
+        tmp_path = daemon.config_path.with_suffix(
+            daemon.config_path.suffix + ".tmp",
+        )
+        try:
+            with tmp_path.open("w", encoding="utf-8") as f:
+                dump_yaml_doc(doc, f)
+            os.replace(tmp_path, daemon.config_path)
+        except OSError:
+            if tmp_path.exists():
+                try:
+                    tmp_path.unlink()
+                except OSError:
+                    pass
+            raise

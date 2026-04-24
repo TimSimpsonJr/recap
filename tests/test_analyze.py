@@ -17,7 +17,7 @@ from recap.analyze import analyze, _build_prompt, _build_command, _parse_claude_
 
 def _stub_transcript() -> TranscriptResult:
     return TranscriptResult(
-        utterances=[Utterance(speaker="SPEAKER_00", start=0.0, end=1.0, text="hi")],
+        utterances=[Utterance(speaker_id="SPEAKER_00", speaker="SPEAKER_00", start=0.0, end=1.0, text="hi")],
         raw_text="hi",
         language="en",
     )
@@ -72,8 +72,8 @@ def test_build_prompt_with_empty_roster_uses_no_roster_wording():
 def sample_transcript() -> TranscriptResult:
     return TranscriptResult(
         utterances=[
-            Utterance(speaker="SPEAKER_00", start=0.0, end=3.0, text="Hi Jane, thanks for joining."),
-            Utterance(speaker="SPEAKER_01", start=3.5, end=7.0, text="Happy to be here, Tim."),
+            Utterance(speaker_id="SPEAKER_00", speaker="SPEAKER_00", start=0.0, end=3.0, text="Hi Jane, thanks for joining."),
+            Utterance(speaker_id="SPEAKER_01", speaker="SPEAKER_01", start=3.5, end=7.0, text="Happy to be here, Tim."),
         ],
         raw_text="Hi Jane, thanks for joining. Happy to be here, Tim.",
         language="en",

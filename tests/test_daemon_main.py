@@ -27,6 +27,7 @@ def _make_daemon_config() -> DaemonConfig:
     cfg.pipeline = PipelineSettings()
     cfg.recording = RecordingConfig()
     cfg.ollama = OllamaConfig()
+    cfg.known_contacts = []
     return cfg
 
 

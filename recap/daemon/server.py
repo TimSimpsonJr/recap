@@ -17,7 +17,11 @@ from typing import TYPE_CHECKING, Any, Callable, Awaitable
 import aiohttp
 from aiohttp import web
 
-from recap.artifacts import transcript_path as artifact_transcript_path
+from recap.artifacts import (
+    load_recording_metadata,
+    resolve_recording_path,
+    transcript_path as artifact_transcript_path,
+)
 from recap.daemon.api_config import (
     api_config_to_json_dict,
     apply_api_patch_to_yaml_doc,
@@ -274,15 +278,22 @@ def _run_ffmpeg_clip(cmd: list[str]) -> tuple[int, bytes]:
 
 
 async def _api_recording_clip(request: web.Request) -> web.Response:
-    """GET /api/recordings/<stem>/clip?speaker=SPEAKER_xx[&duration=N]
+    """GET /api/recordings/<stem>/clip?speaker_id=SPEAKER_xx[&duration=N]
 
     Returns an MP3 clip of the first utterance attributed to the given
     speaker. Used by the plugin's speaker correction modal so users can
     hear who they're about to rename.
 
+    Accepts either ``speaker_id=`` (preferred; matches the immutable
+    diarized id) or ``speaker=`` (legacy; matches the mutable display
+    label) — at least one is required. Plugin migrates to
+    ``speaker_id`` in Task 16; ``speaker=`` stays supported during the
+    transition.
+
     Stem is regex-validated to block traversal. The clip is cached at
-    ``<recordings_path>/<stem>.clips/<speaker>_<duration>s.mp3`` so
-    repeat requests skip ffmpeg entirely. Any ffmpeg failure is
+    ``<recordings_path>/<stem>.clips/<cache_key>_<duration>s.mp3`` —
+    ``cache_key`` is ``speaker_id`` when supplied so cached clips
+    survive future display-label renames. Any ffmpeg failure is
     journaled as ``clip_extraction_failed`` and returns 500.
     """
     daemon: Daemon = request.app["daemon"]
@@ -290,9 +301,15 @@ async def _api_recording_clip(request: web.Request) -> web.Response:
     if not _STEM_RE.fullmatch(stem):
         return web.json_response({"error": "invalid stem"}, status=400)
 
+    # Accept both speaker_id (new, preferred) and speaker (legacy).
+    # Plugin's DaemonClient migrates to speaker_id in Task 16; the
+    # legacy fallback keeps older callers working during the transition.
+    speaker_id = request.query.get("speaker_id")
     speaker = request.query.get("speaker")
-    if not speaker:
-        return web.json_response({"error": "speaker required"}, status=400)
+    if not speaker_id and not speaker:
+        return web.json_response(
+            {"error": "speaker_id required (or legacy speaker)"}, status=400,
+        )
 
     duration_str = request.query.get("duration", str(_CLIP_DEFAULT_DURATION))
     try:
@@ -314,13 +331,8 @@ async def _api_recording_clip(request: web.Request) -> web.Response:
     # ``.m4a`` and can delete the source (``delete-source-after-archive``).
     # Prefer the FLAC if it's still on disk, else fall back to the
     # archived MP4/AAC — ffmpeg reads both.
-    flac_path = daemon.config.recordings_path / f"{stem}.flac"
-    m4a_path = daemon.config.recordings_path / f"{stem}.m4a"
-    if flac_path.exists():
-        audio_path = flac_path
-    elif m4a_path.exists():
-        audio_path = m4a_path
-    else:
+    audio_path = resolve_recording_path(daemon.config.recordings_path, stem)
+    if audio_path is None:
         return web.json_response({"error": "recording not found"}, status=404)
 
     # Transcript path is derived from whichever audio file we resolved;
@@ -340,9 +352,19 @@ async def _api_recording_clip(request: web.Request) -> web.Response:
         return web.json_response({"error": f"transcript read: {e}"}, status=500)
 
     utterances = transcript_data.get("utterances") or []
-    match = next(
-        (u for u in utterances if u.get("speaker") == speaker), None,
-    )
+
+    # Match on either field: speaker_id (preferred, stable across renames)
+    # falls back to u.speaker when pre-#28 transcripts lack the field;
+    # legacy speaker matches the display label directly.
+    def _matches(u: dict) -> bool:
+        u_sid = u.get("speaker_id") or u.get("speaker")
+        if speaker_id and u_sid == speaker_id:
+            return True
+        if speaker and u.get("speaker") == speaker:
+            return True
+        return False
+
+    match = next((u for u in utterances if _matches(u)), None)
     if match is None:
         return web.json_response(
             {"error": "speaker not found in transcript"}, status=404,
@@ -354,8 +376,12 @@ async def _api_recording_clip(request: web.Request) -> web.Response:
     # floor at 0.5s so very short first utterances still produce audio.
     clip_duration = min(float(duration), max(0.5, end - start))
 
+    # Cache key uses speaker_id when provided so clips survive future
+    # display-label renames; falls back to the legacy speaker label for
+    # older callers still sending ?speaker=.
+    cache_key = speaker_id or speaker
     cache_dir = daemon.config.recordings_path / f"{stem}.clips"
-    cache_file = cache_dir / f"{speaker}_{duration}s.mp3"
+    cache_file = cache_dir / f"{cache_key}_{duration}s.mp3"
     if cache_file.exists():
         return web.FileResponse(
             cache_file, headers={"Content-Type": "audio/mpeg"},
@@ -379,7 +405,9 @@ async def _api_recording_clip(request: web.Request) -> web.Response:
             f"ffmpeg exit {returncode}",
             payload={
                 "stem": stem,
-                "speaker": speaker,
+                # Log whichever key identified the speaker in this
+                # request (speaker_id preferred; speaker when legacy).
+                "speaker": cache_key,
                 "returncode": returncode,
                 "stderr": stderr.decode("utf-8", errors="replace")[:500],
             },
@@ -396,6 +424,93 @@ async def _api_recording_clip(request: web.Request) -> web.Response:
     return web.FileResponse(
         cache_file, headers={"Content-Type": "audio/mpeg"},
     )
+
+
+async def _api_meeting_speakers_get(request: web.Request) -> web.Response:
+    """GET /api/meetings/<stem>/speakers — distinct (speaker_id, display)
+    pairs from the transcript artifact, plus participants (with emails)
+    from the recording metadata sidecar.
+
+    The extended response shape supports client-side email-first
+    resolution in the correction modal (Task 15/17). Missing sidecar
+    returns participants: [] rather than erroring, since older or
+    manually-created recordings may not have one.
+
+    Stem is regex-validated to prevent traversal.
+    """
+    daemon: Daemon = request.app["daemon"]
+    stem = request.match_info["stem"]
+    if not _STEM_RE.fullmatch(stem):
+        return web.json_response({"error": "invalid stem"}, status=400)
+
+    audio_path = resolve_recording_path(daemon.config.recordings_path, stem)
+    if audio_path is None:
+        return web.json_response({"error": "recording not found"}, status=404)
+
+    tpath = artifact_transcript_path(audio_path)
+    if not tpath.exists():
+        return web.json_response({"error": "transcript not found"}, status=404)
+
+    try:
+        data = json.loads(tpath.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        return web.json_response({"error": f"transcript read: {e}"}, status=500)
+
+    # Distinct (speaker_id, display) pairs in first-seen order.
+    # Backfill speaker_id from speaker on pre-#28 transcripts so the
+    # plugin modal gets a stable immutable identity even for legacy
+    # recordings that predate the speaker_id field.
+    seen: dict[str, str] = {}
+    for u in data.get("utterances", []):
+        sid = u.get("speaker_id") or u["speaker"]
+        if sid not in seen:
+            seen[sid] = u["speaker"]
+    speakers = [{"speaker_id": sid, "display": disp} for sid, disp in seen.items()]
+
+    # Participants (with emails) from the RecordingMetadata sidecar.
+    # Empty list when the sidecar is missing — don't 404, since a valid
+    # transcript without calendar-sourced participants is a normal state.
+    participants: list[dict] = []
+    rm = load_recording_metadata(audio_path)
+    if rm is not None:
+        for p in rm.participants:
+            participants.append({"name": p.name, "email": p.email})
+
+    return web.json_response({"speakers": speakers, "participants": participants})
+
+
+def _ensure_people_stub(daemon, org: str, name: str) -> None:
+    """Create a People note stub if it doesn't exist.
+
+    Uses the canonical ``_generate_person_stub`` template from
+    ``recap.vault`` (same template the pipeline's analysis path emits
+    via ``write_profile_stubs``). Idempotent: skips if
+    ``<org_subfolder>/People/<name>.md`` already exists.
+
+    Called by the correction-save POST handler (Task 14) after a
+    successful ``_apply_contact_mutations`` so a newly-created contact
+    has a People note the user can immediately backlink into.
+
+    Raises:
+        ValueError: if *org* is not a configured org slug.
+        OSError: if disk write fails (caller decides the response).
+    """
+    from recap.artifacts import safe_note_title
+    from recap.models import ProfileStub
+    from recap.vault import _generate_person_stub
+
+    org_config = daemon.config.org_by_slug(org)
+    if org_config is None:
+        raise ValueError(f"unknown org: {org}")
+    vault_path = Path(daemon.config.vault_path)
+    org_subfolder = org_config.resolve_subfolder(vault_path)
+    people_dir = org_subfolder / "People"
+    stub_path = people_dir / f"{safe_note_title(name)}.md"
+    if stub_path.exists():
+        return  # no clobber
+    people_dir.mkdir(parents=True, exist_ok=True)
+    content = _generate_person_stub(ProfileStub(name=name))
+    stub_path.write_text(content, encoding="utf-8")
 
 
 async def _api_config_patch(request: web.Request) -> web.Response:
@@ -573,7 +688,19 @@ async def _reprocess(request: web.Request) -> web.Response:
 
 
 async def _speakers(request: web.Request) -> web.Response:
-    """POST /api/meetings/speakers — save speaker mapping and reprocess from export."""
+    """POST /api/meetings/speakers — write .speakers.json, apply contact
+    mutations, create People stubs, trigger reprocess from analyze stage.
+
+    Accepts either a ``stem`` (preferred, #28) which the daemon resolves
+    against ``recordings_path``, or a full ``recording_path`` (legacy,
+    pre-#28 plugin clients). Optional ``contact_mutations`` list is
+    applied atomically before the .speakers.json write so
+    ``refresh_config`` runs with the same lock; any ``create`` mutation
+    triggers ``_ensure_people_stub`` so the new contact has a backlinkable
+    People note. After all writes succeed, the pipeline is kicked off
+    from the ``analyze`` stage.
+    """
+    daemon: Daemon = request.app["daemon"]
     trigger = request.app.get(_PIPELINE_TRIGGER_KEY)
     if trigger is None:
         return web.json_response(
@@ -593,31 +720,89 @@ async def _speakers(request: web.Request) -> web.Response:
             {"error": "request body must be a JSON object"}, status=400
         )
 
-    recording_path = body.get("recording_path")
     mapping = body.get("mapping")
-    if not recording_path:
-        return web.json_response(
-            {"error": "missing 'recording_path' field"}, status=400
-        )
     if not mapping or not isinstance(mapping, dict):
         return web.json_response(
             {"error": "missing or invalid 'mapping' field"}, status=400
         )
 
+    # Resolve audio path: prefer stem (new), fall back to legacy recording_path.
     from recap.artifacts import speakers_path
+    from recap.daemon.api_config import _apply_contact_mutations
     from recap.pipeline import validate_from_stage
 
-    # Save speaker mapping alongside the recording
-    rec_path = Path(recording_path)
+    stem = body.get("stem")
+    legacy_path = body.get("recording_path")
+    if stem:
+        rec_path = resolve_recording_path(
+            daemon.config.recordings_path, stem,
+        )
+        if rec_path is None:
+            return web.json_response(
+                {"error": "recording not found"}, status=404
+            )
+    elif legacy_path:
+        rec_path = Path(legacy_path)
+    else:
+        return web.json_response(
+            {"error": "missing 'stem' or 'recording_path' field"}, status=400
+        )
+
     validation_error = validate_from_stage(rec_path, "analyze")
     if validation_error is not None:
         return web.json_response({"error": validation_error}, status=400)
 
+    # Apply contact mutations atomically BEFORE writing speakers.json so
+    # refresh_config() runs with the same lock sequence. Bad shape =>
+    # ValueError => 400; I/O or other failure => 500. Disk unchanged on
+    # ValueError per the Task 10 contract.
+    contact_mutations = body.get("contact_mutations") or []
+    if not isinstance(contact_mutations, list):
+        return web.json_response(
+            {"error": "contact_mutations must be a list"}, status=400
+        )
+    if contact_mutations:
+        try:
+            _apply_contact_mutations(daemon, contact_mutations)
+        except ValueError as e:
+            return web.json_response(
+                {"error": f"contact mutation failed: {e}"}, status=400
+            )
+        except Exception as e:
+            logger.exception("contact mutation failed")
+            return web.json_response(
+                {"error": f"contact mutation failed: {e}"}, status=500
+            )
+        # Propagate the new config to subservices that cached the old one
+        # (e.g. MeetingDetector). See daemon.refresh_config docstring.
+        daemon.refresh_config()
+
+    org = body.get("org", "")
+
+    # Create People stubs for each create mutation so the new contact has
+    # a backlinkable note immediately. Unknown-org ValueError => 400;
+    # any other failure (OSError, etc) => 500.
+    for m in contact_mutations:
+        if isinstance(m, dict) and m.get("action") == "create":
+            name = m.get("name")
+            if not name:
+                continue
+            try:
+                _ensure_people_stub(daemon, org, name)
+            except ValueError as e:
+                return web.json_response(
+                    {"error": f"stub creation failed: {e}"}, status=400
+                )
+            except Exception as e:
+                logger.exception("stub creation failed")
+                return web.json_response(
+                    {"error": f"stub creation failed: {e}"}, status=500
+                )
+
+    # Write .speakers.json keyed by speaker_id alongside the recording.
     speakers_file = speakers_path(rec_path)
     speakers_file.write_text(json.dumps(mapping, indent=2))
     logger.info("Speaker mapping saved: %s", speakers_file)
-
-    org = body.get("org", "")
 
     asyncio.create_task(trigger(rec_path, org, "analyze"))
     return web.json_response({"status": "processing"})
@@ -1221,6 +1406,9 @@ def create_app(
     )
     app.router.add_post("/api/meetings/reprocess", _reprocess)
     app.router.add_post("/api/meetings/speakers", _speakers)
+    app.router.add_get(
+        "/api/meetings/{stem}/speakers", _api_meeting_speakers_get,
+    )
     app.router.add_post("/api/index/rename", _api_index_rename)
     app.router.add_post("/api/admin/shutdown", _api_admin_shutdown)
     app.router.add_get("/api/config/orgs", _config_orgs)

@@ -6,7 +6,7 @@ import pathlib
 import pytest
 import yaml
 
-from recap.daemon.config import DaemonConfig, OrgConfig, load_daemon_config
+from recap.daemon.config import DaemonConfig, KnownContact, OrgConfig, load_daemon_config
 
 
 def _make_config_with_orgs(orgs: list[OrgConfig]) -> DaemonConfig:
@@ -339,3 +339,74 @@ class TestLoadDaemonConfig:
         }))
         config = load_daemon_config(config_file)
         assert config.default_org is None
+
+
+class TestKnownContactSchema:
+    """KnownContact schema extensions (#28): aliases + email."""
+
+    def test_aliases_defaults_to_empty_list(self):
+        c = KnownContact(name="Alice", display_name="Alice")
+        assert c.aliases == []
+
+    def test_email_defaults_to_none(self):
+        c = KnownContact(name="Alice", display_name="Alice")
+        assert c.email is None
+
+    def test_accepts_aliases(self):
+        c = KnownContact(
+            name="Sean Mooney",
+            display_name="Sean Mooney",
+            aliases=["Sean M.", "Sean"],
+        )
+        assert c.aliases == ["Sean M.", "Sean"]
+
+    def test_accepts_email(self):
+        c = KnownContact(
+            name="Alice",
+            display_name="Alice",
+            email="alice@example.com",
+        )
+        assert c.email == "alice@example.com"
+
+
+class TestKnownContactYamlLoad:
+    """YAML load of known-contacts with new optional fields."""
+
+    def test_loads_minimal_entry(self, tmp_path):
+        """Pre-#28 entries with only name + display-name still load cleanly."""
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(yaml.dump({
+            "config-version": 1,
+            "vault-path": str(tmp_path / "vault"),
+            "recordings-path": str(tmp_path / "recordings"),
+            "known-contacts": [
+                {"name": "Alice", "display-name": "Alice"},
+            ],
+        }))
+        cfg = load_daemon_config(config_file)
+        assert len(cfg.known_contacts) == 1
+        assert cfg.known_contacts[0].name == "Alice"
+        assert cfg.known_contacts[0].aliases == []
+        assert cfg.known_contacts[0].email is None
+
+    def test_loads_all_new_fields(self, tmp_path):
+        config_file = tmp_path / "config.yaml"
+        config_file.write_text(yaml.dump({
+            "config-version": 1,
+            "vault-path": str(tmp_path / "vault"),
+            "recordings-path": str(tmp_path / "recordings"),
+            "known-contacts": [
+                {
+                    "name": "Sean Mooney",
+                    "display-name": "Sean Mooney",
+                    "email": "sean@example.com",
+                    "aliases": ["Sean M.", "Sean"],
+                },
+            ],
+        }))
+        cfg = load_daemon_config(config_file)
+        c = cfg.known_contacts[0]
+        assert c.name == "Sean Mooney"
+        assert c.display_name == "Sean Mooney"
+        assert c.email == "sean@example.com"
+        assert c.aliases == ["Sean M.", "Sean"]

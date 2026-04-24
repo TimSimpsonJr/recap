@@ -98,6 +98,8 @@ class DaemonPortConfig:
 class KnownContact:
     name: str
     display_name: str = ""
+    aliases: list[str] = field(default_factory=list)
+    email: str | None = None
 
 
 @dataclass
@@ -285,6 +287,8 @@ def parse_daemon_config_dict(raw: dict[str, Any]) -> DaemonConfig:
         KnownContact(
             name=c.get("name", ""),
             display_name=c.get("display-name", ""),
+            aliases=list(c.get("aliases") or []),
+            email=c.get("email"),
         )
         for c in contacts_raw
     ]

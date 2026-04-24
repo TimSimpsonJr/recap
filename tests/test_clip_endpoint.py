@@ -276,6 +276,144 @@ class TestClipFfmpegFailure:
 
 
 @pytest.mark.asyncio
+class TestClipEndpointSpeakerId:
+    """Clip lookup + cache filename key on speaker_id (#28)."""
+
+    async def test_accepts_speaker_id_query_param(self, daemon_client) -> None:
+        """New speaker_id= param matches against utterance.speaker_id."""
+        from recap.artifacts import save_transcript
+        from recap.models import TranscriptResult, Utterance
+
+        client, daemon = daemon_client
+        stem = "sid-accepts"
+        audio = daemon.config.recordings_path / f"{stem}.flac"
+        audio.write_bytes(b"\x00" * 1024)
+        # Seed transcript where speaker_id != speaker (post-correction state).
+        save_transcript(audio, TranscriptResult(
+            utterances=[
+                Utterance(
+                    speaker_id="SPEAKER_00", speaker="Alice",
+                    start=0, end=2, text="hi",
+                ),
+            ],
+            raw_text="hi", language="en",
+        ))
+        resp = await client.get(
+            f"/api/recordings/{stem}/clip?speaker_id=SPEAKER_00&duration=1",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        # Expect either 200 (clip generated) or 500 (ffmpeg fails on the
+        # stub FLAC). The key assertion is that the 404 "speaker not
+        # found in transcript" does NOT fire — the speaker_id lookup
+        # resolved an utterance.
+        assert resp.status != 404
+
+    async def test_legacy_speaker_param_still_works(self, daemon_client) -> None:
+        """Old speaker= param still resolves for backward compat."""
+        from recap.artifacts import save_transcript
+        from recap.models import TranscriptResult, Utterance
+
+        client, daemon = daemon_client
+        stem = "legacy-speaker"
+        audio = daemon.config.recordings_path / f"{stem}.flac"
+        audio.write_bytes(b"\x00" * 1024)
+        save_transcript(audio, TranscriptResult(
+            utterances=[
+                Utterance(
+                    speaker_id="SPEAKER_00", speaker="SPEAKER_00",
+                    start=0, end=2, text="hi",
+                ),
+            ],
+            raw_text="hi", language="en",
+        ))
+        resp = await client.get(
+            f"/api/recordings/{stem}/clip?speaker=SPEAKER_00&duration=1",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status != 404
+
+    async def test_missing_both_params_returns_400(self, daemon_client) -> None:
+        from recap.artifacts import save_transcript
+        from recap.models import TranscriptResult, Utterance
+
+        client, daemon = daemon_client
+        stem = "missing-both"
+        audio = daemon.config.recordings_path / f"{stem}.flac"
+        audio.write_bytes(b"\x00" * 1024)
+        save_transcript(audio, TranscriptResult(
+            utterances=[
+                Utterance(
+                    speaker_id="SPEAKER_00", speaker="Alice",
+                    start=0, end=2, text="hi",
+                ),
+            ],
+            raw_text="hi", language="en",
+        ))
+        resp = await client.get(
+            f"/api/recordings/{stem}/clip?duration=1",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 400
+
+    async def test_speaker_id_not_in_transcript_returns_404(
+        self, daemon_client,
+    ) -> None:
+        from recap.artifacts import save_transcript
+        from recap.models import TranscriptResult, Utterance
+
+        client, daemon = daemon_client
+        stem = "sid-missing"
+        audio = daemon.config.recordings_path / f"{stem}.flac"
+        audio.write_bytes(b"\x00" * 1024)
+        save_transcript(audio, TranscriptResult(
+            utterances=[
+                Utterance(
+                    speaker_id="SPEAKER_00", speaker="Alice",
+                    start=0, end=2, text="hi",
+                ),
+            ],
+            raw_text="hi", language="en",
+        ))
+        resp = await client.get(
+            f"/api/recordings/{stem}/clip?speaker_id=SPEAKER_99&duration=1",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 404
+
+    async def test_cache_filename_uses_speaker_id(self, daemon_client) -> None:
+        """Cache filename key is speaker_id, not display label."""
+        from recap.artifacts import save_transcript
+        from recap.models import TranscriptResult, Utterance
+
+        client, daemon = daemon_client
+        stem = "cache-by-sid"
+        audio = daemon.config.recordings_path / f"{stem}.flac"
+        audio.write_bytes(b"\x00" * 1024)
+        save_transcript(audio, TranscriptResult(
+            utterances=[
+                Utterance(
+                    speaker_id="SPEAKER_00", speaker="Alice",
+                    start=0, end=2, text="hi",
+                ),
+            ],
+            raw_text="hi", language="en",
+        ))
+        # Pre-populate a cache file named by speaker_id.
+        cache_dir = daemon.config.recordings_path / f"{stem}.clips"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        cache_file = cache_dir / "SPEAKER_00_1s.mp3"
+        cache_file.write_bytes(b"cached-clip-content")
+        # Hit the endpoint with speaker_id; should serve the cached file.
+        resp = await client.get(
+            f"/api/recordings/{stem}/clip?speaker_id=SPEAKER_00&duration=1",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 200
+        body = await resp.read()
+        assert body == b"cached-clip-content"
+
+
+@pytest.mark.asyncio
 @pytest.mark.skipif(
     shutil.which("ffmpeg") is None, reason="ffmpeg not installed",
 )

@@ -51,13 +51,30 @@ class MeetingMetadata:
 
 @dataclass
 class Utterance:
-    speaker: str
+    speaker_id: str  # immutable diarized identity; never rewritten after first write
+    speaker: str     # mutable display label; rewritten by _apply_speaker_mapping
     start: float
     end: float
     text: str
 
+    @classmethod
+    def from_dict(cls, data: dict) -> Utterance:
+        """Load-boundary backfill: pre-#28 artifacts lack speaker_id.
+
+        Default speaker_id = speaker so legacy transcripts load cleanly.
+        """
+        speaker = data["speaker"]
+        return cls(
+            speaker_id=data.get("speaker_id", speaker),
+            speaker=speaker,
+            start=data["start"],
+            end=data["end"],
+            text=data["text"],
+        )
+
     def to_dict(self) -> dict:
         return {
+            "speaker_id": self.speaker_id,
             "speaker": self.speaker,
             "start": self.start,
             "end": self.end,
@@ -80,7 +97,7 @@ class TranscriptResult:
     @classmethod
     def from_dict(cls, data: dict) -> TranscriptResult:
         return cls(
-            utterances=[Utterance(**u) for u in data.get("utterances", [])],
+            utterances=[Utterance.from_dict(u) for u in data.get("utterances", [])],
             raw_text=data.get("raw_text", ""),
             language=data.get("language", "en"),
         )

@@ -1090,3 +1090,458 @@ class TestApiAdminShutdown:
             },
         )
         assert resp.status == 400
+
+
+@pytest.mark.asyncio
+class TestApiMeetingSpeakersGet:
+    """GET /api/meetings/{stem}/speakers — returns speaker list + participants (#28)."""
+
+    async def test_returns_401_without_auth(self, daemon_client):
+        client, _ = daemon_client
+        resp = await client.get("/api/meetings/some-stem/speakers")
+        assert resp.status == 401
+
+    async def test_returns_400_invalid_stem(self, daemon_client):
+        """Path-traversal attempt is rejected via _STEM_RE."""
+        client, _ = daemon_client
+        # aiohttp decodes %2F to /, which may or may not match the route.
+        # What we REALLY want to verify is that the regex validator rejects
+        # bad stems. Test with an explicitly-bad stem that still matches the route:
+        resp = await client.get(
+            "/api/meetings/foo$bar/speakers",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 400
+
+    async def test_returns_404_for_missing_recording(self, daemon_client):
+        client, _ = daemon_client
+        resp = await client.get(
+            "/api/meetings/nonexistent/speakers",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 404
+
+    async def test_returns_404_when_transcript_missing(self, daemon_client):
+        client, daemon = daemon_client
+        (daemon.config.recordings_path / "rec.flac").touch()
+        resp = await client.get(
+            "/api/meetings/rec/speakers",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 404
+
+    async def test_returns_distinct_speakers_in_order(self, daemon_client):
+        client, daemon = daemon_client
+        audio = daemon.config.recordings_path / "rec.flac"
+        audio.touch()
+        from recap.artifacts import save_transcript
+        from recap.models import TranscriptResult, Utterance
+        save_transcript(audio, TranscriptResult(
+            utterances=[
+                Utterance(speaker_id="SPEAKER_00", speaker="Alice",
+                          start=0, end=1, text="hi"),
+                Utterance(speaker_id="SPEAKER_01", speaker="Bob",
+                          start=1, end=2, text="hey"),
+                Utterance(speaker_id="SPEAKER_00", speaker="Alice",
+                          start=2, end=3, text="again"),
+            ],
+            raw_text="...", language="en",
+        ))
+        resp = await client.get(
+            "/api/meetings/rec/speakers",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["speakers"] == [
+            {"speaker_id": "SPEAKER_00", "display": "Alice"},
+            {"speaker_id": "SPEAKER_01", "display": "Bob"},
+        ]
+        assert data["participants"] == []  # no sidecar in this test
+
+    async def test_backfills_legacy_transcript_on_the_fly(self, daemon_client):
+        """Pre-#28 transcript with only `speaker` field still produces correct output."""
+        client, daemon = daemon_client
+        audio = daemon.config.recordings_path / "rec.flac"
+        audio.touch()
+        from recap.artifacts import transcript_path
+        legacy = {
+            "utterances": [
+                {"speaker": "SPEAKER_00", "start": 0, "end": 1, "text": "hi"},
+            ],
+            "raw_text": "hi", "language": "en",
+        }
+        transcript_path(audio).write_text(json.dumps(legacy))
+
+        resp = await client.get(
+            "/api/meetings/rec/speakers",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["speakers"] == [{"speaker_id": "SPEAKER_00", "display": "SPEAKER_00"}]
+
+    async def test_returns_empty_list_for_zero_utterances(self, daemon_client):
+        client, daemon = daemon_client
+        audio = daemon.config.recordings_path / "rec.flac"
+        audio.touch()
+        from recap.artifacts import save_transcript
+        from recap.models import TranscriptResult
+        save_transcript(audio, TranscriptResult(
+            utterances=[], raw_text="", language="en",
+        ))
+        resp = await client.get(
+            "/api/meetings/rec/speakers",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["speakers"] == []
+        assert data["participants"] == []
+
+    async def test_participants_from_sidecar_with_emails(self, daemon_client):
+        """Response includes participants list with emails from sidecar."""
+        client, daemon = daemon_client
+        audio = daemon.config.recordings_path / "rec.flac"
+        audio.touch()
+        from recap.artifacts import save_transcript, write_recording_metadata
+        from recap.artifacts import RecordingMetadata
+        from recap.models import (
+            TranscriptResult, Utterance, Participant,
+        )
+        save_transcript(audio, TranscriptResult(
+            utterances=[Utterance(speaker_id="SPEAKER_00", speaker="SPEAKER_00",
+                                  start=0, end=1, text="x")],
+            raw_text="x", language="en",
+        ))
+        rm = RecordingMetadata(
+            org="test", note_path="", title="T", date="2026-04-24",
+            participants=[
+                Participant(name="Alice", email="alice@x.com"),
+                Participant(name="Bob", email=None),
+            ],
+            platform="manual",
+        )
+        write_recording_metadata(audio, rm)
+
+        resp = await client.get(
+            "/api/meetings/rec/speakers",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["participants"] == [
+            {"name": "Alice", "email": "alice@x.com"},
+            {"name": "Bob", "email": None},
+        ]
+
+    async def test_participants_empty_when_sidecar_missing(self, daemon_client):
+        """No RecordingMetadata sidecar → participants: []. Older/manual recordings."""
+        client, daemon = daemon_client
+        audio = daemon.config.recordings_path / "rec.flac"
+        audio.touch()
+        from recap.artifacts import save_transcript
+        from recap.models import TranscriptResult, Utterance
+        save_transcript(audio, TranscriptResult(
+            utterances=[Utterance(speaker_id="SPEAKER_00", speaker="Alice",
+                                  start=0, end=1, text="hi")],
+            raw_text="hi", language="en",
+        ))
+        # No write_recording_metadata call.
+        resp = await client.get(
+            "/api/meetings/rec/speakers",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["participants"] == []
+
+
+@pytest_asyncio.fixture
+async def speakers_post_client(aiohttp_client, tmp_path):
+    """Return ``(client, daemon, trigger_calls)`` for POST /api/meetings/speakers.
+
+    Wires:
+      - A real :class:`Daemon` with a real ``config.yaml`` on disk so
+        ``_apply_contact_mutations`` can round-trip the file and
+        ``daemon.refresh_config()`` can pick up the new state.
+      - A pipeline trigger that records calls into ``trigger_calls`` so
+        tests can assert ``(rec_path, org, "analyze")`` was dispatched.
+    """
+    from recap.daemon.server import create_app
+    from recap.daemon.service import Daemon
+    from tests.conftest import MINIMAL_API_CONFIG_YAML
+
+    cfg = make_daemon_config(tmp_path)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text(
+        MINIMAL_API_CONFIG_YAML.format(
+            vault=(tmp_path / "vault").as_posix(),
+            rec=(tmp_path / "rec").as_posix(),
+        ),
+        encoding="utf-8",
+    )
+    daemon = Daemon(cfg, config_path=config_path)
+    daemon.started_at = (
+        datetime.now(timezone.utc).astimezone() - timedelta(seconds=5)
+    )
+
+    trigger_calls: list[tuple] = []
+
+    async def _trigger(rec_path, org, from_stage):
+        trigger_calls.append((rec_path, org, from_stage))
+
+    app = create_app(auth_token=AUTH_TOKEN, pipeline_trigger=_trigger)
+    app["daemon"] = daemon
+    client = await aiohttp_client(app)
+    return client, daemon, trigger_calls
+
+
+def _seed_recording_with_transcript(
+    daemon, stem: str = "rec",
+) -> pathlib.Path:
+    """Seed a .flac + .transcript.json so ``validate_from_stage('analyze')`` passes."""
+    from recap.artifacts import save_transcript
+    from recap.models import TranscriptResult, Utterance
+
+    audio = daemon.config.recordings_path / f"{stem}.flac"
+    audio.touch()
+    save_transcript(
+        audio,
+        TranscriptResult(
+            utterances=[
+                Utterance(
+                    speaker_id="SPEAKER_00", speaker="SPEAKER_00",
+                    start=0, end=1, text="hi",
+                ),
+            ],
+            raw_text="hi", language="en",
+        ),
+    )
+    return audio
+
+
+@pytest.mark.asyncio
+class TestApiMeetingSpeakersPost:
+    """POST /api/meetings/speakers — stem, legacy recording_path,
+    contact_mutations, and People stub creation (#28 Task 14)."""
+
+    async def test_returns_401_without_auth(self, speakers_post_client):
+        client, _, _ = speakers_post_client
+        resp = await client.post("/api/meetings/speakers", json={})
+        assert resp.status == 401
+
+    async def test_400_missing_both_stem_and_recording_path(
+        self, speakers_post_client,
+    ):
+        client, _, _ = speakers_post_client
+        resp = await client.post(
+            "/api/meetings/speakers",
+            json={"mapping": {"SPEAKER_00": "Alice"}},
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 400
+        body = await resp.json()
+        assert "stem" in body["error"] or "recording_path" in body["error"]
+
+    async def test_400_missing_mapping(self, speakers_post_client):
+        client, daemon, _ = speakers_post_client
+        _seed_recording_with_transcript(daemon)
+        resp = await client.post(
+            "/api/meetings/speakers",
+            json={"stem": "rec"},
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 400
+        body = await resp.json()
+        assert "mapping" in body["error"]
+
+    async def test_404_stem_unresolved(self, speakers_post_client):
+        client, _, _ = speakers_post_client
+        resp = await client.post(
+            "/api/meetings/speakers",
+            json={"stem": "nonexistent", "mapping": {"SPEAKER_00": "Alice"}},
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 404
+
+    async def test_200_with_stem_writes_speakers_json(
+        self, speakers_post_client,
+    ):
+        """Stem path: daemon resolves + writes .speakers.json + triggers reprocess."""
+        client, daemon, trigger_calls = speakers_post_client
+        audio = _seed_recording_with_transcript(daemon)
+
+        resp = await client.post(
+            "/api/meetings/speakers",
+            json={
+                "stem": "rec",
+                "mapping": {"SPEAKER_00": "Alice"},
+                "org": "alpha",
+            },
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 200
+        body = await resp.json()
+        assert body["status"] == "processing"
+
+        # .speakers.json written next to the audio file with the mapping.
+        speakers_json = audio.with_suffix(".speakers.json")
+        assert speakers_json.exists()
+        assert json.loads(speakers_json.read_text()) == {"SPEAKER_00": "Alice"}
+
+        # Pipeline reprocess triggered from analyze stage.
+        await asyncio.sleep(0)  # let the create_task run
+        assert len(trigger_calls) == 1
+        rec_path, org, from_stage = trigger_calls[0]
+        assert rec_path == audio
+        assert org == "alpha"
+        assert from_stage == "analyze"
+
+    async def test_200_with_legacy_recording_path(self, speakers_post_client):
+        """Old clients passing a full recording_path still work."""
+        client, daemon, trigger_calls = speakers_post_client
+        audio = _seed_recording_with_transcript(daemon)
+
+        resp = await client.post(
+            "/api/meetings/speakers",
+            json={
+                "recording_path": str(audio),
+                "mapping": {"SPEAKER_00": "Bob"},
+                "org": "alpha",
+            },
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 200
+        speakers_json = audio.with_suffix(".speakers.json")
+        assert json.loads(speakers_json.read_text()) == {"SPEAKER_00": "Bob"}
+
+        await asyncio.sleep(0)
+        assert len(trigger_calls) == 1
+        assert trigger_calls[0][0] == audio
+        assert trigger_calls[0][2] == "analyze"
+
+    async def test_200_with_contact_mutations_applies_and_creates_stub(
+        self, speakers_post_client,
+    ):
+        """create mutation lands in config.yaml AND a People stub is written."""
+        import yaml
+
+        client, daemon, trigger_calls = speakers_post_client
+        _seed_recording_with_transcript(daemon)
+
+        resp = await client.post(
+            "/api/meetings/speakers",
+            json={
+                "stem": "rec",
+                "mapping": {"SPEAKER_00": "Alice"},
+                "org": "alpha",
+                "contact_mutations": [
+                    {
+                        "action": "create",
+                        "name": "Alice",
+                        "display_name": "Alice",
+                        "email": "alice@example.com",
+                    },
+                ],
+            },
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 200
+
+        # known-contacts now contains Alice on disk.
+        doc = yaml.safe_load(daemon.config_path.read_text())
+        contacts = doc["known-contacts"]
+        assert any(
+            c.get("name") == "Alice" and c.get("email") == "alice@example.com"
+            for c in contacts
+        )
+
+        # daemon.refresh_config() picked up the new contact.
+        assert any(
+            kc.name == "Alice" for kc in daemon.config.known_contacts
+        )
+
+        # People stub written under the alpha org's subfolder.
+        stub_path = (
+            daemon.config.vault_path / "Clients" / "Alpha"
+            / "People" / "Alice.md"
+        )
+        assert stub_path.exists()
+
+        await asyncio.sleep(0)
+        assert len(trigger_calls) == 1
+
+    async def test_400_on_invalid_contact_mutation_shape(
+        self, speakers_post_client,
+    ):
+        """contact_mutations with unknown action raises ValueError -> 400."""
+        client, daemon, _ = speakers_post_client
+        _seed_recording_with_transcript(daemon)
+        resp = await client.post(
+            "/api/meetings/speakers",
+            json={
+                "stem": "rec",
+                "mapping": {"SPEAKER_00": "Alice"},
+                "contact_mutations": [{"action": "nonexistent_action"}],
+                "org": "alpha",
+            },
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 400
+        body = await resp.json()
+        assert "contact mutation" in body.get("error", "").lower()
+
+    async def test_400_on_stub_creation_unknown_org(
+        self, speakers_post_client,
+    ):
+        """Stub creation with unknown org raises ValueError -> 400.
+
+        Important: contacts have already been committed at this point.
+        Retry is safe because both mutation and stub creation are
+        idempotent.
+        """
+        client, daemon, _ = speakers_post_client
+        _seed_recording_with_transcript(daemon)
+        resp = await client.post(
+            "/api/meetings/speakers",
+            json={
+                "stem": "rec",
+                "mapping": {"SPEAKER_00": "Alice"},
+                "contact_mutations": [
+                    {
+                        "action": "create",
+                        "name": "Alice",
+                        "display_name": "Alice",
+                    },
+                ],
+                "org": "nonexistent-org",  # fails at _ensure_people_stub
+            },
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 400
+        body = await resp.json()
+        assert "stub creation" in body.get("error", "").lower()
+        # Contacts were committed BEFORE stub creation failed.
+        # Verify via live config (daemon.refresh_config() ran).
+        assert any(c.name == "Alice" for c in daemon.config.known_contacts)
+
+    async def test_400_on_add_alias_target_not_found(
+        self, speakers_post_client,
+    ):
+        """add_alias targeting a non-existent contact raises ValueError -> 400."""
+        client, daemon, _ = speakers_post_client
+        _seed_recording_with_transcript(daemon)
+        resp = await client.post(
+            "/api/meetings/speakers",
+            json={
+                "stem": "rec",
+                "mapping": {"SPEAKER_00": "Alice"},
+                "contact_mutations": [
+                    {"action": "add_alias", "name": "Ghost", "alias": "G."},
+                ],
+                "org": "alpha",
+            },
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 400

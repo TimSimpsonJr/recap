@@ -65,6 +65,7 @@ def offset_utterances(
     """
     return [
         Utterance(
+            speaker_id=u.speaker_id,
             speaker=u.speaker,
             start=u.start + window_start_s,
             end=u.end + window_start_s,

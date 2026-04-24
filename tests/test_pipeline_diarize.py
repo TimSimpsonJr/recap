@@ -72,8 +72,8 @@ class TestAssignSpeakers:
     def test_assigns_speakers_by_overlap(self):
         transcript = TranscriptResult(
             utterances=[
-                Utterance(speaker="UNKNOWN", start=0.0, end=3.0, text="Hello"),
-                Utterance(speaker="UNKNOWN", start=5.0, end=8.0, text="Hi there"),
+                Utterance(speaker_id="UNKNOWN", speaker="UNKNOWN", start=0.0, end=3.0, text="Hello"),
+                Utterance(speaker_id="UNKNOWN", speaker="UNKNOWN", start=5.0, end=8.0, text="Hi there"),
             ],
             raw_text="Hello Hi there",
             language="en",
@@ -90,7 +90,7 @@ class TestAssignSpeakers:
     def test_does_not_mutate_input(self):
         transcript = TranscriptResult(
             utterances=[
-                Utterance(speaker="UNKNOWN", start=0.0, end=3.0, text="Hello"),
+                Utterance(speaker_id="UNKNOWN", speaker="UNKNOWN", start=0.0, end=3.0, text="Hello"),
             ],
             raw_text="Hello",
             language="en",
@@ -103,7 +103,7 @@ class TestAssignSpeakers:
     def test_handles_no_overlap(self):
         transcript = TranscriptResult(
             utterances=[
-                Utterance(speaker="UNKNOWN", start=20.0, end=25.0, text="Late"),
+                Utterance(speaker_id="UNKNOWN", speaker="UNKNOWN", start=20.0, end=25.0, text="Late"),
             ],
             raw_text="Late",
             language="en",
@@ -115,7 +115,7 @@ class TestAssignSpeakers:
     def test_picks_best_overlap(self):
         transcript = TranscriptResult(
             utterances=[
-                Utterance(speaker="UNKNOWN", start=4.0, end=7.0, text="overlap"),
+                Utterance(speaker_id="UNKNOWN", speaker="UNKNOWN", start=4.0, end=7.0, text="overlap"),
             ],
             raw_text="overlap",
             language="en",
@@ -130,7 +130,7 @@ class TestAssignSpeakers:
     def test_empty_segments_keeps_unknown(self):
         transcript = TranscriptResult(
             utterances=[
-                Utterance(speaker="UNKNOWN", start=0.0, end=3.0, text="Hello"),
+                Utterance(speaker_id="UNKNOWN", speaker="UNKNOWN", start=0.0, end=3.0, text="Hello"),
             ],
             raw_text="Hello",
             language="en",

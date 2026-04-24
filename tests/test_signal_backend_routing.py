@@ -105,7 +105,7 @@ def recordings_path(tmp_path: pathlib.Path) -> pathlib.Path:
 def _make_transcript() -> TranscriptResult:
     return TranscriptResult(
         utterances=[
-            Utterance(speaker="Alex", start=1.0, end=4.0, text="Hello."),
+            Utterance(speaker_id="Alex", speaker="Alex", start=1.0, end=4.0, text="Hello."),
         ],
         raw_text="Hello.",
         language="en",

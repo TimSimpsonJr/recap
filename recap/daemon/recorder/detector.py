@@ -280,6 +280,17 @@ class MeetingDetector:
             self._armed_event = None
             self._recorder.state_machine.disarm()
 
+    def on_config_reloaded(self, new_config: "DaemonConfig") -> None:
+        """Update cached config reference after :meth:`Daemon.refresh_config`.
+
+        Called by the daemon when ``known_contacts`` or other
+        live-editable config fields change. Downstream callers
+        (enrichment, periodic UIA refresh, browser participant merges)
+        read ``self._config`` on their next access, so a simple rebind
+        is all that's required.
+        """
+        self._config = new_config
+
     def mark_active_recording(self, hwnd: int) -> None:
         """Register a prompt-started recording's hwnd with the detector.
 
@@ -365,10 +376,12 @@ class MeetingDetector:
         names = extract_zoom_participants(self._recording_hwnd)
         if not names:
             return
-        matched = match_known_contacts(names, self._config.known_contacts)
+        as_participants = [Participant(name=n) for n in names]
+        matched = match_known_contacts(as_participants, self._config.known_contacts)
+        matched_names = [p.name for p in matched]
         self._active_roster.merge(
             "zoom_uia_periodic",
-            matched,
+            matched_names,
             datetime.now().astimezone(),
         )
 
@@ -443,9 +456,11 @@ class MeetingDetector:
             return False
         platform = self._current_browser_platform or "unknown"
         source = f"browser_dom_{platform}"
-        matched = match_known_contacts(participants, self._config.known_contacts)
+        as_participants = [Participant(name=n) for n in participants]
+        matched = match_known_contacts(as_participants, self._config.known_contacts)
+        matched_names = [p.name for p in matched]
         self._active_roster.merge(
-            source, matched, datetime.now().astimezone(),
+            source, matched_names, datetime.now().astimezone(),
         )
         return True
 

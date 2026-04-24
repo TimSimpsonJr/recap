@@ -5,7 +5,8 @@ import { StartRecordingModal, OrgChoice } from "./components/StartRecordingModal
 import { RecapSettingTab } from "./settings";
 import { MeetingListView, VIEW_MEETING_LIST } from "./views/MeetingListView";
 import { LiveTranscriptView, VIEW_LIVE_TRANSCRIPT } from "./views/LiveTranscriptView";
-import { SpeakerCorrectionModal, SpeakerInfo } from "./views/SpeakerCorrectionModal";
+import { SpeakerCorrectionModal } from "./views/SpeakerCorrectionModal";
+import type { Participant } from "./correction/resolve";
 import { RenameProcessor } from "./renameProcessor";
 import { NotificationHistory, NotificationHistoryModal } from "./notificationHistory";
 import { DaemonLaunchSettings, DEFAULT_LAUNCH_SETTINGS } from "./launchSettings";
@@ -298,44 +299,87 @@ export default class RecapPlugin extends Plugin {
             return;
         }
 
-        const content = await this.app.vault.cachedRead(file);
-
-        // Extract SPEAKER_XX labels from content
-        const speakerLabels = [...new Set(
-            (content.match(/SPEAKER_\d+/g) || [])
-        )];
-
-        if (speakerLabels.length === 0) {
-            new Notice("No unidentified speakers found in this note");
+        const cache = this.app.metadataCache.getFileCache(file);
+        const fm = cache?.frontmatter;
+        const recording = (fm?.recording ?? "").toString()
+            .replace(/\[\[|\]\]/g, "");
+        // Daemon's resolve_recording_path takes a bare stem, not a
+        // filename; strip the .flac/.m4a/.aac extension. Matches the
+        // FLAC->M4A ladder in recap/artifacts.py::resolve_recording_path.
+        // ``.aac`` is included defensively for archived recordings that
+        // may carry that extension.
+        const stem = recording.replace(/\.(flac|m4a|aac)$/i, "");
+        const org = (fm?.org ?? "").toString();
+        const orgSubfolder = (fm?.["org-subfolder"] ?? "").toString();
+        if (!stem) {
+            new Notice("No recording in frontmatter");
+            return;
+        }
+        if (!orgSubfolder) {
+            new Notice("Missing org-subfolder in frontmatter");
             return;
         }
 
-        // Get people names from vault
-        const peopleFiles = this.app.vault.getMarkdownFiles().filter(f =>
-            f.path.startsWith("_Recap/") && f.path.includes("/People/")
+        // Daemon returns BOTH speakers (from transcript) AND participants
+        // (from recording metadata sidecar, with emails for calendar-
+        // sourced entries).
+        let resp: {
+            speakers: Array<{speaker_id: string; display: string}>;
+            participants: Array<{name: string; email: string | null}>;
+        };
+        try {
+            resp = await this.client.getMeetingSpeakers(stem);
+        } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            new Notice(`Could not load speakers: ${msg}`);
+            console.error("Recap:", e);
+            return;
+        }
+        if (resp.speakers.length === 0) {
+            new Notice("No speakers in transcript");
+            return;
+        }
+
+        const peopleNames = this.scanNotesByFolder(`${orgSubfolder}/People`);
+        const companyNames = this.scanNotesByFolder(
+            `${orgSubfolder}/Companies`,
         );
-        const peopleNames = peopleFiles.map(f => f.basename);
+        let knownContacts: import("./api").ApiKnownContact[] = [];
+        try {
+            const cfg = await this.client.getConfig();
+            knownContacts = cfg.known_contacts || [];
+        } catch (e) {
+            console.warn("Recap: could not load known contacts", e);
+        }
 
-        // Get recording path and org from frontmatter
-        const cache = this.app.metadataCache.getFileCache(file);
-        const frontmatter = cache?.frontmatter;
-        const recordingPath = frontmatter?.recording?.replace(/\[\[|\]\]/g, "") || "";
-        const org = frontmatter?.org || "";
-
-        const speakers: SpeakerInfo[] = speakerLabels.map(label => ({
-            label,
-            sampleClipPath: "", // TODO: daemon could serve sample clips
+        // Participants come from the daemon (with emails for calendar
+        // entries), not frontmatter — the frontmatter's participants
+        // field is wikilinked names only and can't carry email hints.
+        const meetingParticipants: Participant[] = resp.participants.map(p => ({
+            name: p.name,
+            email: p.email ?? undefined,
         }));
 
         new SpeakerCorrectionModal(
             this.app,
-            speakers,
+            resp.speakers,
             peopleNames,
-            [], // known contacts - could fetch from daemon
-            recordingPath,
+            companyNames,
+            knownContacts,
+            meetingParticipants,
+            stem,
             org,
+            orgSubfolder,
             this.client,
         ).open();
+    }
+
+    private scanNotesByFolder(folderPath: string): string[] {
+        const prefix = folderPath.endsWith("/")
+            ? folderPath : `${folderPath}/`;
+        return this.app.vault.getMarkdownFiles()
+            .filter(f => f.path.startsWith(prefix))
+            .map(f => f.basename);
     }
 
     private async reprocessMeeting(file: TFile): Promise<void> {
