@@ -479,6 +479,40 @@ async def _api_meeting_speakers_get(request: web.Request) -> web.Response:
     return web.json_response({"speakers": speakers, "participants": participants})
 
 
+def _ensure_people_stub(daemon, org: str, name: str) -> None:
+    """Create a People note stub if it doesn't exist.
+
+    Uses the canonical ``_generate_person_stub`` template from
+    ``recap.vault`` (same template the pipeline's analysis path emits
+    via ``write_profile_stubs``). Idempotent: skips if
+    ``<org_subfolder>/People/<name>.md`` already exists.
+
+    Called by the correction-save POST handler (Task 14) after a
+    successful ``_apply_contact_mutations`` so a newly-created contact
+    has a People note the user can immediately backlink into.
+
+    Raises:
+        ValueError: if *org* is not a configured org slug.
+        OSError: if disk write fails (caller decides the response).
+    """
+    from recap.artifacts import safe_note_title
+    from recap.models import ProfileStub
+    from recap.vault import _generate_person_stub
+
+    org_config = daemon.config.org_by_slug(org)
+    if org_config is None:
+        raise ValueError(f"unknown org: {org}")
+    vault_path = Path(daemon.config.vault_path)
+    org_subfolder = org_config.resolve_subfolder(vault_path)
+    people_dir = org_subfolder / "People"
+    stub_path = people_dir / f"{safe_note_title(name)}.md"
+    if stub_path.exists():
+        return  # no clobber
+    people_dir.mkdir(parents=True, exist_ok=True)
+    content = _generate_person_stub(ProfileStub(name=name))
+    stub_path.write_text(content, encoding="utf-8")
+
+
 async def _api_config_patch(request: web.Request) -> web.Response:
     """PATCH /api/config -- ruamel round-trip, strict key validation,
     atomic write, ``config_updated`` journal event.
