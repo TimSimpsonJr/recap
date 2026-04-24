@@ -280,6 +280,17 @@ class MeetingDetector:
             self._armed_event = None
             self._recorder.state_machine.disarm()
 
+    def on_config_reloaded(self, new_config: "DaemonConfig") -> None:
+        """Update cached config reference after :meth:`Daemon.refresh_config`.
+
+        Called by the daemon when ``known_contacts`` or other
+        live-editable config fields change. Downstream callers
+        (enrichment, periodic UIA refresh, browser participant merges)
+        read ``self._config`` on their next access, so a simple rebind
+        is all that's required.
+        """
+        self._config = new_config
+
     def mark_active_recording(self, hwnd: int) -> None:
         """Register a prompt-started recording's hwnd with the detector.
 

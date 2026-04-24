@@ -365,3 +365,142 @@ class TestDaemonManagedMode:
             monkeypatch.setenv("RECAP_MANAGED", raw)
             d = Daemon(cfg)
             assert d.managed is False, f"RECAP_MANAGED={raw!r} should not be managed"
+
+
+# ----------------------------------------------------------------------
+# #28 Task 11: Daemon.refresh_config + subservice propagation
+# ----------------------------------------------------------------------
+
+
+def _write_refresh_config(
+    tmp_path: pathlib.Path, extra_contacts: list[dict] | None = None,
+) -> pathlib.Path:
+    """Write a minimal valid on-disk config.yaml and return the path.
+
+    Matches the kebab-case/dict-orgs shape ``parse_daemon_config_dict``
+    consumes. ``extra_contacts`` seeds the ``known-contacts`` section so
+    refresh tests can assert the in-memory list grows after reload.
+    """
+    import yaml
+
+    (tmp_path / "vault").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "recordings").mkdir(parents=True, exist_ok=True)
+    doc: dict = {
+        "config-version": 1,
+        "vault-path": str(tmp_path / "vault"),
+        "recordings-path": str(tmp_path / "recordings"),
+        "user-name": "Tester",
+        "orgs": {
+            "test": {
+                "subfolder": "Test",
+                "llm-backend": "claude",
+                "default": True,
+            },
+        },
+        "detection": {},
+        "calendars": {},
+    }
+    if extra_contacts is not None:
+        doc["known-contacts"] = extra_contacts
+    path = tmp_path / "config.yaml"
+    path.write_text(yaml.safe_dump(doc))
+    return path
+
+
+class TestDaemonRefreshConfig:
+    """Daemon.refresh_config reloads + propagates to subservices (#28 Task 11)."""
+
+    def test_refresh_updates_self_config(self, tmp_path):
+        """After mutating disk, refresh_config reloads into self.config."""
+        from recap.daemon.config import load_daemon_config
+
+        config_path = _write_refresh_config(tmp_path, extra_contacts=[])
+        config = load_daemon_config(config_path)
+        daemon = Daemon(config, config_path=config_path)
+
+        # No contacts in memory initially.
+        assert daemon.config.known_contacts == []
+
+        # Mutate on disk.
+        new_path = _write_refresh_config(tmp_path, extra_contacts=[
+            {"name": "Alice", "display-name": "Alice"},
+        ])
+        assert new_path == config_path
+
+        daemon.refresh_config()
+
+        assert len(daemon.config.known_contacts) == 1
+        assert daemon.config.known_contacts[0].name == "Alice"
+
+    def test_refresh_propagates_to_detector(self, tmp_path):
+        """MeetingDetector's cached self._config updated after refresh."""
+        from unittest.mock import MagicMock
+
+        from recap.daemon.config import load_daemon_config
+
+        config_path = _write_refresh_config(tmp_path, extra_contacts=[])
+        config = load_daemon_config(config_path)
+        daemon = Daemon(config, config_path=config_path)
+
+        # Attach a mock detector with the cached _config attribute the real
+        # detector carries. refresh_config must invoke on_config_reloaded
+        # with the newly-loaded DaemonConfig.
+        detector = MagicMock()
+        detector._config = config
+        daemon.detector = detector
+
+        # Mutate disk.
+        _write_refresh_config(tmp_path, extra_contacts=[
+            {"name": "Bob", "display-name": "Bob"},
+        ])
+        daemon.refresh_config()
+
+        detector.on_config_reloaded.assert_called_once()
+        new_cfg = detector.on_config_reloaded.call_args[0][0]
+        assert len(new_cfg.known_contacts) == 1
+        assert new_cfg.known_contacts[0].name == "Bob"
+        # The detector got the *same* object daemon.config now points at.
+        assert new_cfg is daemon.config
+
+    def test_refresh_when_detector_is_none_does_not_raise(self, tmp_path):
+        """Before detector is constructed, refresh still works."""
+        from recap.daemon.config import load_daemon_config
+
+        config_path = _write_refresh_config(tmp_path, extra_contacts=[])
+        config = load_daemon_config(config_path)
+        daemon = Daemon(config, config_path=config_path)
+        daemon.detector = None
+
+        # Should not raise, and should still update self.config.
+        _write_refresh_config(tmp_path, extra_contacts=[
+            {"name": "Carol", "display-name": "Carol"},
+        ])
+        daemon.refresh_config()
+        assert len(daemon.config.known_contacts) == 1
+
+
+class TestDetectorOnConfigReloaded:
+    """MeetingDetector.on_config_reloaded updates cached _config (#28 Task 11)."""
+
+    def test_updates_cached_config_reference(self, tmp_path):
+        """The new config object replaces the old one on self._config."""
+        from unittest.mock import MagicMock
+
+        from recap.daemon.recorder.detector import MeetingDetector
+
+        config = MagicMock()
+        # Minimal surface so __init__ / enabled_platforms don't blow up.
+        config.detection.teams.enabled = False
+        config.detection.zoom.enabled = False
+        config.detection.signal.enabled = False
+
+        detector = MeetingDetector(config=config, recorder=MagicMock())
+        assert detector._config is config
+
+        new_config = MagicMock()
+        new_config.detection.teams.enabled = False
+        new_config.detection.zoom.enabled = False
+        new_config.detection.signal.enabled = False
+
+        detector.on_config_reloaded(new_config)
+        assert detector._config is new_config

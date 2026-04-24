@@ -443,3 +443,41 @@ class Daemon:
         if self.loop is None:
             raise RuntimeError("Daemon loop is not running yet")
         return asyncio.run_coroutine_threadsafe(coro, self.loop)
+
+    # ------------------------------------------------------------------
+    # Live config reload (#28 Task 11)
+    # ------------------------------------------------------------------
+
+    def refresh_config(self) -> None:
+        """Reload config from disk and propagate to known subservices.
+
+        Called by ``_apply_contact_mutations`` (Task 10) after a
+        successful on-disk write. Serves as the single choke point for
+        live config updates so any subservice that caches a
+        ``DaemonConfig`` reference can pick up the new value.
+
+        The known-consumers list below is intentionally explicit -- only
+        ``MeetingDetector`` today. A formal ``ConfigConsumer`` registry
+        can emerge if this grows beyond a handful of entries.
+        """
+        # Local import keeps the module-load graph minimal and avoids a
+        # circular-import risk between service and config.
+        from recap.daemon.config import load_daemon_config
+
+        if self.config_path is None:
+            # Nothing to reload -- standalone Daemon constructed without a
+            # path (rare, tests only). Keeping the contract no-op rather
+            # than raising so callers don't have to guard the path.
+            return
+
+        # Serialize against _apply_contact_mutations (Task 10) which holds
+        # config_lock during disk writes. Without this, a concurrent refresh
+        # could read a partially-written config file.
+        with self.config_lock:
+            new_config = load_daemon_config(self.config_path)
+            self.config = new_config
+        # Propagate to subservices OUTSIDE the lock to avoid deadlocks if
+        # a subservice ever acquires config_lock (e.g. in a future nested
+        # consumer).
+        if self.detector is not None:
+            self.detector.on_config_reloaded(new_config)
