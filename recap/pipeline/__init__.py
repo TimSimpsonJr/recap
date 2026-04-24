@@ -23,6 +23,7 @@ from recap.artifacts import (
     write_recording_metadata,
 )
 from recap.errors import is_oom_error, map_error
+from recap.identity import _is_eligible_person_label
 from recap.models import AnalysisResult, MeetingMetadata, TranscriptResult
 
 if TYPE_CHECKING:
@@ -223,6 +224,45 @@ def _apply_speaker_mapping(
         raw_text=transcript.raw_text,
         language=transcript.language,
     )
+
+
+def _maybe_apply_first_pass_relabel(
+    audio_path: pathlib.Path,
+    transcript: TranscriptResult,
+    metadata: MeetingMetadata,
+) -> None:
+    """Write .speakers.json with a first-pass auto-mapping IF AND ONLY IF:
+      - exactly one distinct speaker_id in the transcript, AND
+      - exactly one eligible participant in metadata.participants
+        (eligible = passes _is_eligible_person_label).
+
+    Writes keyed by speaker_id. Does not write if the file already exists
+    (respects user corrections on subsequent reprocesses). Called between
+    diarize and analyze stages on a new meeting.
+
+    Failure to write is logged and non-blocking -- pipeline proceeds with
+    diarized IDs and user correction fills in later.
+    """
+    sp_path = speakers_path(audio_path)
+    if sp_path.exists():
+        return
+
+    distinct_ids = {u.speaker_id for u in transcript.utterances}
+    if len(distinct_ids) != 1:
+        return
+
+    eligible = [
+        p for p in metadata.participants
+        if _is_eligible_person_label(p.name)
+    ]
+    if len(eligible) != 1:
+        return
+
+    (sid,) = distinct_ids
+    try:
+        sp_path.write_text(json.dumps({sid: eligible[0].name}, indent=2))
+    except OSError:
+        logger.warning("first-pass relabel disk write failed", exc_info=True)
 
 
 def _resolve_note_path(
@@ -464,6 +504,14 @@ def run_pipeline(
                     logger.exception(
                         "Failed to delete mono sidecar %s", ml_audio_path,
                     )
+
+    # ------------------------------------------------------------------
+    # First-pass auto-relabel (Case A only): SPEAKER_00 + 1 eligible
+    # participant => write .speakers.json so the next block applies it.
+    # Respects existing .speakers.json (user-authored corrections win).
+    # ------------------------------------------------------------------
+    if transcript is not None:
+        _maybe_apply_first_pass_relabel(audio_path, transcript, metadata)
 
     # ------------------------------------------------------------------
     # Apply speaker corrections (if a .speakers.json exists)
