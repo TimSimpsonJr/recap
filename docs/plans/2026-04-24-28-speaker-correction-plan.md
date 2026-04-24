@@ -931,13 +931,17 @@ class TestApiMeetingSpeakersGet:
 
 **Step 3: Implement handler in `recap/daemon/server.py`**
 
+Response shape includes both `speakers` (from transcript) AND `participants` (from recording metadata sidecar), so the plugin gets emails for calendar-sourced participants in one round-trip. Client-side email-first resolution depends on this data.
+
 ```python
 async def _api_meeting_speakers_get(request: web.Request) -> web.Response:
-    """Return the speaker list for a meeting's transcript artifact."""
+    """Return speaker list + participants (with emails) for a meeting."""
     stem = request.match_info["stem"]
     daemon: Daemon = request.app["daemon"]
 
-    from recap.artifacts import resolve_recording_path, transcript_path
+    from recap.artifacts import (
+        load_recording_metadata, resolve_recording_path, transcript_path,
+    )
     audio_path = resolve_recording_path(daemon.config.recordings_path, stem)
     if audio_path is None:
         return web.json_response({"error": "recording not found"}, status=404)
@@ -951,13 +955,24 @@ async def _api_meeting_speakers_get(request: web.Request) -> web.Response:
     except (OSError, json.JSONDecodeError) as e:
         return web.json_response({"error": f"transcript read: {e}"}, status=500)
 
+    # Distinct (speaker_id, display) pairs in first-seen order.
     seen: dict[str, str] = {}
     for u in data.get("utterances", []):
         sid = u.get("speaker_id") or u["speaker"]  # backfill on the fly
         if sid not in seen:
             seen[sid] = u["speaker"]
     speakers = [{"speaker_id": sid, "display": disp} for sid, disp in seen.items()]
-    return web.json_response({"speakers": speakers})
+
+    # Participants from the recording metadata sidecar. Provides emails
+    # for calendar-sourced participants so client-side email-first resolution
+    # can fire. Missing sidecar → empty list (older/manual recordings).
+    participants: list[dict] = []
+    rm = load_recording_metadata(audio_path)
+    if rm is not None:
+        for p in rm.participants:
+            participants.append({"name": p.name, "email": p.email})
+
+    return web.json_response({"speakers": speakers, "participants": participants})
 ```
 
 Register the route near other `/api/meetings/*` routes (around [server.py:1223](recap/daemon/server.py:1223)):
@@ -965,6 +980,8 @@ Register the route near other `/api/meetings/*` routes (around [server.py:1223](
 ```python
 app.router.add_get("/api/meetings/{stem}/speakers", _api_meeting_speakers_get)
 ```
+
+**Additional test:** extend `TestApiMeetingSpeakersGet` with a scenario that writes a `RecordingMetadata` sidecar with a participant carrying an email, asserts the response `participants` array includes that entry with the email intact. Another scenario: missing sidecar → `participants: []`, still returns 200.
 
 **Step 4: Run tests**
 
@@ -2298,18 +2315,18 @@ git commit -m "feat(#28): client-side normalize + resolve pure functions + Vites
 ## Task 16: Plugin `DaemonClient` additions
 
 **Files:**
-- Modify: `obsidian-recap/src/api.ts` (or wherever `DaemonClient` is defined — grep for `class DaemonClient`)
+- Modify: `obsidian-recap/src/api.ts` (`DaemonClient` at [api.ts:89](obsidian-recap/src/api.ts:89))
+
+**Context:** `DaemonClient` already exposes `get<T>(path)`, `post<T>(path, body?)`, and `delete(path)` ([api.ts:103-136](obsidian-recap/src/api.ts:103)). Each handles auth headers + error wrapping. New methods use those — **do not introduce a new `fetch` helper**.
 
 **Step 1: Add methods to DaemonClient**
 
 ```typescript
-async getMeetingSpeakers(stem: string): Promise<Array<{speaker_id: string; display: string}>> {
-    const resp = await this.fetch(
-        `/api/meetings/${encodeURIComponent(stem)}/speakers`,
-    );
-    if (!resp.ok) throw new Error(`getMeetingSpeakers: ${resp.status}`);
-    const data = await resp.json();
-    return data.speakers;
+async getMeetingSpeakers(stem: string): Promise<{
+    speakers: Array<{speaker_id: string; display: string}>;
+    participants: Array<{name: string; email: string | null}>;
+}> {
+    return this.get(`/api/meetings/${encodeURIComponent(stem)}/speakers`);
 }
 
 async saveSpeakerCorrections(params: {
@@ -2320,26 +2337,24 @@ async saveSpeakerCorrections(params: {
         | {action: "add_alias"; name: string; alias: string}
     >;
     org: string;
-}): Promise<void> {
-    const resp = await this.fetch("/api/meetings/speakers", {
-        method: "POST",
-        headers: {"Content-Type": "application/json"},
-        body: JSON.stringify(params),
-    });
-    if (!resp.ok) {
-        const text = await resp.text();
-        throw new Error(`saveSpeakerCorrections: ${resp.status} ${text}`);
-    }
+}): Promise<{status: string}> {
+    return this.post("/api/meetings/speakers", params);
 }
 ```
 
-**Step 2: Update clip fetch** (grep for `/api/recordings/` in plugin code; likely in `api.ts` or `SpeakerCorrectionModal.ts`):
+**Note:** the GET response shape now includes `participants` with optional emails — this is a Task 7 contract extension (see Task 7 patch below). The extended response gives the client what it needs for email-first resolution without a separate endpoint.
 
-Change query param from `speaker=...` to `speaker_id=...`.
+**Step 2: Update clip fetch**
 
-**Step 3: Verify via existing integration**
+Grep for `/api/recordings/` in plugin code (likely `SpeakerCorrectionModal.ts::loadClipInto` or similar). Change query param from `speaker=...` to `speaker_id=...`. The daemon accepts both during the transition (Task 9), so this change is non-breaking.
 
-Run `npm test` and `npm run build` in `obsidian-recap/`. Verify no type errors.
+**Step 3: Verify build**
+
+```bash
+cd obsidian-recap && npm run build && npm test
+```
+
+Expected: clean build, all Vitest tests pass.
 
 **Step 4: Commit**
 
@@ -2356,7 +2371,7 @@ git commit -m "feat(#28): DaemonClient getMeetingSpeakers + saveSpeakerCorrectio
 - Modify: `obsidian-recap/src/main.ts` (openSpeakerCorrection at line 295+)
 - Modify: `obsidian-recap/src/views/SpeakerCorrectionModal.ts` (widen constructor + integrate resolve)
 
-**Step 1: Modify `openSpeakerCorrection`** — replace note-body regex scan with daemon fetch:
+**Step 1: Modify `openSpeakerCorrection`** — replace note-body regex scan with daemon fetch. Frontmatter's `recording` field is a basename WITH extension (e.g., `2026-04-22-120530-disbursecloud.m4a` from [vault.py:119](recap/vault.py:119)'s `recording_path.name`). Strip the audio extension to get a bare stem for the daemon's path resolver.
 
 ```typescript
 private async openSpeakerCorrection(file: TFile): Promise<void> {
@@ -2364,20 +2379,26 @@ private async openSpeakerCorrection(file: TFile): Promise<void> {
 
     const cache = this.app.metadataCache.getFileCache(file);
     const fm = cache?.frontmatter;
-    const stem = fm?.recording?.replace(/\[\[|\]\]/g, "") || "";
+    const recording = (fm?.recording ?? "").toString().replace(/\[\[|\]\]/g, "");
+    // Daemon's resolve_recording_path takes a bare stem, not a filename;
+    // strip the .flac/.m4a extension. Matches the FLAC->M4A ladder in
+    // recap/artifacts.py::resolve_recording_path.
+    const stem = recording.replace(/\.(flac|m4a)$/i, "");
     const org = fm?.org || "";
     const orgSubfolder = fm?.["org-subfolder"] || "";
     if (!stem) { new Notice("No recording in frontmatter"); return; }
     if (!orgSubfolder) { new Notice("Missing org-subfolder in frontmatter"); return; }
 
-    let speakers: Array<{speaker_id: string; display: string}>;
+    // Daemon returns BOTH speakers (from transcript) AND participants
+    // (from recording metadata sidecar, with emails for calendar-sourced entries).
+    let resp: {speakers: Array<{speaker_id: string; display: string}>; participants: Array<{name: string; email: string | null}>};
     try {
-        speakers = await this.client.getMeetingSpeakers(stem);
+        resp = await this.client.getMeetingSpeakers(stem);
     } catch (e) {
         new Notice(`Could not load speakers: ${e}`);
         return;
     }
-    if (speakers.length === 0) {
+    if (resp.speakers.length === 0) {
         new Notice("No speakers in transcript");
         return;
     }
@@ -2391,10 +2412,16 @@ private async openSpeakerCorrection(file: TFile): Promise<void> {
     } catch (e) {
         console.warn("Could not load known contacts", e);
     }
-    const meetingParticipants = this.loadParticipantsFromFrontmatter(fm);
+
+    // Participants come from daemon (with emails), not frontmatter.
+    // Frontmatter's participants field only has wikilinked names.
+    const meetingParticipants = resp.participants.map(p => ({
+        name: p.name,
+        email: p.email ?? undefined,
+    }));
 
     new SpeakerCorrectionModal(
-        this.app, speakers, peopleNames, companyNames, knownContacts,
+        this.app, resp.speakers, peopleNames, companyNames, knownContacts,
         meetingParticipants, stem, org, orgSubfolder, this.client,
     ).open();
 }
@@ -2405,14 +2432,9 @@ private scanNotesByFolder(folderPath: string): string[] {
         .filter(f => f.path.startsWith(prefix))
         .map(f => f.basename);
 }
-
-private loadParticipantsFromFrontmatter(fm: any): Array<{name: string; email?: string}> {
-    if (!fm?.participants) return [];
-    return (fm.participants as string[])
-        .map(p => ({name: p.replace(/\[\[|\]\]/g, "")}));
-    // Email not in note frontmatter; only available to the daemon.
-}
 ```
+
+The `loadParticipantsFromFrontmatter` helper from the earlier draft is deleted — daemon-provided participants supersede it, and it couldn't carry emails anyway.
 
 **Step 2: Widen `SpeakerCorrectionModal`**
 
