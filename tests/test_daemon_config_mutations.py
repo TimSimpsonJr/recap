@@ -95,6 +95,20 @@ class TestCreateMutation:
         doc = yaml.safe_load(path.read_text())
         assert len(doc["known-contacts"]) == 1
 
+    def test_create_idempotent_on_existing_name(self, tmp_path):
+        """Same-name create is a no-op (retry safety)."""
+        path = _write_min_config(tmp_path, contacts=[
+            {"name": "Alice", "display-name": "Alice"},
+        ])
+        daemon = _fake_daemon(path)
+        _apply_contact_mutations(daemon, [
+            {"action": "create", "name": "Alice", "display_name": "Alice Different"},
+        ])
+        doc = yaml.safe_load(path.read_text())
+        # Only one Alice; original display-name preserved (no overwrite).
+        assert len(doc["known-contacts"]) == 1
+        assert doc["known-contacts"][0]["display-name"] == "Alice"
+
 
 class TestAddAliasMutation:
     def test_add_alias_extends_list(self, tmp_path):

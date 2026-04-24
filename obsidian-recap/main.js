@@ -1662,6 +1662,7 @@ function normalize(text) {
 var SPEAKER_ID_RE = /^SPEAKER_\d+$/;
 var UNKNOWN_RE = /^(UNKNOWN|Unknown Speaker.*)$/i;
 var PARENTHETICAL_RE = /\([^)]+\)/;
+var NON_PERSON_RE = /\b(team|department|dept|group|staff|squad)\b/i;
 function resolve(typed, ctx, options) {
   const normalized = normalize(typed);
   if (!normalized)
@@ -1781,6 +1782,9 @@ function checkIneligibility(typed, normalized, ctx) {
     return { kind: "ineligible", reason: "multi-person (contains /)", typed };
   if (ctx.companyNames.some((c) => normalize(c) === normalized)) {
     return { kind: "ineligible", reason: "matches Company note", typed };
+  }
+  if (NON_PERSON_RE.test(s)) {
+    return { kind: "ineligible", reason: "looks like a team/role label", typed };
   }
   return null;
 }
@@ -1927,10 +1931,18 @@ var SpeakerCorrectionModal = class extends import_obsidian6.Modal {
           cls: "recap-hint-btn"
         });
         useBtn.addEventListener("click", () => {
+          const normSuggestion = normalize(plan.suggestion);
+          const hasKnownContact = this.knownContacts.some((c) => {
+            if (normalize(c.name) === normSuggestion)
+              return true;
+            if (c.display_name && normalize(c.display_name) === normSuggestion)
+              return true;
+            return (c.aliases || []).some((a) => normalize(a) === normSuggestion);
+          });
           row.currentPlan = {
             kind: "link_to_existing",
             canonical_name: plan.suggestion,
-            requires_contact_create: false
+            requires_contact_create: !hasKnownContact
           };
           this.renderHint(row);
           this.refreshSaveButton();

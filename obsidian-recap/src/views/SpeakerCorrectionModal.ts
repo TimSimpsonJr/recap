@@ -210,10 +210,19 @@ export class SpeakerCorrectionModal extends Modal {
                     cls: "recap-hint-btn",
                 });
                 useBtn.addEventListener("click", () => {
+                    // Determine if the suggestion is a People-note-only match
+                    // (no known_contact exists yet). If so, save must emit a
+                    // create mutation, not just add_alias.
+                    const normSuggestion = normalize(plan.suggestion);
+                    const hasKnownContact = this.knownContacts.some(c => {
+                        if (normalize(c.name) === normSuggestion) return true;
+                        if (c.display_name && normalize(c.display_name) === normSuggestion) return true;
+                        return (c.aliases || []).some(a => normalize(a) === normSuggestion);
+                    });
                     row.currentPlan = {
                         kind: "link_to_existing",
                         canonical_name: plan.suggestion,
-                        requires_contact_create: false,
+                        requires_contact_create: !hasKnownContact,
                     };
                     // Leave the typed name alone; onSubmit will decide
                     // whether to emit an add_alias mutation based on

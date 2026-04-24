@@ -76,6 +76,12 @@ describe("resolve", () => {
         expect(resolve("Ed/Ellen", emptyCtx).kind).toBe("ineligible");
     });
 
+    it("ineligible: team/role label", () => {
+        expect(resolve("Design team", emptyCtx).kind).toBe("ineligible");
+        expect(resolve("Sales department", emptyCtx).kind).toBe("ineligible");
+        expect(resolve("Engineering group", emptyCtx).kind).toBe("ineligible");
+    });
+
     it("People-note-only match: requires_contact_create=true", () => {
         const r = resolve("Alice", {
             ...emptyCtx,

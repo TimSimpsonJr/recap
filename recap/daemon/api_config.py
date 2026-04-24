@@ -583,6 +583,9 @@ def _apply_contact_mutations(daemon, mutations: list[dict]) -> None:
                     raise ValueError(
                         f"create mutation missing 'display_name': {m!r}",
                     )
+                # Idempotent: skip if name already exists so retries are safe.
+                if any(c.get("name") == m["name"] for c in contacts):
+                    continue
                 entry = CommentedMap()
                 entry["name"] = m["name"]
                 entry["display-name"] = m["display_name"]

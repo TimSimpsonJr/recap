@@ -29,6 +29,7 @@ export type ResolutionPlan =
 const SPEAKER_ID_RE = /^SPEAKER_\d+$/;
 const UNKNOWN_RE = /^(UNKNOWN|Unknown Speaker.*)$/i;
 const PARENTHETICAL_RE = /\([^)]+\)/;
+const NON_PERSON_RE = /\b(team|department|dept|group|staff|squad)\b/i;
 
 export function resolve(
     typed: string,
@@ -152,6 +153,9 @@ function checkIneligibility(typed: string, normalized: string, ctx: ResolutionCo
     if (s.includes("/")) return {kind: "ineligible", reason: "multi-person (contains /)", typed};
     if (ctx.companyNames.some(c => normalize(c) === normalized)) {
         return {kind: "ineligible", reason: "matches Company note", typed};
+    }
+    if (NON_PERSON_RE.test(s)) {
+        return {kind: "ineligible", reason: "looks like a team/role label", typed};
     }
     return null;
 }
