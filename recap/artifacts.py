@@ -130,6 +130,24 @@ def speakers_path(audio_path: pathlib.Path) -> pathlib.Path:
     return audio_path.with_suffix(".speakers.json")
 
 
+def resolve_recording_path(
+    recordings_path: pathlib.Path, stem: str,
+) -> pathlib.Path | None:
+    """Resolve a bare recording stem to its on-disk file.
+
+    Precedence: .flac first, then .m4a. Returns None if neither exists.
+    Used by /api/meetings/speakers (Task 7, 14) and /api/recordings/{stem}/clip
+    so both endpoints agree on which artifact is the source of truth.
+    """
+    flac = recordings_path / f"{stem}.flac"
+    if flac.exists():
+        return flac
+    m4a = recordings_path / f"{stem}.m4a"
+    if m4a.exists():
+        return m4a
+    return None
+
+
 def write_recording_metadata(audio_path: pathlib.Path, metadata: RecordingMetadata) -> pathlib.Path:
     path = metadata_path(audio_path)
     path.write_text(json.dumps(metadata.to_dict(), indent=2), encoding="utf-8")

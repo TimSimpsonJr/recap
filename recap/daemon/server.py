@@ -17,7 +17,10 @@ from typing import TYPE_CHECKING, Any, Callable, Awaitable
 import aiohttp
 from aiohttp import web
 
-from recap.artifacts import transcript_path as artifact_transcript_path
+from recap.artifacts import (
+    resolve_recording_path,
+    transcript_path as artifact_transcript_path,
+)
 from recap.daemon.api_config import (
     api_config_to_json_dict,
     apply_api_patch_to_yaml_doc,
@@ -314,13 +317,8 @@ async def _api_recording_clip(request: web.Request) -> web.Response:
     # ``.m4a`` and can delete the source (``delete-source-after-archive``).
     # Prefer the FLAC if it's still on disk, else fall back to the
     # archived MP4/AAC — ffmpeg reads both.
-    flac_path = daemon.config.recordings_path / f"{stem}.flac"
-    m4a_path = daemon.config.recordings_path / f"{stem}.m4a"
-    if flac_path.exists():
-        audio_path = flac_path
-    elif m4a_path.exists():
-        audio_path = m4a_path
-    else:
+    audio_path = resolve_recording_path(daemon.config.recordings_path, stem)
+    if audio_path is None:
         return web.json_response({"error": "recording not found"}, status=404)
 
     # Transcript path is derived from whichever audio file we resolved;
