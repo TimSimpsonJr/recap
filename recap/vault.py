@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import pathlib
 import re
 from datetime import date, timedelta
@@ -308,6 +309,27 @@ def _write_new_note(note_path: pathlib.Path, frontmatter: dict, body: str) -> No
     fm_block = yaml.dump(frontmatter, default_flow_style=False, sort_keys=False).strip()
     content = f"---\n{fm_block}\n---\n\n{MEETING_RECORD_MARKER}\n\n{body.lstrip()}"
     note_path.write_text(content, encoding="utf-8")
+
+
+def _atomic_write_note(path: pathlib.Path, content: str) -> None:
+    """Write a note atomically via temp-file + os.replace.
+
+    Used by the retroactive-bind flow (#33) where a half-written merged
+    note would corrupt the calendar stub on crash. Existing writers in
+    this module write directly; this helper is opt-in and used where
+    crash safety matters.
+    """
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    try:
+        tmp_path.write_text(content, encoding="utf-8")
+        os.replace(tmp_path, path)
+    except OSError:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+        raise
 
 
 def _prepend_fm_and_append_body(

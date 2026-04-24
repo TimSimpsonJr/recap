@@ -678,3 +678,46 @@ def test_canonical_frontmatter_time_also_set_for_scheduled_when_started_at_prese
         org_subfolder="Acme", recording_metadata=recording_meta,
     )
     assert fm["time"] == "09:00-09:15"
+
+
+# ---------------------------------------------------------------------------
+# Tests for _atomic_write_note helper (#33 Task 3)
+# ---------------------------------------------------------------------------
+
+
+from unittest.mock import patch
+
+from recap.vault import _atomic_write_note
+
+
+class TestAtomicWriteNote:
+    def test_writes_content(self, tmp_path: pathlib.Path):
+        path = tmp_path / "note.md"
+        _atomic_write_note(path, "# Hello\n\nBody content.")
+        assert path.read_text(encoding="utf-8") == "# Hello\n\nBody content."
+
+    def test_no_temp_file_on_success(self, tmp_path: pathlib.Path):
+        path = tmp_path / "note.md"
+        _atomic_write_note(path, "content")
+        assert list(tmp_path.glob("*.tmp")) == []
+
+    def test_overwrites_existing(self, tmp_path: pathlib.Path):
+        path = tmp_path / "note.md"
+        path.write_text("old", encoding="utf-8")
+        _atomic_write_note(path, "new")
+        assert path.read_text(encoding="utf-8") == "new"
+
+    def test_temp_cleaned_up_on_replace_failure(self, tmp_path: pathlib.Path):
+        path = tmp_path / "note.md"
+        with patch("os.replace", side_effect=OSError("boom")):
+            with pytest.raises(OSError):
+                _atomic_write_note(path, "content")
+        assert list(tmp_path.glob("*.tmp")) == []
+
+    def test_existing_file_unchanged_on_failure(self, tmp_path: pathlib.Path):
+        path = tmp_path / "note.md"
+        path.write_text("original", encoding="utf-8")
+        with patch("os.replace", side_effect=OSError("boom")):
+            with pytest.raises(OSError):
+                _atomic_write_note(path, "would-corrupt")
+        assert path.read_text(encoding="utf-8") == "original"
