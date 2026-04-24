@@ -18,6 +18,7 @@ import aiohttp
 from aiohttp import web
 
 from recap.artifacts import (
+    load_recording_metadata,
     resolve_recording_path,
     transcript_path as artifact_transcript_path,
 )
@@ -394,6 +395,59 @@ async def _api_recording_clip(request: web.Request) -> web.Response:
     return web.FileResponse(
         cache_file, headers={"Content-Type": "audio/mpeg"},
     )
+
+
+async def _api_meeting_speakers_get(request: web.Request) -> web.Response:
+    """GET /api/meetings/<stem>/speakers — distinct (speaker_id, display)
+    pairs from the transcript artifact, plus participants (with emails)
+    from the recording metadata sidecar.
+
+    The extended response shape supports client-side email-first
+    resolution in the correction modal (Task 15/17). Missing sidecar
+    returns participants: [] rather than erroring, since older or
+    manually-created recordings may not have one.
+
+    Stem is regex-validated to prevent traversal.
+    """
+    daemon: Daemon = request.app["daemon"]
+    stem = request.match_info["stem"]
+    if not _STEM_RE.fullmatch(stem):
+        return web.json_response({"error": "invalid stem"}, status=400)
+
+    audio_path = resolve_recording_path(daemon.config.recordings_path, stem)
+    if audio_path is None:
+        return web.json_response({"error": "recording not found"}, status=404)
+
+    tpath = artifact_transcript_path(audio_path)
+    if not tpath.exists():
+        return web.json_response({"error": "transcript not found"}, status=404)
+
+    try:
+        data = json.loads(tpath.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        return web.json_response({"error": f"transcript read: {e}"}, status=500)
+
+    # Distinct (speaker_id, display) pairs in first-seen order.
+    # Backfill speaker_id from speaker on pre-#28 transcripts so the
+    # plugin modal gets a stable immutable identity even for legacy
+    # recordings that predate the speaker_id field.
+    seen: dict[str, str] = {}
+    for u in data.get("utterances", []):
+        sid = u.get("speaker_id") or u["speaker"]
+        if sid not in seen:
+            seen[sid] = u["speaker"]
+    speakers = [{"speaker_id": sid, "display": disp} for sid, disp in seen.items()]
+
+    # Participants (with emails) from the RecordingMetadata sidecar.
+    # Empty list when the sidecar is missing — don't 404, since a valid
+    # transcript without calendar-sourced participants is a normal state.
+    participants: list[dict] = []
+    rm = load_recording_metadata(audio_path)
+    if rm is not None:
+        for p in rm.participants:
+            participants.append({"name": p.name, "email": p.email})
+
+    return web.json_response({"speakers": speakers, "participants": participants})
 
 
 async def _api_config_patch(request: web.Request) -> web.Response:
@@ -1219,6 +1273,9 @@ def create_app(
     )
     app.router.add_post("/api/meetings/reprocess", _reprocess)
     app.router.add_post("/api/meetings/speakers", _speakers)
+    app.router.add_get(
+        "/api/meetings/{stem}/speakers", _api_meeting_speakers_get,
+    )
     app.router.add_post("/api/index/rename", _api_index_rename)
     app.router.add_post("/api/admin/shutdown", _api_admin_shutdown)
     app.router.add_get("/api/config/orgs", _config_orgs)

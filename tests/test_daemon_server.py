@@ -1090,3 +1090,168 @@ class TestApiAdminShutdown:
             },
         )
         assert resp.status == 400
+
+
+@pytest.mark.asyncio
+class TestApiMeetingSpeakersGet:
+    """GET /api/meetings/{stem}/speakers — returns speaker list + participants (#28)."""
+
+    async def test_returns_401_without_auth(self, daemon_client):
+        client, _ = daemon_client
+        resp = await client.get("/api/meetings/some-stem/speakers")
+        assert resp.status == 401
+
+    async def test_returns_400_invalid_stem(self, daemon_client):
+        """Path-traversal attempt is rejected via _STEM_RE."""
+        client, _ = daemon_client
+        # aiohttp decodes %2F to /, which may or may not match the route.
+        # What we REALLY want to verify is that the regex validator rejects
+        # bad stems. Test with an explicitly-bad stem that still matches the route:
+        resp = await client.get(
+            "/api/meetings/foo$bar/speakers",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 400
+
+    async def test_returns_404_for_missing_recording(self, daemon_client):
+        client, _ = daemon_client
+        resp = await client.get(
+            "/api/meetings/nonexistent/speakers",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 404
+
+    async def test_returns_404_when_transcript_missing(self, daemon_client):
+        client, daemon = daemon_client
+        (daemon.config.recordings_path / "rec.flac").touch()
+        resp = await client.get(
+            "/api/meetings/rec/speakers",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 404
+
+    async def test_returns_distinct_speakers_in_order(self, daemon_client):
+        client, daemon = daemon_client
+        audio = daemon.config.recordings_path / "rec.flac"
+        audio.touch()
+        from recap.artifacts import save_transcript
+        from recap.models import TranscriptResult, Utterance
+        save_transcript(audio, TranscriptResult(
+            utterances=[
+                Utterance(speaker_id="SPEAKER_00", speaker="Alice",
+                          start=0, end=1, text="hi"),
+                Utterance(speaker_id="SPEAKER_01", speaker="Bob",
+                          start=1, end=2, text="hey"),
+                Utterance(speaker_id="SPEAKER_00", speaker="Alice",
+                          start=2, end=3, text="again"),
+            ],
+            raw_text="...", language="en",
+        ))
+        resp = await client.get(
+            "/api/meetings/rec/speakers",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["speakers"] == [
+            {"speaker_id": "SPEAKER_00", "display": "Alice"},
+            {"speaker_id": "SPEAKER_01", "display": "Bob"},
+        ]
+        assert data["participants"] == []  # no sidecar in this test
+
+    async def test_backfills_legacy_transcript_on_the_fly(self, daemon_client):
+        """Pre-#28 transcript with only `speaker` field still produces correct output."""
+        client, daemon = daemon_client
+        audio = daemon.config.recordings_path / "rec.flac"
+        audio.touch()
+        from recap.artifacts import transcript_path
+        legacy = {
+            "utterances": [
+                {"speaker": "SPEAKER_00", "start": 0, "end": 1, "text": "hi"},
+            ],
+            "raw_text": "hi", "language": "en",
+        }
+        transcript_path(audio).write_text(json.dumps(legacy))
+
+        resp = await client.get(
+            "/api/meetings/rec/speakers",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["speakers"] == [{"speaker_id": "SPEAKER_00", "display": "SPEAKER_00"}]
+
+    async def test_returns_empty_list_for_zero_utterances(self, daemon_client):
+        client, daemon = daemon_client
+        audio = daemon.config.recordings_path / "rec.flac"
+        audio.touch()
+        from recap.artifacts import save_transcript
+        from recap.models import TranscriptResult
+        save_transcript(audio, TranscriptResult(
+            utterances=[], raw_text="", language="en",
+        ))
+        resp = await client.get(
+            "/api/meetings/rec/speakers",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["speakers"] == []
+        assert data["participants"] == []
+
+    async def test_participants_from_sidecar_with_emails(self, daemon_client):
+        """Response includes participants list with emails from sidecar."""
+        client, daemon = daemon_client
+        audio = daemon.config.recordings_path / "rec.flac"
+        audio.touch()
+        from recap.artifacts import save_transcript, write_recording_metadata
+        from recap.artifacts import RecordingMetadata
+        from recap.models import (
+            TranscriptResult, Utterance, Participant,
+        )
+        save_transcript(audio, TranscriptResult(
+            utterances=[Utterance(speaker_id="SPEAKER_00", speaker="SPEAKER_00",
+                                  start=0, end=1, text="x")],
+            raw_text="x", language="en",
+        ))
+        rm = RecordingMetadata(
+            org="test", note_path="", title="T", date="2026-04-24",
+            participants=[
+                Participant(name="Alice", email="alice@x.com"),
+                Participant(name="Bob", email=None),
+            ],
+            platform="manual",
+        )
+        write_recording_metadata(audio, rm)
+
+        resp = await client.get(
+            "/api/meetings/rec/speakers",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["participants"] == [
+            {"name": "Alice", "email": "alice@x.com"},
+            {"name": "Bob", "email": None},
+        ]
+
+    async def test_participants_empty_when_sidecar_missing(self, daemon_client):
+        """No RecordingMetadata sidecar → participants: []. Older/manual recordings."""
+        client, daemon = daemon_client
+        audio = daemon.config.recordings_path / "rec.flac"
+        audio.touch()
+        from recap.artifacts import save_transcript
+        from recap.models import TranscriptResult, Utterance
+        save_transcript(audio, TranscriptResult(
+            utterances=[Utterance(speaker_id="SPEAKER_00", speaker="Alice",
+                                  start=0, end=1, text="hi")],
+            raw_text="hi", language="en",
+        ))
+        # No write_recording_metadata call.
+        resp = await client.get(
+            "/api/meetings/rec/speakers",
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["participants"] == []
