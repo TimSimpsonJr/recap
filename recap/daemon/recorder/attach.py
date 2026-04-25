@@ -78,6 +78,18 @@ class AttachNotFoundError(Exception):
         return {"error": self.what, **self.extra}
 
 
+class AttachConfigError(Exception):
+    """500: internal config corruption (e.g., sidecar references an
+    unknown org). Distinct from user-error ValueErrors so the HTTP
+    layer can map it to 500 instead of 400."""
+    def __init__(self, what: str):
+        self.what = what
+        super().__init__(what)
+
+    def to_dict(self) -> dict:
+        return {"error": self.what}
+
+
 def attach_event_to_recording(
     *, daemon: "Daemon", stem: str, event_id: str, replace: bool = False,
 ) -> AttachResult:
@@ -115,7 +127,7 @@ def attach_event_to_recording(
     # Use find_note_by_event_id with stale-heal.
     org_config = daemon.config.org_by_slug(sidecar.org)
     if org_config is None:
-        raise ValueError(f"unknown org: {sidecar.org}")
+        raise AttachConfigError(f"unknown_org:{sidecar.org}")
     meetings_dir = org_config.resolve_subfolder(vault_path) / "Meetings"
     target_path = find_note_by_event_id(
         event_id, meetings_dir,

@@ -458,9 +458,13 @@ async def _api_attach_event(request: web.Request) -> web.Response:
         )
 
     event_id = body.get("event_id")
-    replace = bool(body.get("replace", False))
     if not isinstance(event_id, str) or not event_id:
         return web.json_response({"error": "missing event_id"}, status=400)
+    replace = body.get("replace", False)
+    if not isinstance(replace, bool):
+        return web.json_response(
+            {"error": "replace must be a boolean"}, status=400,
+        )
     # Defense-in-depth: orchestrator also raises ValueError on synthetic ids.
     if event_id.startswith("unscheduled:"):
         return web.json_response(
@@ -470,6 +474,7 @@ async def _api_attach_event(request: web.Request) -> web.Response:
 
     from recap.daemon.recorder.attach import (
         AttachAlreadyBoundError,
+        AttachConfigError,
         AttachConflictError,
         AttachNotFoundError,
         attach_event_to_recording,
@@ -486,6 +491,9 @@ async def _api_attach_event(request: web.Request) -> web.Response:
         return web.json_response(e.to_dict(), status=409)
     except AttachNotFoundError as e:
         return web.json_response(e.to_dict(), status=404)
+    except AttachConfigError as e:
+        logger.error("attach-event config corruption for stem=%s: %s", stem, e.what)
+        return web.json_response(e.to_dict(), status=500)
     except ValueError as e:
         return web.json_response({"error": str(e)}, status=400)
     except Exception as e:

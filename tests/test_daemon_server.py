@@ -1761,3 +1761,83 @@ class TestApiAttachEvent:
         loaded = load_recording_metadata(audio)
         assert loaded is not None
         assert loaded.event_id == "E1"
+
+    async def test_200_replace_overrides_existing_recording(self, daemon_client):
+        """With replace=True, the endpoint succeeds even when the target stub
+        already references a different recording. Pins the wire contract for
+        the conflict-resolution flow."""
+        import yaml
+
+        client, daemon = daemon_client
+        _seed_unscheduled_for_attach(
+            daemon, stem="rec-new", event_id="unscheduled:abc",
+            note_path="Clients/D/Meetings/u.md", body="# New body",
+        )
+        # Calendar stub already carries a different recording.
+        vault = daemon.config.vault_path
+        stub_rel = pathlib.Path("Clients/D/Meetings/2026-04-24 - sprint.md")
+        fm = {
+            "date": "2026-04-24", "time": "14:00-15:00", "title": "Sprint",
+            "event-id": "E1", "calendar-source": "google",
+            "meeting-link": "", "org": "d", "org-subfolder": "Clients/D",
+            "recording": "other-rec.flac",
+            "pipeline-status": "complete",
+        }
+        (vault / stub_rel).write_text(
+            "---\n" + yaml.dump(fm, sort_keys=False) + "---\n\n## Agenda\n\n",
+            encoding="utf-8",
+        )
+        daemon.event_index.add("E1", stub_rel, "d")
+
+        resp = await client.post(
+            "/api/recordings/rec-new/attach-event",
+            json={"event_id": "E1", "replace": True},
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 200
+        data = await resp.json()
+        assert data["status"] == "ok"
+        assert data["noop"] is False
+        # New recording overwrote old.
+        content = (vault / stub_rel).read_text(encoding="utf-8")
+        assert "rec-new.flac" in content
+        assert "other-rec.flac" not in content
+
+    async def test_400_non_bool_replace(self, daemon_client):
+        """replace must be a boolean, not a truthy string."""
+        client, _ = daemon_client
+        resp = await client.post(
+            "/api/recordings/rec/attach-event",
+            json={"event_id": "E1", "replace": "true"},
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 400
+        data = await resp.json()
+        assert data["error"] == "replace must be a boolean"
+
+    async def test_400_malformed_json(self, daemon_client):
+        """Body that fails JSON parsing returns 400."""
+        client, _ = daemon_client
+        resp = await client.post(
+            "/api/recordings/rec/attach-event",
+            data=b"{not json",
+            headers={
+                "Authorization": f"Bearer {AUTH_TOKEN}",
+                "Content-Type": "application/json",
+            },
+        )
+        assert resp.status == 400
+        data = await resp.json()
+        assert data["error"] == "invalid JSON body"
+
+    async def test_400_non_dict_body(self, daemon_client):
+        """Body that parses but isn't an object returns 400."""
+        client, _ = daemon_client
+        resp = await client.post(
+            "/api/recordings/rec/attach-event",
+            json=["not", "an", "object"],
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 400
+        data = await resp.json()
+        assert data["error"] == "body must be an object"
