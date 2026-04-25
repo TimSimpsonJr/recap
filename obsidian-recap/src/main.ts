@@ -54,6 +54,7 @@ export default class RecapPlugin extends Plugin {
                 getClient: () => this.client,
                 onStartRecording: () => this.startRecordingInteractive(),
                 onStopRecording: () => this.stopRecordingInteractive(),
+                onLinkToCalendar: (file) => this.openLinkToCalendarFlow(file),
             }),
         );
         this.registerView(

@@ -1,4 +1,4 @@
-import { ItemView, Notice, WorkspaceLeaf, TAbstractFile, TFile } from "obsidian";
+import { ItemView, Menu, Notice, WorkspaceLeaf, TAbstractFile, TFile } from "obsidian";
 import type { DaemonClient } from "../api";
 import { TabStrip } from "../components/TabStrip";
 import { renderNowDivider } from "../components/NowDivider";
@@ -23,6 +23,7 @@ export interface MeetingListViewDeps {
     getClient: () => DaemonClient | null;
     onStartRecording: () => Promise<void>;
     onStopRecording: () => Promise<void>;
+    onLinkToCalendar: (file: TFile) => void;
 }
 
 export class MeetingListView extends ItemView {
@@ -318,6 +319,7 @@ export class MeetingListView extends ItemView {
                 const frontmatter = cache?.frontmatter;
                 if (!frontmatter) continue;
 
+                const eventId = frontmatter["event-id"];
                 this.meetings.push({
                     path: file.path,
                     title: frontmatter.title || file.basename,
@@ -329,6 +331,7 @@ export class MeetingListView extends ItemView {
                     participants: this.parseParticipants(frontmatter.participants || []),
                     companies: this.parseParticipants(frontmatter.companies || []),
                     platform: frontmatter.platform || "",
+                    eventId: typeof eventId === "string" ? eventId : undefined,
                 });
             } catch (e) {
                 console.error(
@@ -401,11 +404,12 @@ export class MeetingListView extends ItemView {
             return;
         }
         for (const row of rows) {
-            renderMeetingRow(
+            const rowEl = renderMeetingRow(
                 this.listContainer, row,
                 (path) => this.openMeeting(path),
                 { isPast: row.isPast },
             );
+            this.attachContextMenu(rowEl, row);
         }
     }
 
@@ -426,11 +430,28 @@ export class MeetingListView extends ItemView {
             if (nowDividerIndex !== null && i === nowDividerIndex) {
                 renderNowDivider(this.listContainer!, now);
             }
-            renderMeetingRow(
+            const rowEl = renderMeetingRow(
                 this.listContainer!, row,
                 (path) => this.openMeeting(path),
                 { isPast: row.isPast },
             );
+            this.attachContextMenu(rowEl, row);
+        });
+    }
+
+    private attachContextMenu(rowEl: HTMLElement, meeting: MeetingData): void {
+        if (!meeting.eventId?.startsWith("unscheduled:")) return;
+        rowEl.addEventListener("contextmenu", (e) => {
+            e.preventDefault();
+            const file = this.app.vault.getAbstractFileByPath(meeting.path);
+            if (!(file instanceof TFile)) return;
+            const menu = new Menu();
+            menu.addItem((item) =>
+                item.setTitle("Link to calendar event")
+                    .setIcon("link")
+                    .onClick(() => this.deps.onLinkToCalendar(file)),
+            );
+            menu.showAtMouseEvent(e);
         });
     }
 
