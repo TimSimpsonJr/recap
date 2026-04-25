@@ -4,7 +4,11 @@
 import { Notice } from "obsidian";
 
 export class DaemonError extends Error {
-    constructor(public status: number, message: string) {
+    constructor(
+        public status: number,
+        message: string,
+        public body?: unknown,  // parsed JSON body when available
+    ) {
         super(message);
         this.name = "DaemonError";
     }
@@ -113,7 +117,10 @@ export class DaemonClient {
             headers: { "Authorization": `Bearer ${this.token}` },
         });
         if (!resp.ok) {
-            throw new DaemonError(resp.status, await resp.text());
+            const text = await resp.text();
+            let parsed: unknown;
+            try { parsed = JSON.parse(text); } catch {}
+            throw new DaemonError(resp.status, text, parsed);
         }
         return resp.json() as Promise<T>;
     }
@@ -128,7 +135,10 @@ export class DaemonClient {
             body: body ? JSON.stringify(body) : undefined,
         });
         if (!resp.ok) {
-            throw new DaemonError(resp.status, await resp.text());
+            const text = await resp.text();
+            let parsed: unknown;
+            try { parsed = JSON.parse(text); } catch {}
+            throw new DaemonError(resp.status, text, parsed);
         }
         return resp.json() as Promise<T>;
     }
@@ -139,7 +149,10 @@ export class DaemonClient {
             headers: { "Authorization": `Bearer ${this.token}` },
         });
         if (!resp.ok) {
-            throw new DaemonError(resp.status, await resp.text());
+            const text = await resp.text();
+            let parsed: unknown;
+            try { parsed = JSON.parse(text); } catch {}
+            throw new DaemonError(resp.status, text, parsed);
         }
     }
 
@@ -360,7 +373,10 @@ export class DaemonClient {
             },
         );
         if (!resp.ok) {
-            throw new DaemonError(resp.status, await resp.text());
+            const text = await resp.text();
+            let parsed: unknown;
+            try { parsed = JSON.parse(text); } catch {}
+            throw new DaemonError(resp.status, text, parsed);
         }
         return resp.blob();
     }
@@ -377,7 +393,10 @@ export class DaemonClient {
             body: JSON.stringify(patch),
         });
         if (!resp.ok) {
-            throw new DaemonError(resp.status, await resp.text());
+            const text = await resp.text();
+            let parsed: unknown;
+            try { parsed = JSON.parse(text); } catch {}
+            throw new DaemonError(resp.status, text, parsed);
         }
         return resp.json() as Promise<PatchConfigResponse>;
     }
