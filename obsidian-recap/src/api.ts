@@ -98,6 +98,25 @@ export type ContactMutation =
     | {action: "create"; name: string; display_name: string; email?: string}
     | {action: "add_alias"; name: string; alias: string};
 
+export interface AttachEventResponse {
+    status: string;
+    note_path: string;
+    noop?: boolean;
+    cleanup_performed?: boolean;
+}
+
+export interface AttachEventConflict {
+    error: "recording_conflict";
+    existing_recording: string;
+    note_path: string;
+}
+
+export interface AttachEventAlreadyBound {
+    error: "already_bound_to_other_event";
+    current_event_id: string;
+    current_note_path?: string;
+}
+
 export class DaemonClient {
     private baseUrl: string;
     private token: string;
@@ -274,6 +293,17 @@ export class DaemonClient {
     }> {
         return this.get(
             `/api/meetings/${encodeURIComponent(stem)}/speakers`,
+        );
+    }
+
+    async attachEvent(params: {
+        stem: string;
+        event_id: string;
+        replace?: boolean;
+    }): Promise<AttachEventResponse> {
+        return this.post(
+            `/api/recordings/${encodeURIComponent(params.stem)}/attach-event`,
+            {event_id: params.event_id, replace: params.replace ?? false},
         );
     }
 
