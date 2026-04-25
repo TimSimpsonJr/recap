@@ -1545,3 +1545,219 @@ class TestApiMeetingSpeakersPost:
             headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
         )
         assert resp.status == 400
+
+
+# ---------------------------------------------------------------------
+# Helpers for TestApiAttachEvent (#33 Task 5)
+# ---------------------------------------------------------------------
+
+
+def _seed_unscheduled_for_attach(
+    daemon, *, stem: str, event_id: str, note_path: str, body: str = "# Source body",
+):
+    """Seed an audio + sidecar + unscheduled note for the daemon_client fixture.
+
+    Mirrors ``tests/test_attach.py::_seed_unscheduled_recording`` but uses the
+    ``daemon_client`` fixture's org slug ``"d"`` / subfolder ``"Clients/D"``.
+    """
+    from recap.artifacts import RecordingMetadata, write_recording_metadata
+    from recap.models import Participant
+    import yaml
+
+    audio = daemon.config.recordings_path / f"{stem}.flac"
+    audio.touch()
+    md = RecordingMetadata(
+        org="d", note_path=note_path, title="Teams call",
+        date="2026-04-24", participants=[Participant(name="Alice")],
+        platform="manual",
+    )
+    md.event_id = event_id
+    write_recording_metadata(audio, md)
+
+    vault = daemon.config.vault_path
+    (vault / note_path).parent.mkdir(parents=True, exist_ok=True)
+    fm = {
+        "date": "2026-04-24",
+        "time": "14:30-15:15",
+        "title": "Teams call",
+        "event-id": event_id,
+        "org": "d",
+        "org-subfolder": "Clients/D",
+        "participants": ["[[Alice]]"],
+        "companies": [],
+        "duration": "45:00",
+        "recording": f"{stem}.flac",
+        "tags": ["meeting/d", "unscheduled"],
+        "pipeline-status": "complete",
+    }
+    content = "---\n" + yaml.dump(fm, sort_keys=False) + "---\n\n" + body
+    (vault / note_path).write_text(content, encoding="utf-8")
+    daemon.event_index.add(event_id, pathlib.Path(note_path), "d")
+    return audio
+
+
+def _seed_calendar_stub_for_attach(
+    daemon, *, event_id: str, title: str, stub_body: str = "## Agenda\n\n",
+    extra_fm: dict | None = None,
+):
+    """Seed a calendar stub note under Clients/D/Meetings."""
+    import yaml
+
+    vault = daemon.config.vault_path
+    stub_rel = pathlib.Path(
+        "Clients/D/Meetings",
+    ) / f"2026-04-24 - {title.lower().replace(' ', '-')}.md"
+    full = vault / stub_rel
+    full.parent.mkdir(parents=True, exist_ok=True)
+    fm = {
+        "date": "2026-04-24",
+        "time": "14:00-15:00",
+        "title": title,
+        "event-id": event_id,
+        "calendar-source": "google",
+        "meeting-link": "https://meet.google.com/xyz",
+        "org": "d",
+        "org-subfolder": "Clients/D",
+        "participants": [],
+        "pipeline-status": "pending",
+    }
+    if extra_fm:
+        fm.update(extra_fm)
+    content = "---\n" + yaml.dump(fm, sort_keys=False) + "---\n\n" + stub_body
+    full.write_text(content, encoding="utf-8")
+    daemon.event_index.add(event_id, stub_rel, "d")
+    return full
+
+
+@pytest.mark.asyncio
+class TestApiAttachEvent:
+    """POST /api/recordings/{stem}/attach-event endpoint (#33 Task 5)."""
+
+    async def test_401_without_auth(self, daemon_client):
+        client, _ = daemon_client
+        resp = await client.post(
+            "/api/recordings/rec/attach-event", json={"event_id": "E1"},
+        )
+        assert resp.status == 401
+
+    async def test_400_invalid_stem(self, daemon_client):
+        client, _ = daemon_client
+        resp = await client.post(
+            "/api/recordings/foo$bar/attach-event",
+            json={"event_id": "E1"},
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 400
+
+    async def test_400_missing_event_id(self, daemon_client):
+        client, _ = daemon_client
+        resp = await client.post(
+            "/api/recordings/rec/attach-event", json={},
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 400
+
+    async def test_400_synthetic_event_id(self, daemon_client):
+        client, _ = daemon_client
+        resp = await client.post(
+            "/api/recordings/rec/attach-event",
+            json={"event_id": "unscheduled:abc"},
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 400
+        data = await resp.json()
+        assert data["error"] == "target_event_must_be_real_calendar_event"
+
+    async def test_404_stem_unresolved(self, daemon_client):
+        client, _ = daemon_client
+        resp = await client.post(
+            "/api/recordings/ghost/attach-event",
+            json={"event_id": "E1"},
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 404
+
+    async def test_409_on_recording_conflict(self, daemon_client):
+        """Seed unscheduled + calendar stub with different existing recording.
+
+        Asserts 409 + body.error == 'recording_conflict' + structured fields.
+        """
+        client, daemon = daemon_client
+        # Source: unscheduled recording with rec-new.flac.
+        _seed_unscheduled_for_attach(
+            daemon,
+            stem="rec-new",
+            event_id="unscheduled:abc",
+            note_path="Clients/D/Meetings/2026-04-24 1430 - Teams call.md",
+            body="# new body",
+        )
+        # Target stub: already has a different recording filename.
+        _seed_calendar_stub_for_attach(
+            daemon,
+            event_id="E1",
+            title="Sprint Planning",
+            extra_fm={"recording": "other-rec.flac", "pipeline-status": "complete"},
+        )
+
+        resp = await client.post(
+            "/api/recordings/rec-new/attach-event",
+            json={"event_id": "E1"},
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 409
+        data = await resp.json()
+        assert data["error"] == "recording_conflict"
+        assert data["existing_recording"] == "other-rec.flac"
+        assert "note_path" in data
+        # Vault-relative posix path (no leading slash, no backslashes).
+        assert "\\" not in data["note_path"]
+        assert data["note_path"].endswith(".md")
+
+    async def test_200_happy_path(self, daemon_client):
+        """Happy-path bind via HTTP: seed + POST + verify 200 + side-effects.
+
+        Uses a stem matching ``_STEM_RE`` (no spaces) so the route's stem
+        validator passes; the orchestrator itself supports any filename
+        ``resolve_recording_path`` can find.
+        """
+        client, daemon = daemon_client
+        stem = "2026-04-24-1430-teams-call"
+        unscheduled_rel = (
+            "Clients/D/Meetings/2026-04-24 1430 - Teams call.md"
+        )
+        audio = _seed_unscheduled_for_attach(
+            daemon,
+            stem=stem,
+            event_id="unscheduled:abc",
+            note_path=unscheduled_rel,
+            body="# Meeting Summary\n\nPipeline output.",
+        )
+        stub = _seed_calendar_stub_for_attach(
+            daemon,
+            event_id="E1",
+            title="Sprint Planning",
+        )
+
+        resp = await client.post(
+            f"/api/recordings/{stem}/attach-event",
+            json={"event_id": "E1"},
+            headers={"Authorization": f"Bearer {AUTH_TOKEN}"},
+        )
+        assert resp.status == 200
+        body = await resp.json()
+        assert body["status"] == "ok"
+        assert body["noop"] is False
+        # note_path is the stub's vault-relative path in posix form.
+        assert body["note_path"].endswith(".md")
+        assert "\\" not in body["note_path"]
+
+        # Side effects: stub merged, unscheduled gone, sidecar rebound.
+        merged = stub.read_text(encoding="utf-8")
+        assert "Pipeline output" in merged
+        assert "event-id: E1" in merged
+        unscheduled_abs = daemon.config.vault_path / unscheduled_rel
+        assert not unscheduled_abs.exists()
+        from recap.artifacts import load_recording_metadata
+        loaded = load_recording_metadata(audio)
+        assert loaded is not None
+        assert loaded.event_id == "E1"
