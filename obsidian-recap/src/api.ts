@@ -4,7 +4,11 @@
 import { Notice } from "obsidian";
 
 export class DaemonError extends Error {
-    constructor(public status: number, message: string) {
+    constructor(
+        public status: number,
+        message: string,
+        public body?: unknown,  // parsed JSON body when available
+    ) {
         super(message);
         this.name = "DaemonError";
     }
@@ -94,6 +98,25 @@ export type ContactMutation =
     | {action: "create"; name: string; display_name: string; email?: string}
     | {action: "add_alias"; name: string; alias: string};
 
+export interface AttachEventResponse {
+    status: string;
+    note_path: string;
+    noop?: boolean;
+    cleanup_performed?: boolean;
+}
+
+export interface AttachEventConflict {
+    error: "recording_conflict";
+    existing_recording: string;
+    note_path: string;
+}
+
+export interface AttachEventAlreadyBound {
+    error: "already_bound_to_other_event";
+    current_event_id: string;
+    current_note_path?: string;
+}
+
 export class DaemonClient {
     private baseUrl: string;
     private token: string;
@@ -113,7 +136,10 @@ export class DaemonClient {
             headers: { "Authorization": `Bearer ${this.token}` },
         });
         if (!resp.ok) {
-            throw new DaemonError(resp.status, await resp.text());
+            const text = await resp.text();
+            let parsed: unknown;
+            try { parsed = JSON.parse(text); } catch {}
+            throw new DaemonError(resp.status, text, parsed);
         }
         return resp.json() as Promise<T>;
     }
@@ -128,7 +154,10 @@ export class DaemonClient {
             body: body ? JSON.stringify(body) : undefined,
         });
         if (!resp.ok) {
-            throw new DaemonError(resp.status, await resp.text());
+            const text = await resp.text();
+            let parsed: unknown;
+            try { parsed = JSON.parse(text); } catch {}
+            throw new DaemonError(resp.status, text, parsed);
         }
         return resp.json() as Promise<T>;
     }
@@ -139,7 +168,10 @@ export class DaemonClient {
             headers: { "Authorization": `Bearer ${this.token}` },
         });
         if (!resp.ok) {
-            throw new DaemonError(resp.status, await resp.text());
+            const text = await resp.text();
+            let parsed: unknown;
+            try { parsed = JSON.parse(text); } catch {}
+            throw new DaemonError(resp.status, text, parsed);
         }
     }
 
@@ -264,6 +296,17 @@ export class DaemonClient {
         );
     }
 
+    async attachEvent(params: {
+        stem: string;
+        event_id: string;
+        replace?: boolean;
+    }): Promise<AttachEventResponse> {
+        return this.post(
+            `/api/recordings/${encodeURIComponent(params.stem)}/attach-event`,
+            {event_id: params.event_id, replace: params.replace ?? false},
+        );
+    }
+
     /** Save a #28-style speaker correction: ``mapping`` keyed by
      * ``speaker_id`` + atomic ``contact_mutations`` the daemon applies
      * before reprocess. Supersedes the pre-#28 ``recording_path``-keyed
@@ -360,7 +403,10 @@ export class DaemonClient {
             },
         );
         if (!resp.ok) {
-            throw new DaemonError(resp.status, await resp.text());
+            const text = await resp.text();
+            let parsed: unknown;
+            try { parsed = JSON.parse(text); } catch {}
+            throw new DaemonError(resp.status, text, parsed);
         }
         return resp.blob();
     }
@@ -377,7 +423,10 @@ export class DaemonClient {
             body: JSON.stringify(patch),
         });
         if (!resp.ok) {
-            throw new DaemonError(resp.status, await resp.text());
+            const text = await resp.text();
+            let parsed: unknown;
+            try { parsed = JSON.parse(text); } catch {}
+            throw new DaemonError(resp.status, text, parsed);
         }
         return resp.json() as Promise<PatchConfigResponse>;
     }

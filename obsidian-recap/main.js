@@ -22,14 +22,15 @@ __export(main_exports, {
   default: () => RecapPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian9 = require("obsidian");
+var import_obsidian11 = require("obsidian");
 
 // src/api.ts
 var import_obsidian = require("obsidian");
 var DaemonError = class extends Error {
-  constructor(status, message) {
+  constructor(status, message, body) {
     super(message);
     this.status = status;
+    this.body = body;
     this.name = "DaemonError";
   }
 };
@@ -49,7 +50,13 @@ var DaemonClient = class {
       headers: { "Authorization": `Bearer ${this.token}` }
     });
     if (!resp.ok) {
-      throw new DaemonError(resp.status, await resp.text());
+      const text = await resp.text();
+      let parsed;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+      }
+      throw new DaemonError(resp.status, text, parsed);
     }
     return resp.json();
   }
@@ -63,7 +70,13 @@ var DaemonClient = class {
       body: body ? JSON.stringify(body) : void 0
     });
     if (!resp.ok) {
-      throw new DaemonError(resp.status, await resp.text());
+      const text = await resp.text();
+      let parsed;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+      }
+      throw new DaemonError(resp.status, text, parsed);
     }
     return resp.json();
   }
@@ -73,7 +86,13 @@ var DaemonClient = class {
       headers: { "Authorization": `Bearer ${this.token}` }
     });
     if (!resp.ok) {
-      throw new DaemonError(resp.status, await resp.text());
+      const text = await resp.text();
+      let parsed;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+      }
+      throw new DaemonError(resp.status, text, parsed);
     }
   }
   // --- WebSocket ---
@@ -170,6 +189,12 @@ var DaemonClient = class {
       `/api/meetings/${encodeURIComponent(stem)}/speakers`
     );
   }
+  async attachEvent(params) {
+    return this.post(
+      `/api/recordings/${encodeURIComponent(params.stem)}/attach-event`,
+      { event_id: params.event_id, replace: params.replace ?? false }
+    );
+  }
   /** Save a #28-style speaker correction: ``mapping`` keyed by
    * ``speaker_id`` + atomic ``contact_mutations`` the daemon applies
    * before reprocess. Supersedes the pre-#28 ``recording_path``-keyed
@@ -248,7 +273,13 @@ var DaemonClient = class {
       }
     );
     if (!resp.ok) {
-      throw new DaemonError(resp.status, await resp.text());
+      const text = await resp.text();
+      let parsed;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+      }
+      throw new DaemonError(resp.status, text, parsed);
     }
     return resp.blob();
   }
@@ -262,7 +293,13 @@ var DaemonClient = class {
       body: JSON.stringify(patch)
     });
     if (!resp.ok) {
-      throw new DaemonError(resp.status, await resp.text());
+      const text = await resp.text();
+      let parsed;
+      try {
+        parsed = JSON.parse(text);
+      } catch {
+      }
+      throw new DaemonError(resp.status, text, parsed);
     }
     return resp.json();
   }
@@ -1459,6 +1496,7 @@ var MeetingListView = class extends import_obsidian4.ItemView {
         const frontmatter = cache?.frontmatter;
         if (!frontmatter)
           continue;
+        const eventId = frontmatter["event-id"];
         this.meetings.push({
           path: file.path,
           title: frontmatter.title || file.basename,
@@ -1469,7 +1507,8 @@ var MeetingListView = class extends import_obsidian4.ItemView {
           pipelineStatus: frontmatter["pipeline-status"] || "pending",
           participants: this.parseParticipants(frontmatter.participants || []),
           companies: this.parseParticipants(frontmatter.companies || []),
-          platform: frontmatter.platform || ""
+          platform: frontmatter.platform || "",
+          eventId: typeof eventId === "string" ? eventId : void 0
         });
       } catch (e) {
         console.error(
@@ -1542,12 +1581,13 @@ var MeetingListView = class extends import_obsidian4.ItemView {
       return;
     }
     for (const row of rows) {
-      renderMeetingRow(
+      const rowEl = renderMeetingRow(
         this.listContainer,
         row,
         (path) => this.openMeeting(path),
         { isPast: row.isPast }
       );
+      this.attachContextMenu(rowEl, row);
     }
   }
   renderRowsWithDivider(rows, nowDividerIndex, now) {
@@ -1564,12 +1604,28 @@ var MeetingListView = class extends import_obsidian4.ItemView {
       if (nowDividerIndex !== null && i === nowDividerIndex) {
         renderNowDivider(this.listContainer, now);
       }
-      renderMeetingRow(
+      const rowEl = renderMeetingRow(
         this.listContainer,
         row,
         (path) => this.openMeeting(path),
         { isPast: row.isPast }
       );
+      this.attachContextMenu(rowEl, row);
+    });
+  }
+  attachContextMenu(rowEl, meeting) {
+    if (!meeting.eventId?.startsWith("unscheduled:"))
+      return;
+    rowEl.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      const file = this.app.vault.getAbstractFileByPath(meeting.path);
+      if (!(file instanceof import_obsidian4.TFile))
+        return;
+      const menu = new import_obsidian4.Menu();
+      menu.addItem(
+        (item) => item.setTitle("Link to calendar event").setIcon("link").onClick(() => this.deps.onLinkToCalendar(file))
+      );
+      menu.showAtMouseEvent(e);
     });
   }
   async onClose() {
@@ -2092,8 +2148,83 @@ var SpeakerCorrectionModal = class extends import_obsidian6.Modal {
   }
 };
 
-// src/renameProcessor.ts
+// src/views/CalendarEventPickerModal.ts
 var import_obsidian7 = require("obsidian");
+var CalendarEventPickerModal = class extends import_obsidian7.SuggestModal {
+  constructor(app, candidates, onPick) {
+    super(app);
+    this.candidates = candidates;
+    this.onPick = onPick;
+    this.setPlaceholder("Type to filter calendar events...");
+  }
+  getSuggestions(query) {
+    const q = query.toLowerCase();
+    if (!q)
+      return this.candidates;
+    return this.candidates.filter(
+      (c) => c.title.toLowerCase().includes(q) || c.date.includes(q) || c.calendar_source.toLowerCase().includes(q)
+    );
+  }
+  renderSuggestion(c, el) {
+    const parts = [c.title, c.date, c.time, c.calendar_source].filter(Boolean).join(" -- ");
+    el.createEl("div", { text: parts });
+  }
+  onChooseSuggestion(c) {
+    void this.onPick(c);
+  }
+};
+
+// src/views/ConfirmReplaceModal.ts
+var import_obsidian8 = require("obsidian");
+var ConfirmReplaceModal = class extends import_obsidian8.Modal {
+  constructor(app, existingRecording, newRecording) {
+    super(app);
+    this.existingRecording = existingRecording;
+    this.newRecording = newRecording;
+  }
+  resolvePromise;
+  prompt() {
+    return new Promise((resolve2) => {
+      this.resolvePromise = resolve2;
+      this.open();
+    });
+  }
+  onOpen() {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.createEl("h2", { text: "Replace existing recording?" });
+    contentEl.createEl("p", {
+      text: `Event already has recording "${this.existingRecording}" attached.`
+    });
+    contentEl.createEl("p", {
+      text: `Replacing will overwrite its note content with pipeline output from "${this.newRecording}". Old recording artifacts on disk are not deleted.`
+    });
+    const btnContainer = contentEl.createEl("div", {
+      attr: { style: "display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px;" }
+    });
+    const replaceBtn = btnContainer.createEl("button", {
+      text: "Replace",
+      cls: "mod-warning"
+    });
+    const cancelBtn = btnContainer.createEl("button", { text: "Cancel" });
+    replaceBtn.onclick = () => {
+      this.resolvePromise?.(true);
+      this.close();
+    };
+    cancelBtn.onclick = () => {
+      this.resolvePromise?.(false);
+      this.close();
+    };
+  }
+  onClose() {
+    this.resolvePromise?.(false);
+    this.resolvePromise = void 0;
+    this.contentEl.empty();
+  }
+};
+
+// src/renameProcessor.ts
+var import_obsidian9 = require("obsidian");
 var RenameProcessor = class {
   app;
   queuePath;
@@ -2111,7 +2242,7 @@ var RenameProcessor = class {
       entries = JSON.parse(content);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      new import_obsidian7.Notice(`Recap: rename queue read failed \u2014 ${msg}`);
+      new import_obsidian9.Notice(`Recap: rename queue read failed \u2014 ${msg}`);
       console.error("Recap:", e);
       return;
     }
@@ -2121,14 +2252,14 @@ var RenameProcessor = class {
     for (const entry of entries) {
       try {
         const file = this.app.vault.getAbstractFileByPath(entry.old_path);
-        if (file instanceof import_obsidian7.TFile) {
+        if (file instanceof import_obsidian9.TFile) {
           await this.app.fileManager.renameFile(file, entry.new_path);
         } else {
           console.warn(`Recap rename: file not found: ${entry.old_path}`);
         }
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        new import_obsidian7.Notice(
+        new import_obsidian9.Notice(
           `Recap: rename ${entry.old_path} \u2192 ${entry.new_path} failed \u2014 ${msg}`
         );
         console.error("Recap:", e);
@@ -2143,7 +2274,7 @@ var RenameProcessor = class {
         );
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        new import_obsidian7.Notice(`Recap: could not persist rename queue retries \u2014 ${msg}`);
+        new import_obsidian9.Notice(`Recap: could not persist rename queue retries \u2014 ${msg}`);
         console.error("Recap:", e);
       }
     } else {
@@ -2151,7 +2282,7 @@ var RenameProcessor = class {
         await this.app.vault.adapter.remove(this.queuePath);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        new import_obsidian7.Notice(`Recap: could not remove empty rename queue \u2014 ${msg}`);
+        new import_obsidian9.Notice(`Recap: could not remove empty rename queue \u2014 ${msg}`);
         console.error("Recap:", e);
       }
     }
@@ -2159,7 +2290,7 @@ var RenameProcessor = class {
 };
 
 // src/notificationHistory.ts
-var import_obsidian8 = require("obsidian");
+var import_obsidian10 = require("obsidian");
 function entryToNotification(entry) {
   const payload = entry.payload;
   const title = payload?.title ?? entry.event.replace(/_/g, " ");
@@ -2203,7 +2334,7 @@ var NotificationHistory = class {
       if (this.client !== client)
         return;
       const msg = e instanceof Error ? e.message : String(e);
-      new import_obsidian8.Notice(`Recap: notification history backfill failed \u2014 ${msg}`);
+      new import_obsidian10.Notice(`Recap: notification history backfill failed \u2014 ${msg}`);
       console.error("Recap:", e);
     }
   }
@@ -2237,7 +2368,7 @@ var NotificationHistory = class {
     }
   }
 };
-var NotificationHistoryModal = class extends import_obsidian8.Modal {
+var NotificationHistoryModal = class extends import_obsidian10.Modal {
   constructor(app, history) {
     super(app);
     this.history = history;
@@ -2499,7 +2630,7 @@ var DEFAULT_SETTINGS = {
   daemonUrl: "http://127.0.0.1:9847",
   ...DEFAULT_LAUNCH_SETTINGS
 };
-var RecapPlugin = class extends import_obsidian9.Plugin {
+var RecapPlugin = class extends import_obsidian11.Plugin {
   settings = DEFAULT_SETTINGS;
   client = null;
   statusBar = null;
@@ -2513,7 +2644,8 @@ var RecapPlugin = class extends import_obsidian9.Plugin {
       (leaf) => new MeetingListView(leaf, {
         getClient: () => this.client,
         onStartRecording: () => this.startRecordingInteractive(),
-        onStopRecording: () => this.stopRecordingInteractive()
+        onStopRecording: () => this.stopRecordingInteractive(),
+        onLinkToCalendar: (file) => this.openLinkToCalendarFlow(file)
       })
     );
     this.registerView(
@@ -2544,7 +2676,7 @@ var RecapPlugin = class extends import_obsidian9.Plugin {
     });
     const decision = noticeForOutcome(outcome);
     if (decision.notice)
-      new import_obsidian9.Notice(decision.notice);
+      new import_obsidian11.Notice(decision.notice);
     if (decision.statusBarOffline) {
       this.statusBar.setOffline();
     }
@@ -2579,7 +2711,7 @@ var RecapPlugin = class extends import_obsidian9.Plugin {
         });
         const d = noticeForOutcome(outcome2);
         if (d.notice)
-          new import_obsidian9.Notice(d.notice);
+          new import_obsidian11.Notice(d.notice);
         if (d.statusBarOffline)
           this.statusBar?.setOffline();
         if (d.shouldRehydrate)
@@ -2625,7 +2757,7 @@ var RecapPlugin = class extends import_obsidian9.Plugin {
           return;
         this.app.vault.cachedRead(file).then((content) => {
           if (content.includes("SPEAKER_")) {
-            new import_obsidian9.Notice(
+            new import_obsidian11.Notice(
               "This meeting has unidentified speakers. Use 'Recap: Fix speakers' to correct them.",
               1e4
             );
@@ -2647,6 +2779,24 @@ var RecapPlugin = class extends import_obsidian9.Plugin {
         return false;
       }
     });
+    this.addCommand({
+      id: "recap-link-to-calendar-event",
+      name: "Link to calendar event",
+      checkCallback: (checking) => {
+        const file = this.app.workspace.getActiveFile();
+        if (!file)
+          return false;
+        const cache = this.app.metadataCache.getFileCache(file);
+        const eventId = cache?.frontmatter?.["event-id"];
+        const isUnscheduled = typeof eventId === "string" && eventId.startsWith("unscheduled:");
+        if (!isUnscheduled)
+          return false;
+        if (checking)
+          return true;
+        void this.openLinkToCalendarFlow(file);
+        return true;
+      }
+    });
     this.addSettingTab(new RecapSettingTab(this.app, this));
     this.addRibbonIcon("mic", "Recap", () => this.activateView(VIEW_MEETING_LIST));
   }
@@ -2662,7 +2812,7 @@ var RecapPlugin = class extends import_obsidian9.Plugin {
    */
   async startRecordingInteractive() {
     if (!this.client) {
-      new import_obsidian9.Notice("Recap: Daemon not connected");
+      new import_obsidian11.Notice("Recap: Daemon not connected");
       return;
     }
     let orgs = [];
@@ -2675,30 +2825,30 @@ var RecapPlugin = class extends import_obsidian9.Plugin {
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      new import_obsidian9.Notice(`Recap: org list fetch failed \u2014 using default. ${msg}`);
+      new import_obsidian11.Notice(`Recap: org list fetch failed \u2014 using default. ${msg}`);
       console.error("Recap:", e);
       orgs = [{ name: "default", default_backend: "claude" }];
     }
     new StartRecordingModal(this.app, orgs, backends, async ({ org, backend }) => {
       try {
         await this.client.startRecording(org, backend);
-        new import_obsidian9.Notice(`Recording started (${org}, ${backend})`);
+        new import_obsidian11.Notice(`Recording started (${org}, ${backend})`);
       } catch (e) {
-        new import_obsidian9.Notice(`Failed to start recording: ${e}`);
+        new import_obsidian11.Notice(`Failed to start recording: ${e}`);
       }
     }).open();
   }
   /** Shared stop path used by the command palette and the panel button. */
   async stopRecordingInteractive() {
     if (!this.client) {
-      new import_obsidian9.Notice("Recap: Daemon not connected");
+      new import_obsidian11.Notice("Recap: Daemon not connected");
       return;
     }
     try {
       await this.client.stopRecording();
-      new import_obsidian9.Notice("Recording stopped");
+      new import_obsidian11.Notice("Recording stopped");
     } catch (e) {
-      new import_obsidian9.Notice(`Failed to stop recording: ${e}`);
+      new import_obsidian11.Notice(`Failed to stop recording: ${e}`);
     }
   }
   /** Push a daemon state update to every open Meetings panel. */
@@ -2719,7 +2869,7 @@ var RecapPlugin = class extends import_obsidian9.Plugin {
   }
   async openSpeakerCorrection(file) {
     if (!this.client) {
-      new import_obsidian9.Notice("Daemon not connected");
+      new import_obsidian11.Notice("Daemon not connected");
       return;
     }
     const cache = this.app.metadataCache.getFileCache(file);
@@ -2729,11 +2879,11 @@ var RecapPlugin = class extends import_obsidian9.Plugin {
     const org = (fm?.org ?? "").toString();
     const orgSubfolder = (fm?.["org-subfolder"] ?? "").toString();
     if (!stem) {
-      new import_obsidian9.Notice("No recording in frontmatter");
+      new import_obsidian11.Notice("No recording in frontmatter");
       return;
     }
     if (!orgSubfolder) {
-      new import_obsidian9.Notice("Missing org-subfolder in frontmatter");
+      new import_obsidian11.Notice("Missing org-subfolder in frontmatter");
       return;
     }
     let resp;
@@ -2741,12 +2891,12 @@ var RecapPlugin = class extends import_obsidian9.Plugin {
       resp = await this.client.getMeetingSpeakers(stem);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      new import_obsidian9.Notice(`Could not load speakers: ${msg}`);
+      new import_obsidian11.Notice(`Could not load speakers: ${msg}`);
       console.error("Recap:", e);
       return;
     }
     if (resp.speakers.length === 0) {
-      new import_obsidian9.Notice("No speakers in transcript");
+      new import_obsidian11.Notice("No speakers in transcript");
       return;
     }
     const peopleNames = this.scanNotesByFolder(`${orgSubfolder}/People`);
@@ -2777,13 +2927,127 @@ var RecapPlugin = class extends import_obsidian9.Plugin {
       this.client
     ).open();
   }
+  async openLinkToCalendarFlow(file) {
+    if (!this.client) {
+      new import_obsidian11.Notice("Daemon not connected");
+      return;
+    }
+    const cache = this.app.metadataCache.getFileCache(file);
+    const fm = cache?.frontmatter;
+    const recording = (fm?.recording ?? "").toString().replace(/\[\[|\]\]/g, "");
+    const stem = recording.replace(/\.(flac|m4a|aac)$/i, "");
+    const orgSubfolder = fm?.["org-subfolder"] || "";
+    const recordingDate = fm?.date || "";
+    if (!stem || !orgSubfolder || !recordingDate) {
+      new import_obsidian11.Notice("Missing recording/date/org-subfolder in frontmatter");
+      return;
+    }
+    const candidates = this.scanCalendarStubCandidates(
+      orgSubfolder,
+      recordingDate
+    );
+    if (candidates.length === 0) {
+      new import_obsidian11.Notice("No calendar events found within one day of this recording");
+      return;
+    }
+    new CalendarEventPickerModal(this.app, candidates, async (picked) => {
+      await this.submitAttachEvent(file, stem, picked.event_id);
+    }).open();
+  }
+  scanCalendarStubCandidates(orgSubfolder, recordingDate) {
+    const prefix = orgSubfolder.endsWith("/") ? `${orgSubfolder}Meetings/` : `${orgSubfolder}/Meetings/`;
+    const recordingDay = /* @__PURE__ */ new Date(recordingDate + "T00:00:00Z");
+    const out = [];
+    for (const file of this.app.vault.getMarkdownFiles()) {
+      if (!file.path.startsWith(prefix))
+        continue;
+      const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+      if (!fm)
+        continue;
+      const eventId = fm["event-id"];
+      if (typeof eventId !== "string")
+        continue;
+      if (eventId.startsWith("unscheduled:"))
+        continue;
+      const date = fm.date;
+      if (typeof date !== "string")
+        continue;
+      const eventDay = /* @__PURE__ */ new Date(date + "T00:00:00Z");
+      const diffDays = Math.abs(
+        (eventDay.getTime() - recordingDay.getTime()) / (24 * 60 * 60 * 1e3)
+      );
+      if (diffDays > 1)
+        continue;
+      out.push({
+        event_id: eventId,
+        title: String(fm.title ?? file.basename),
+        date,
+        time: String(fm.time ?? ""),
+        calendar_source: String(fm["calendar-source"] ?? ""),
+        note_path: file.path
+      });
+    }
+    out.sort((a, b) => {
+      const aDay = /* @__PURE__ */ new Date(a.date + "T00:00:00Z");
+      const bDay = /* @__PURE__ */ new Date(b.date + "T00:00:00Z");
+      const aDiff = Math.abs((aDay.getTime() - recordingDay.getTime()) / 864e5);
+      const bDiff = Math.abs((bDay.getTime() - recordingDay.getTime()) / 864e5);
+      if (aDiff !== bDiff)
+        return aDiff - bDiff;
+      if (a.time !== b.time)
+        return a.time.localeCompare(b.time);
+      return a.date.localeCompare(b.date);
+    });
+    return out;
+  }
+  async submitAttachEvent(sourceFile, stem, eventId, replace = false) {
+    if (!this.client)
+      return;
+    try {
+      const result = await this.client.attachEvent({ stem, event_id: eventId, replace });
+      new import_obsidian11.Notice(result.noop ? "Already bound to this event." : "Linked to calendar event. Opening note...");
+      await this.openTargetNote(result.note_path);
+    } catch (e) {
+      if (e instanceof DaemonError) {
+        if (e.status === 409 && e.body && typeof e.body === "object") {
+          const body = e.body;
+          if (body.error === "recording_conflict") {
+            const confirmed = await new ConfirmReplaceModal(
+              this.app,
+              body.existing_recording,
+              stem
+            ).prompt();
+            if (confirmed) {
+              await this.submitAttachEvent(sourceFile, stem, eventId, true);
+            }
+            return;
+          }
+        }
+        if (e.status === 400) {
+          new import_obsidian11.Notice(`Recap: ${e.message || "bad request"}`);
+          return;
+        }
+        if (e.status === 404) {
+          new import_obsidian11.Notice(`Recap: not found`);
+          return;
+        }
+      }
+      new import_obsidian11.Notice(`Recap: link failed -- ${e}`);
+    }
+  }
+  async openTargetNote(notePath) {
+    const file = this.app.vault.getAbstractFileByPath(notePath);
+    if (file instanceof import_obsidian11.TFile) {
+      await this.app.workspace.getLeaf().openFile(file);
+    }
+  }
   scanNotesByFolder(folderPath) {
     const prefix = folderPath.endsWith("/") ? folderPath : `${folderPath}/`;
     return this.app.vault.getMarkdownFiles().filter((f) => f.path.startsWith(prefix)).map((f) => f.basename);
   }
   async reprocessMeeting(file) {
     if (!this.client) {
-      new import_obsidian9.Notice("Daemon not connected");
+      new import_obsidian11.Notice("Daemon not connected");
       return;
     }
     const cache = this.app.metadataCache.getFileCache(file);
@@ -2791,14 +3055,14 @@ var RecapPlugin = class extends import_obsidian9.Plugin {
     const recordingPath = frontmatter?.recording?.replace(/\[\[|\]\]/g, "") || "";
     const org = frontmatter?.org || "";
     if (!recordingPath) {
-      new import_obsidian9.Notice("No recording path found in frontmatter");
+      new import_obsidian11.Notice("No recording path found in frontmatter");
       return;
     }
     try {
       await this.client.reprocess(recordingPath, void 0, org);
-      new import_obsidian9.Notice("Reprocessing started...");
+      new import_obsidian11.Notice("Reprocessing started...");
     } catch (e) {
-      new import_obsidian9.Notice(`Failed to reprocess: ${e}`);
+      new import_obsidian11.Notice(`Failed to reprocess: ${e}`);
     }
   }
   connectWebSocket() {
@@ -2815,7 +3079,7 @@ var RecapPlugin = class extends import_obsidian9.Plugin {
       } catch {
         this.statusBar?.setOffline();
         this.broadcastDaemonState(null);
-        new import_obsidian9.Notice("Recap: Reconnected, but daemon status refresh failed");
+        new import_obsidian11.Notice("Recap: Reconnected, but daemon status refresh failed");
       }
     });
     this.client.on("state_change", (event) => {
@@ -2840,11 +3104,11 @@ var RecapPlugin = class extends import_obsidian9.Plugin {
     });
     this.client.on("error", (event) => {
       const message = event.message || "Unknown error";
-      new import_obsidian9.Notice(`Recap error: ${message}`, 8e3);
+      new import_obsidian11.Notice(`Recap error: ${message}`, 8e3);
     });
     this.client.on("silence_warning", (event) => {
       const message = event.message || "Extended silence during recording";
-      new import_obsidian9.Notice(`Recap: ${message}`, 8e3);
+      new import_obsidian11.Notice(`Recap: ${message}`, 8e3);
     });
     this.client.on("rename_queued", async () => {
       await this.renameProcessor?.processQueue();
@@ -2869,7 +3133,7 @@ var RecapPlugin = class extends import_obsidian9.Plugin {
         this.statusBar?.updateState(status.state, status.recording?.org);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
-        new import_obsidian9.Notice(`Recap: reconnection to daemon failed \u2014 ${msg}`);
+        new import_obsidian11.Notice(`Recap: reconnection to daemon failed \u2014 ${msg}`);
         console.error("Recap:", e);
         this.statusBar?.setOffline();
       }
@@ -2888,7 +3152,7 @@ var RecapPlugin = class extends import_obsidian9.Plugin {
       );
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      new import_obsidian9.Notice(`Recap: could not read auth token \u2014 ${msg}`);
+      new import_obsidian11.Notice(`Recap: could not read auth token \u2014 ${msg}`);
       console.error("Recap:", e);
       return "";
     }
@@ -2903,7 +3167,7 @@ var RecapPlugin = class extends import_obsidian9.Plugin {
   async rehydrateClient() {
     const token = await readAuthTokenWithRetry(this.app.vault.adapter);
     if (!token) {
-      new import_obsidian9.Notice(
+      new import_obsidian11.Notice(
         `Recap: daemon running but auth token not found at ${AUTH_TOKEN_PATH}. Re-pair via tray menu.`
       );
       return false;
@@ -2920,7 +3184,7 @@ var RecapPlugin = class extends import_obsidian9.Plugin {
       return true;
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      new import_obsidian9.Notice(`Recap: post-spawn status fetch failed \u2014 ${msg}`);
+      new import_obsidian11.Notice(`Recap: post-spawn status fetch failed \u2014 ${msg}`);
       this.statusBar?.setOffline();
       return false;
     }
@@ -2947,7 +3211,7 @@ var RecapPlugin = class extends import_obsidian9.Plugin {
           view.updateStatus(status.state);
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
-          new import_obsidian9.Notice(`Recap: could not sync live transcript view \u2014 ${msg}`);
+          new import_obsidian11.Notice(`Recap: could not sync live transcript view \u2014 ${msg}`);
           console.error("Recap:", e);
         }
       }

@@ -1,11 +1,13 @@
 import { Plugin, Notice, TFile } from "obsidian";
-import { DaemonClient } from "./api";
+import { DaemonClient, DaemonError, AttachEventConflict } from "./api";
 import { RecapStatusBar } from "./components/StatusBarItem";
 import { StartRecordingModal, OrgChoice } from "./components/StartRecordingModal";
 import { RecapSettingTab } from "./settings";
 import { MeetingListView, VIEW_MEETING_LIST } from "./views/MeetingListView";
 import { LiveTranscriptView, VIEW_LIVE_TRANSCRIPT } from "./views/LiveTranscriptView";
 import { SpeakerCorrectionModal } from "./views/SpeakerCorrectionModal";
+import { CalendarEventPickerModal, CalendarEventCandidate } from "./views/CalendarEventPickerModal";
+import { ConfirmReplaceModal } from "./views/ConfirmReplaceModal";
 import type { Participant } from "./correction/resolve";
 import { RenameProcessor } from "./renameProcessor";
 import { NotificationHistory, NotificationHistoryModal } from "./notificationHistory";
@@ -52,6 +54,7 @@ export default class RecapPlugin extends Plugin {
                 getClient: () => this.client,
                 onStartRecording: () => this.startRecordingInteractive(),
                 onStopRecording: () => this.stopRecordingInteractive(),
+                onLinkToCalendar: (file) => this.openLinkToCalendarFlow(file),
             }),
         );
         this.registerView(
@@ -203,6 +206,23 @@ export default class RecapPlugin extends Plugin {
                     return true;
                 }
                 return false;
+            },
+        });
+
+        this.addCommand({
+            id: "recap-link-to-calendar-event",
+            name: "Link to calendar event",
+            checkCallback: (checking: boolean) => {
+                const file = this.app.workspace.getActiveFile();
+                if (!file) return false;
+                const cache = this.app.metadataCache.getFileCache(file);
+                const eventId = cache?.frontmatter?.["event-id"];
+                const isUnscheduled = typeof eventId === "string"
+                    && eventId.startsWith("unscheduled:");
+                if (!isUnscheduled) return false;
+                if (checking) return true;
+                void this.openLinkToCalendarFlow(file);
+                return true;
             },
         });
 
@@ -372,6 +392,127 @@ export default class RecapPlugin extends Plugin {
             orgSubfolder,
             this.client,
         ).open();
+    }
+
+    private async openLinkToCalendarFlow(file: TFile): Promise<void> {
+        if (!this.client) { new Notice("Daemon not connected"); return; }
+
+        const cache = this.app.metadataCache.getFileCache(file);
+        const fm = cache?.frontmatter;
+        const recording = (fm?.recording ?? "").toString().replace(/\[\[|\]\]/g, "");
+        const stem = recording.replace(/\.(flac|m4a|aac)$/i, "");
+        const orgSubfolder = fm?.["org-subfolder"] || "";
+        const recordingDate = fm?.date || "";
+        if (!stem || !orgSubfolder || !recordingDate) {
+            new Notice("Missing recording/date/org-subfolder in frontmatter");
+            return;
+        }
+
+        const candidates = this.scanCalendarStubCandidates(
+            orgSubfolder, recordingDate,
+        );
+        if (candidates.length === 0) {
+            new Notice("No calendar events found within one day of this recording");
+            return;
+        }
+
+        new CalendarEventPickerModal(this.app, candidates, async (picked) => {
+            await this.submitAttachEvent(file, stem, picked.event_id);
+        }).open();
+    }
+
+    private scanCalendarStubCandidates(
+        orgSubfolder: string, recordingDate: string,
+    ): CalendarEventCandidate[] {
+        const prefix = orgSubfolder.endsWith("/")
+            ? `${orgSubfolder}Meetings/`
+            : `${orgSubfolder}/Meetings/`;
+        const recordingDay = new Date(recordingDate + "T00:00:00Z");
+        const out: CalendarEventCandidate[] = [];
+
+        for (const file of this.app.vault.getMarkdownFiles()) {
+            if (!file.path.startsWith(prefix)) continue;
+            const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+            if (!fm) continue;
+            const eventId = fm["event-id"];
+            if (typeof eventId !== "string") continue;
+            if (eventId.startsWith("unscheduled:")) continue;
+
+            const date = fm.date;
+            if (typeof date !== "string") continue;
+            const eventDay = new Date(date + "T00:00:00Z");
+            const diffDays = Math.abs(
+                (eventDay.getTime() - recordingDay.getTime()) / (24 * 60 * 60 * 1000),
+            );
+            if (diffDays > 1) continue;
+
+            out.push({
+                event_id: eventId,
+                title: String(fm.title ?? file.basename),
+                date,
+                time: String(fm.time ?? ""),
+                calendar_source: String(fm["calendar-source"] ?? ""),
+                note_path: file.path,
+            });
+        }
+        // Design Section 6 locks "same date first, then by time" within the
+        // +/-1 day window. Sort by absolute day-difference primarily so a
+        // previous-day candidate cannot leapfrog the most-likely same-day
+        // event; fall back to time, then date as a tie-breaker.
+        out.sort((a, b) => {
+            const aDay = new Date(a.date + "T00:00:00Z");
+            const bDay = new Date(b.date + "T00:00:00Z");
+            const aDiff = Math.abs((aDay.getTime() - recordingDay.getTime()) / 86400000);
+            const bDiff = Math.abs((bDay.getTime() - recordingDay.getTime()) / 86400000);
+            if (aDiff !== bDiff) return aDiff - bDiff;
+            if (a.time !== b.time) return a.time.localeCompare(b.time);
+            return a.date.localeCompare(b.date);
+        });
+        return out;
+    }
+
+    private async submitAttachEvent(
+        sourceFile: TFile, stem: string, eventId: string, replace: boolean = false,
+    ): Promise<void> {
+        if (!this.client) return;
+        try {
+            const result = await this.client.attachEvent({stem, event_id: eventId, replace});
+            new Notice(result.noop
+                ? "Already bound to this event."
+                : "Linked to calendar event. Opening note...");
+            await this.openTargetNote(result.note_path);
+        } catch (e) {
+            if (e instanceof DaemonError) {
+                if (e.status === 409 && e.body && typeof e.body === "object") {
+                    const body = e.body as AttachEventConflict;
+                    if (body.error === "recording_conflict") {
+                        const confirmed = await new ConfirmReplaceModal(
+                            this.app, body.existing_recording, stem,
+                        ).prompt();
+                        if (confirmed) {
+                            await this.submitAttachEvent(sourceFile, stem, eventId, true);
+                        }
+                        return;
+                    }
+                }
+                if (e.status === 400) {
+                    new Notice(`Recap: ${e.message || "bad request"}`);
+                    return;
+                }
+                if (e.status === 404) {
+                    new Notice(`Recap: not found`);
+                    return;
+                }
+            }
+            new Notice(`Recap: link failed -- ${e}`);
+        }
+    }
+
+    private async openTargetNote(notePath: string): Promise<void> {
+        const file = this.app.vault.getAbstractFileByPath(notePath);
+        if (file instanceof TFile) {
+            await this.app.workspace.getLeaf().openFile(file);
+        }
     }
 
     private scanNotesByFolder(folderPath: string): string[] {

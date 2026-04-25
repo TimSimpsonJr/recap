@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import re
 from dataclasses import dataclass, field
@@ -149,8 +150,28 @@ def resolve_recording_path(
 
 
 def write_recording_metadata(audio_path: pathlib.Path, metadata: RecordingMetadata) -> pathlib.Path:
+    """Write the sidecar atomically (temp + os.replace).
+
+    Upgraded from direct write in #33 because the retroactive-bind flow
+    requires crash-safe sidecar rewrites. Pre-existing callers (recorder
+    start, #29 on_before_finalize, pipeline reprocess) get stronger
+    crash semantics for free.
+    """
     path = metadata_path(audio_path)
-    path.write_text(json.dumps(metadata.to_dict(), indent=2), encoding="utf-8")
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    try:
+        tmp_path.write_text(
+            json.dumps(metadata.to_dict(), indent=2),
+            encoding="utf-8",
+        )
+        os.replace(tmp_path, path)
+    except OSError:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+        raise
     return path
 
 
@@ -160,6 +181,42 @@ def load_recording_metadata(audio_path: pathlib.Path) -> RecordingMetadata | Non
         return None
     data = json.loads(path.read_text(encoding="utf-8"))
     return RecordingMetadata.from_dict(data)
+
+
+def rebind_recording_metadata_to_event(
+    audio_path: pathlib.Path,
+    *,
+    event_id: str,
+    note_path: str,
+    calendar_source: str | None,
+    meeting_link: str | None,
+    title: str | None,
+) -> None:
+    """Rewrite sidecar from unscheduled state to bound-event state.
+
+    Called by the retroactive-bind flow (#33). Source unscheduled sidecar
+    has event_id starting with "unscheduled:"; this helper overwrites it
+    with the real event_id + linked calendar metadata so future
+    reprocesses treat it as scheduled.
+
+    Optional fields (calendar_source, meeting_link, title) leave the
+    existing sidecar value when None. This lets callers skip rewriting
+    a field they don't have fresh data for.
+
+    Raises ValueError if the sidecar does not exist.
+    """
+    rm = load_recording_metadata(audio_path)
+    if rm is None:
+        raise ValueError(f"no sidecar for {audio_path}")
+    rm.event_id = event_id
+    rm.note_path = note_path
+    if calendar_source is not None:
+        rm.calendar_source = calendar_source
+    if meeting_link is not None:
+        rm.meeting_link = meeting_link
+    if title is not None:
+        rm.title = title
+    write_recording_metadata(audio_path, rm)
 
 
 def save_transcript(audio_path: pathlib.Path, transcript: TranscriptResult) -> pathlib.Path:

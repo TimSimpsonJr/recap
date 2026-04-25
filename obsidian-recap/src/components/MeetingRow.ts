@@ -12,6 +12,7 @@ export interface MeetingData {
     participants: string[];
     companies: string[];
     platform: string;
+    eventId?: string;  // optional: undefined when frontmatter has no event-id
 }
 
 export function renderMeetingRow(

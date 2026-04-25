@@ -2,7 +2,10 @@
 from __future__ import annotations
 
 import pathlib
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from unittest.mock import patch
+
+import pytest
 
 from recap.artifacts import (
     RecordingMetadata,
@@ -180,3 +183,146 @@ def test_recording_metadata_default_recording_started_at_is_none():
         participants=[], platform="teams",
     )
     assert metadata.recording_started_at is None
+
+
+def _make_metadata() -> RecordingMetadata:
+    return RecordingMetadata(
+        org="testorg",
+        note_path="Test/Meetings/test.md",
+        title="Test",
+        date=date(2026, 4, 24).isoformat(),
+        participants=[Participant(name="Alice")],
+        platform="manual",
+    )
+
+
+class TestWriteRecordingMetadataAtomic:
+    """Tests for RecordingMetadata sidecar atomic write (#33 Task 1)."""
+
+    def test_roundtrip_unchanged(self, tmp_path: pathlib.Path):
+        """Atomic write must not break read-after-write."""
+        audio = tmp_path / "rec.flac"
+        audio.touch()
+        md = _make_metadata()
+        write_recording_metadata(audio, md)
+        loaded = load_recording_metadata(audio)
+        assert loaded is not None
+        assert loaded.title == md.title
+        assert loaded.participants[0].name == "Alice"
+
+    def test_temp_file_does_not_remain_on_success(self, tmp_path: pathlib.Path):
+        audio = tmp_path / "rec.flac"
+        audio.touch()
+        write_recording_metadata(audio, _make_metadata())
+        tmps = list(tmp_path.glob("*.tmp"))
+        assert tmps == []
+
+    def test_temp_file_cleaned_up_on_oserror(self, tmp_path: pathlib.Path):
+        """If os.replace fails, the temp file must not be left behind."""
+        audio = tmp_path / "rec.flac"
+        audio.touch()
+        with patch("os.replace", side_effect=OSError("simulated replace fail")):
+            with pytest.raises(OSError):
+                write_recording_metadata(audio, _make_metadata())
+        tmps = list(tmp_path.glob("*.tmp"))
+        assert tmps == []
+
+    def test_partial_write_does_not_corrupt_existing(self, tmp_path: pathlib.Path):
+        """Existing sidecar is not corrupted if the write fails mid-flight."""
+        audio = tmp_path / "rec.flac"
+        audio.touch()
+        # Seed an initial good sidecar.
+        good = _make_metadata()
+        write_recording_metadata(audio, good)
+        # Attempt a failing write.
+        bad = _make_metadata()
+        bad.title = "Bad"
+        with patch("os.replace", side_effect=OSError("simulated")):
+            with pytest.raises(OSError):
+                write_recording_metadata(audio, bad)
+        # Original content still readable.
+        loaded = load_recording_metadata(audio)
+        assert loaded is not None
+        assert loaded.title == "Test"
+
+
+class TestRebindRecordingMetadata:
+    """Rewrite sidecar from unscheduled state to bound-event state (#33 Task 2)."""
+
+    def test_rewrites_all_five_fields(self, tmp_path: pathlib.Path):
+        from recap.artifacts import rebind_recording_metadata_to_event
+        audio = tmp_path / "rec.flac"
+        audio.touch()
+        md = _make_metadata()
+        md.event_id = "unscheduled:abc123"
+        md.note_path = "Test/Meetings/original.md"
+        write_recording_metadata(audio, md)
+        rebind_recording_metadata_to_event(
+            audio,
+            event_id="E1",
+            note_path="Test/Meetings/new.md",
+            calendar_source="google",
+            meeting_link="https://meet.google.com/xyz",
+            title="Sprint Planning",
+        )
+        loaded = load_recording_metadata(audio)
+        assert loaded is not None
+        assert loaded.event_id == "E1"
+        assert loaded.note_path == "Test/Meetings/new.md"
+        assert loaded.calendar_source == "google"
+        assert loaded.meeting_link == "https://meet.google.com/xyz"
+        assert loaded.title == "Sprint Planning"
+
+    def test_preserves_other_fields(self, tmp_path: pathlib.Path):
+        """Non-rebound fields (participants, platform, etc.) stay intact."""
+        from recap.artifacts import rebind_recording_metadata_to_event
+        audio = tmp_path / "rec.flac"
+        audio.touch()
+        md = _make_metadata()
+        md.event_id = "unscheduled:abc"
+        write_recording_metadata(audio, md)
+        rebind_recording_metadata_to_event(
+            audio,
+            event_id="E1",
+            note_path="Test/Meetings/new.md",
+            calendar_source="google",
+            meeting_link="",
+            title="T",
+        )
+        loaded = load_recording_metadata(audio)
+        assert loaded is not None
+        assert loaded.participants[0].name == "Alice"
+        assert loaded.platform == "manual"
+
+    def test_raises_on_missing_sidecar(self, tmp_path: pathlib.Path):
+        from recap.artifacts import rebind_recording_metadata_to_event
+        audio = tmp_path / "rec.flac"
+        # no sidecar
+        with pytest.raises(ValueError, match="no sidecar"):
+            rebind_recording_metadata_to_event(
+                audio, event_id="E1", note_path="x", calendar_source=None,
+                meeting_link=None, title=None,
+            )
+
+    def test_none_optional_fields_leave_existing_values(self, tmp_path: pathlib.Path):
+        """Passing None for optional fields keeps the current sidecar value."""
+        from recap.artifacts import rebind_recording_metadata_to_event
+        audio = tmp_path / "rec.flac"
+        audio.touch()
+        md = _make_metadata()
+        md.event_id = "unscheduled:abc"
+        md.calendar_source = "pre-existing"
+        md.meeting_link = "pre-existing-link"
+        md.title = "Pre-existing"
+        write_recording_metadata(audio, md)
+        rebind_recording_metadata_to_event(
+            audio, event_id="E1", note_path="new",
+            calendar_source=None, meeting_link=None, title=None,
+        )
+        loaded = load_recording_metadata(audio)
+        assert loaded is not None
+        assert loaded.event_id == "E1"
+        assert loaded.note_path == "new"
+        assert loaded.calendar_source == "pre-existing"
+        assert loaded.meeting_link == "pre-existing-link"
+        assert loaded.title == "Pre-existing"

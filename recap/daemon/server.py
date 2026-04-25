@@ -426,6 +426,83 @@ async def _api_recording_clip(request: web.Request) -> web.Response:
     )
 
 
+async def _api_attach_event(request: web.Request) -> web.Response:
+    """POST /api/recordings/<stem>/attach-event -- retroactive calendar bind.
+
+    Wraps :func:`recap.daemon.recorder.attach.attach_event_to_recording`.
+    See docs/plans/2026-04-24-33-retroactive-calendar-bind-design.md
+    Section 4 for the endpoint contract.
+
+    Status mapping:
+        200: bind succeeded (or idempotent no-op).
+        400: bad request -- invalid stem, missing/empty event_id,
+             synthetic event_id, sidecar already bound to a different
+             real event, cross-org bind, or date out-of-window.
+        404: recording, sidecar, source note, or target event not found.
+        409: target stub already has a different ``recording`` and the
+             caller did not pass ``replace=true``.
+        500: unhandled error from the orchestrator.
+    """
+    daemon: Daemon = request.app["daemon"]
+    stem = request.match_info["stem"]
+    if not _STEM_RE.fullmatch(stem):
+        return web.json_response({"error": "invalid stem"}, status=400)
+
+    try:
+        body = await request.json()
+    except json.JSONDecodeError:
+        return web.json_response({"error": "invalid JSON body"}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response(
+            {"error": "body must be an object"}, status=400,
+        )
+
+    event_id = body.get("event_id")
+    if not isinstance(event_id, str) or not event_id:
+        return web.json_response({"error": "missing event_id"}, status=400)
+    replace = body.get("replace", False)
+    if not isinstance(replace, bool):
+        return web.json_response(
+            {"error": "replace must be a boolean"}, status=400,
+        )
+    # Defense-in-depth: orchestrator also raises ValueError on synthetic ids.
+    if event_id.startswith("unscheduled:"):
+        return web.json_response(
+            {"error": "target_event_must_be_real_calendar_event"},
+            status=400,
+        )
+
+    from recap.daemon.recorder.attach import (
+        AttachAlreadyBoundError,
+        AttachConfigError,
+        AttachConflictError,
+        AttachNotFoundError,
+        attach_event_to_recording,
+    )
+
+    try:
+        result = attach_event_to_recording(
+            daemon=daemon, stem=stem, event_id=event_id, replace=replace,
+        )
+        return web.json_response(result.to_dict())
+    except AttachAlreadyBoundError as e:
+        return web.json_response(e.to_dict(), status=400)
+    except AttachConflictError as e:
+        return web.json_response(e.to_dict(), status=409)
+    except AttachNotFoundError as e:
+        return web.json_response(e.to_dict(), status=404)
+    except AttachConfigError as e:
+        logger.error("attach-event config corruption for stem=%s: %s", stem, e.what)
+        return web.json_response(e.to_dict(), status=500)
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    except Exception as e:
+        logger.exception("attach-event failed for stem=%s", stem)
+        return web.json_response(
+            {"error": f"attach failed: {e}"}, status=500,
+        )
+
+
 async def _api_meeting_speakers_get(request: web.Request) -> web.Response:
     """GET /api/meetings/<stem>/speakers — distinct (speaker_id, display)
     pairs from the transcript artifact, plus participants (with emails)
@@ -1393,6 +1470,9 @@ def create_app(
     app.router.add_patch("/api/config", _api_config_patch)
     app.router.add_get(
         "/api/recordings/{stem}/clip", _api_recording_clip,
+    )
+    app.router.add_post(
+        "/api/recordings/{stem}/attach-event", _api_attach_event,
     )
     app.router.add_post("/api/record/start", _record_start)
     app.router.add_post("/api/record/stop", _record_stop)
